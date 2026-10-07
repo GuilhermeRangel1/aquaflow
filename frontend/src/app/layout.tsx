@@ -4,7 +4,7 @@ import "./dashboard/dashboard.css";
 import { ThemeProvider } from "./theme-provider";
 
 export const metadata: Metadata = {
-  title: "aquaflow | Consumo de água",
+  title: "aquaflow",
   description: "Acompanhe o consumo de água da sua propriedade com clareza.",
 };
 
