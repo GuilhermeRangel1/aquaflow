@@ -270,7 +270,11 @@
 }
 
 .dashboard-grid--single .meters-card {
-  max-width: 850px;
+  width: 100%;
+}
+
+.dashboard-grid:not(.dashboard-grid--single) {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .demo-badge {
