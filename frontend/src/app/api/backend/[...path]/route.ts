@@ -18,7 +18,7 @@ async function send(url: string, method: string, body: string | undefined, acces
 
 async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const { path } = await context.params;
-  if (path[0] !== "auth" && path[0] !== "properties" && path[0] !== "devices" && path[0] !== "ingestion") {
+  if (path[0] !== "auth" && path[0] !== "properties" && path[0] !== "devices" && path[0] !== "ingestion" && path[0] !== "alerts") {
     return NextResponse.json({ code: "not_found", message: "Route not found" }, { status: 404 });
   }
 
