@@ -1,9 +1,10 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class PropertyCreate(BaseModel):
@@ -52,6 +53,58 @@ class PropertyOutput(BaseModel):
     created_at: datetime
 
 
+class PropertyPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    address: str | None = Field(default=None, max_length=300)
+    timezone: str | None = Field(default=None, max_length=64)
+    volume_unit: str | None = Field(default=None, pattern="^L$")
+    notification_threshold_liters: Decimal | None = Field(
+        default=None, gt=0, max_digits=14, decimal_places=3
+    )
+    continuous_flow_threshold_liters_minute: Decimal | None = Field(
+        default=None, gt=0, max_digits=12, decimal_places=3
+    )
+    continuous_flow_duration_minutes: int | None = Field(default=None, ge=1, le=10080)
+    late_reading_window_days: int | None = Field(default=None, ge=1, le=30)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("name must not be blank")
+        return normalized
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError("timezone must be a valid IANA timezone") from None
+        return value
+
+    @model_validator(mode="after")
+    def reject_null_required_fields(self) -> "PropertyPatch":
+        for field_name in (
+            "name",
+            "timezone",
+            "volume_unit",
+            "continuous_flow_threshold_liters_minute",
+            "continuous_flow_duration_minutes",
+            "late_reading_window_days",
+        ):
+            if field_name in self.model_fields_set and getattr(self, field_name) is None:
+                raise ValueError(f"{field_name} cannot be null")
+        return self
+
+
 class DeviceCreate(BaseModel):
     property_id: UUID
     serial_number: str = Field(min_length=1, max_length=80)
@@ -65,6 +118,31 @@ class DeviceCreate(BaseModel):
         if not normalized:
             raise ValueError("value must not be blank")
         return normalized
+
+
+class DevicePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    expected_interval_seconds: int | None = Field(default=None, ge=30, le=86400)
+    late_reading_window_days: int | None = Field(default=None, ge=1, le=30)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("name must not be blank")
+        return normalized
+
+    @model_validator(mode="after")
+    def reject_null_required_fields(self) -> "DevicePatch":
+        for field_name in ("name", "expected_interval_seconds"):
+            if field_name in self.model_fields_set and getattr(self, field_name) is None:
+                raise ValueError(f"{field_name} cannot be null")
+        return self
 
 
 class DeviceOutput(BaseModel):
@@ -90,3 +168,34 @@ class PropertyList(BaseModel):
 
 class DeviceList(BaseModel):
     items: list[DeviceOutput]
+
+
+class DeviceReadingOutput(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    event_id: str
+    recorded_at: datetime
+    received_at: datetime
+    cumulative_volume_liters: Decimal | None
+    flow_rate_liters_minute: Decimal | None
+    quality: str
+    battery_percent: int | None
+    signal_dbm: int | None
+    firmware_version: str | None
+
+
+class DeviceHealthOutput(BaseModel):
+    device_id: UUID
+    connectivity: Literal["online", "offline", "never_connected"]
+    last_seen_at: datetime | None
+    seconds_since_last_seen: int | None
+    expected_interval_seconds: int
+    latest_reading: DeviceReadingOutput | None
+
+
+class DeviceReadingList(BaseModel):
+    items: list[DeviceReadingOutput]
+    limit: int
+    cursor: str | None = None
+    has_more: bool = False
