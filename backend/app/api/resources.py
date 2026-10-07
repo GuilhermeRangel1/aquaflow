@@ -46,6 +46,8 @@ async def create_property(
         timezone=payload.timezone,
         volume_unit=payload.volume_unit,
         notification_threshold_liters=payload.notification_threshold_liters,
+        continuous_flow_threshold_liters_minute=payload.continuous_flow_threshold_liters_minute,
+        continuous_flow_duration_minutes=payload.continuous_flow_duration_minutes,
         late_reading_window_days=7,
         created_at=datetime.now(UTC),
     )

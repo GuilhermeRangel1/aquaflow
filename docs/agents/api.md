@@ -64,8 +64,8 @@ Use esta ordem como guia de dependências, não como um plano rígido. Siga outr
 2. **Identidade e acesso:** autenticação, propriedade, dispositivo, ownership e autorização. Cadastro, login, refresh/logout e provisionamento de propriedade/dispositivo estão implementados; associação de membros permanece fora da fase atual.
 3. **Telemetria:** validação, persistência transacional, chave por dispositivo e idempotência. Implementada para ingestão individual e em lote.
 4. **Consumo:** agregações horária, diária e mensal com timezone, resets e lacunas explícitos. Implementada para a primeira visualização do dashboard.
-5. **Anomalias e alertas:** próxima fatia; detectores explicáveis, evidências, severidade e ciclo de estados ainda precisam ser construídos.
-6. **Fechamento operacional:** OpenAPI, Docker, health/readiness, logs seguros e cobertura. Compose e documentação estão preparados; falta validar containers quando o daemon estiver disponível.
+5. **Anomalias e alertas:** a primeira regra de fluxo contínuo, evidências persistidas, agrupamento, transições de estado e fila no dashboard estão implementados. Regras noturnas/offline e cobertura de integração PostgreSQL permanecem.
+6. **Fechamento operacional:** OpenAPI, Docker, health/readiness, logs seguros e cobertura. O Compose também prepara uma conta local com dados sintéticos; falta validar os containers quando o daemon estiver disponível.
 
 Não implemente itens fora do MVP, como fechamento remoto de válvula, faturamento, integração com concessionárias ou ML decisório, a menos que o usuário altere explicitamente o escopo.
 

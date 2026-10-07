@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api import auth, consumption, resources, telemetry
+from app.api import alerts, auth, consumption, resources, telemetry
 from app.core.config import Settings, settings
 from app.db.session import create_session_factory
 
@@ -43,6 +43,7 @@ def create_app(
     app.include_router(consumption.router)
     app.include_router(auth.router)
     app.include_router(resources.router)
+    app.include_router(alerts.router)
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:

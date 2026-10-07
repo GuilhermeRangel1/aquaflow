@@ -16,6 +16,7 @@ from app.schemas.telemetry import (
     TelemetryAccepted,
     TelemetryInput,
 )
+from app.services.anomaly_detection import evaluate_continuous_flow
 
 router = APIRouter(prefix="/api/v1/ingestion", tags=["ingestion"])
 
@@ -190,6 +191,13 @@ async def save_reading(
         if device.last_seen_at is None or _as_utc(device.last_seen_at) < now:
             device.last_seen_at = now
         await session.flush()
+        if quality == "valid":
+            await evaluate_continuous_flow(
+                session,
+                device=device,
+                property_row=property_row,
+                through=recorded_at,
+            )
         return TelemetryAccepted(
             reading_id=reading.id,
             event_id=reading.event_id,

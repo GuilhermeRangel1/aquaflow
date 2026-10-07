@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 from httpx import AsyncClient
 
@@ -25,12 +27,18 @@ async def test_user_can_register_create_property_and_provision_device(
     created_property = await empty_api_client.post(
         "/api/v1/properties",
         headers=authorization,
-        json={"name": "Casa"},
+        json={
+            "name": "Casa",
+            "continuous_flow_threshold_liters_minute": 0.25,
+            "continuous_flow_duration_minutes": 120,
+        },
     )
     assert created_property.status_code == 201
     property_body = created_property.json()
     assert property_body["timezone"] == "America/Sao_Paulo"
     assert property_body["volume_unit"] == "L"
+    assert Decimal(property_body["continuous_flow_threshold_liters_minute"]) == Decimal("0.25")
+    assert property_body["continuous_flow_duration_minutes"] == 120
 
     created_device = await empty_api_client.post(
         "/api/v1/devices",

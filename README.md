@@ -9,18 +9,23 @@ Plataforma de monitoramento de consumo de água. A API recebe telemetria autenti
 - Provisionamento de medidor com chave individual; a chave é mostrada uma vez e apenas o hash fica no banco.
 - Ingestão individual e em lote, com idempotência por dispositivo e `event_id`.
 - Leituras acumuladas e vazão instantânea, com agregação por hora, dia ou mês.
+- Detecção explicável de fluxo contínuo e alertas agrupados, com reconhecimento, resolução e marcação como falso positivo.
 - Dashboard responsivo e simulador de leituras para demonstração.
-- Migração inicial Alembic e ambiente de desenvolvimento via Docker Compose.
+- Migrations Alembic e ambiente de desenvolvimento via Docker Compose.
 
 ## Executar com Docker
 
-1. Execute `.\run-aquaflow.ps1` no PowerShell ou dê duplo clique em `run-aquaflow.bat`. Na primeira execução, o script cria `.env` com segredos locais aleatórios e tenta abrir o Docker Desktop se o daemon não estiver ativo.
-2. Aguarde o build e a inicialização dos serviços.
-3. Acesse o dashboard em `http://localhost:3000` e a documentação OpenAPI em `http://localhost:8000/docs`.
+Com o Docker Desktop aberto, execute na raiz do projeto:
 
-Para parar a aplicação, pressione `Ctrl+C` no terminal do script ou execute `.\stop-aquaflow.ps1`. O volume do PostgreSQL é preservado; para remover também o banco local, use `docker compose down --volumes`.
+```powershell
+docker compose up --build
+```
 
-O serviço da API aplica `alembic upgrade head` antes de iniciar. O PostgreSQL usa volume nomeado para preservar os dados entre reinícios.
+Quando os serviços ficarem prontos, abra `http://localhost:3000`. A API e sua documentação OpenAPI ficam em `http://localhost:8000/docs`.
+
+Para parar, pressione `Ctrl+C` ou execute `docker compose down`. O volume do PostgreSQL é preservado; para reiniciar a demonstração do zero e apagar os dados locais, use `docker compose down --volumes`.
+
+O serviço da API aplica `alembic upgrade head` e prepara os dados sintéticos antes de iniciar. O PostgreSQL usa volume nomeado para preservar os dados entre reinícios. A demonstração local pode ser desativada com `DEMO_MODE=false` no `.env`.
 
 ## Executar localmente
 
@@ -48,11 +53,17 @@ npm run dev
 
 ## Fluxo de demonstração
 
-1. Crie uma conta e cadastre uma propriedade.
-2. Provisione um medidor com número de série único.
-3. Copie a chave exibida. O AquaFlow não a armazena em texto aberto e não poderá exibi-la de novo.
-4. Use “Simular leituras de demonstração” para enviar três amostras pela mesma rota autenticada que um dispositivo usaria.
-5. O resumo do imóvel e o gráfico diário são atualizados pela API.
+No Compose local, entre com a conta sintética `demo@example.com` e a senha `AquaFlow-demo-123!`. A conta traz uma propriedade, leituras diárias de três medidores ativos, um medidor sem comunicação e exemplos de alertas abertos, reconhecidos, resolvidos e marcados como falso positivo. Os alertas de amostra são identificados como dados demonstrativos; o alerta de fluxo contínuo é gerado pela regra real. O seed é aditivo e idempotente: ao iniciar uma base que já contém a conta demo, acrescenta apenas os exemplos ausentes e preserva os dados existentes. Uma base criada por versão anterior migra o e-mail local da conta demo automaticamente para o endereço de exemplo aceito pelo validador.
+
+Para testar também o cadastro e a ingestão, adicione outro medidor com número de série ainda não usado. A chave é exibida uma única vez; use “Simular leituras” para enviar eventos pela mesma rota de telemetria do dispositivo. A lista, os indicadores e o gráfico atualizam pela API.
+
+Essas credenciais são apenas para desenvolvimento local. O seed não roda em `ENVIRONMENT=production` e a API rejeita `DEMO_MODE=true` nesse ambiente.
+
+### Regra inicial de fluxo contínuo
+
+O primeiro detector considera uma anomalia quando a vazão média entre amostras válidas fica acima de `0,1 L/min` por pelo menos `360 minutos`. O limite e a duração podem ser informados ao criar a propriedade pelos campos `continuous_flow_threshold_liters_minute` e `continuous_flow_duration_minutes`; esses valores também ficam registrados como evidência. Lacunas acima de duas vezes o intervalo esperado ou leituras inválidas interrompem a janela. Leituras com vazão instantânea e volume acumulado são aceitas.
+
+Quando a janela é atingida, a ingestão persiste uma anomalia e abre um alerta de severidade alta. Novas detecções da mesma regra e dispositivo são agrupadas enquanto o alerta estiver aberto ou reconhecido. Os endpoints de consulta são `GET /api/v1/properties/{property_id}/anomalies`, `GET /api/v1/anomalies/{anomaly_id}` e `GET /api/v1/properties/{property_id}/alerts`. O proprietário pode usar `POST /api/v1/alerts/{alert_id}/acknowledge`, `/resolve` ou `/false-positive`; uma recorrência após o encerramento cria outro alerta.
 
 Leituras atrasadas dentro da janela configurada são aceitas; relógios mais de cinco minutos no futuro são rejeitados. Fluxo instantâneo só gera volume quando há amostras consecutivas dentro de duas vezes o intervalo esperado.
 
@@ -68,8 +79,8 @@ npm run lint
 npm run build
 ```
 
-Os testes de API usam SQLite assíncrono para não depender de serviço externo. A migração foi validada em modo SQL offline; a execução contra PostgreSQL depende do Docker/servidor estar disponível.
+Os testes de API usam SQLite assíncrono para não depender de serviço externo. A migração adicionada para anomalias e alertas deve ser aplicada pelo serviço da API na inicialização do Compose.
 
 ## Próximas fatias
 
-O núcleo de ingestão e consumo é o primeiro fluxo ponta a ponta. As próximas entregas são regras explicáveis e ciclo de vida de alertas, controles de configuração, observabilidade operacional e validação de integração em PostgreSQL. Firmware ESP32, alertas externos e compartilhamento entre usuários permanecem fora do MVP atual.
+O fluxo de ingestão, consumo, primeira regra/alerta, gestão de estado da fila e dados de demonstração estão implementados. As próximas entregas são regras noturnas e de dispositivo offline, configurações editáveis, comparativos, observabilidade operacional e validação de integração em PostgreSQL. Firmware ESP32, alertas externos e compartilhamento entre usuários permanecem fora do MVP atual.

@@ -14,6 +14,10 @@ class PropertyCreate(BaseModel):
     notification_threshold_liters: Decimal | None = Field(
         default=None, gt=0, max_digits=14, decimal_places=3
     )
+    continuous_flow_threshold_liters_minute: Decimal = Field(
+        default=Decimal("0.1"), gt=0, max_digits=12, decimal_places=3
+    )
+    continuous_flow_duration_minutes: int = Field(default=360, ge=1, le=10080)
 
     @field_validator("name")
     @classmethod
@@ -42,6 +46,8 @@ class PropertyOutput(BaseModel):
     timezone: str
     volume_unit: str
     notification_threshold_liters: Decimal | None
+    continuous_flow_threshold_liters_minute: Decimal
+    continuous_flow_duration_minutes: int
     late_reading_window_days: int
     created_at: datetime
 
