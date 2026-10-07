@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ThemeProvider } from "./theme-provider";
 
 export const metadata: Metadata = {
-  title: "AquaFlow | Consumo de água",
+  title: "aquaflow | Consumo de água",
   description: "Acompanhe o consumo de água da sua propriedade com clareza.",
 };
 
@@ -12,7 +13,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="pt-BR"
       className="h-full antialiased"
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col"><ThemeProvider>{children}</ThemeProvider></body>
     </html>
   );
 }
