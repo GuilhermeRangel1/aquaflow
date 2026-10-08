@@ -3,14 +3,14 @@ import secrets
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import current_user
 from app.core.security import hash_device_key
-from app.db.models import Device, Property, TelemetryReading, User
+from app.db.models import Alert, AnomalyEvent, Device, Property, TelemetryReading, User
 from app.db.session import get_session
 from app.schemas.resources import (
     DeviceCreate,
@@ -110,7 +110,7 @@ async def list_devices(
     result = await session.scalars(
         select(Device)
         .join(Property, Device.property_id == Property.id)
-        .where(Property.owner_id == user.id)
+        .where(Property.owner_id == user.id, Device.is_active.is_(True))
         .order_by(Device.created_at)
     )
     return DeviceList(items=[DeviceOutput.model_validate(item) for item in result])
@@ -120,7 +120,7 @@ async def _owned_device(session: AsyncSession, user: User, device_id: UUID) -> D
     device = await session.scalar(
         select(Device)
         .join(Property, Device.property_id == Property.id)
-        .where(Device.id == device_id, Property.owner_id == user.id)
+        .where(Device.id == device_id, Property.owner_id == user.id, Device.is_active.is_(True))
     )
     if device is None:
         raise HTTPException(
@@ -153,6 +153,37 @@ async def update_device(
     await session.commit()
     await session.refresh(device)
     return DeviceOutput.model_validate(device)
+
+
+@router.delete("/api/v1/devices/{device_id}", status_code=204, response_class=Response)
+async def retire_device(
+    device_id: UUID,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    device = await _owned_device(session, user, device_id)
+    device.is_active = False
+    now = datetime.now(UTC)
+    offline_alerts = list(
+        (
+            await session.execute(
+                select(Alert, AnomalyEvent)
+                .join(AnomalyEvent, AnomalyEvent.id == Alert.anomaly_id)
+                .where(
+                    AnomalyEvent.device_id == device.id,
+                    AnomalyEvent.detector_type == "device_offline",
+                    Alert.status.in_(["open", "acknowledged"]),
+                )
+            )
+        ).all()
+    )
+    for alert, anomaly in offline_alerts:
+        alert.status = "resolved"
+        alert.resolved_at = now
+        anomaly.window_end = now
+        anomaly.evidence = {**anomaly.evidence, "device_retired_at": now.isoformat()}
+    await session.commit()
+    return Response(status_code=204)
 
 
 @router.get("/api/v1/devices/{device_id}/health", response_model=DeviceHealthOutput)
@@ -304,7 +335,11 @@ async def rotate_device_key(
     device = await session.scalar(
         select(Device)
         .join(Property, Device.property_id == Property.id)
-        .where(Device.id == device_id, Property.owner_id == user.id)
+        .where(
+            Device.id == device_id,
+            Property.owner_id == user.id,
+            Device.is_active.is_(True),
+        )
     )
     if device is None:
         raise HTTPException(
