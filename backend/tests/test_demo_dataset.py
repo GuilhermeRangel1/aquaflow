@@ -42,7 +42,7 @@ async def test_demo_dataset_is_idempotent_and_visible_through_public_api() -> No
         assert await session.scalar(select(func.count()).select_from(Property)) == 1
         assert await session.scalar(select(func.count()).select_from(Device)) == 4
         assert await session.scalar(select(func.count()).select_from(TelemetryReading)) >= 150
-        assert await session.scalar(select(func.count()).select_from(Alert)) == 4
+        assert await session.scalar(select(func.count()).select_from(Alert)) == 5
 
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
@@ -75,6 +75,19 @@ async def test_demo_dataset_is_idempotent_and_visible_through_public_api() -> No
     assert {alert["status"] for alert in alerts.json()["items"]} == {
         "open", "acknowledged", "resolved", "false_positive"
     }
+    sample_alerts = [
+        alert for alert in alerts.json()["items"] if alert["evidence"].get("is_demo_sample")
+    ]
+    assert any(
+        alert["detector_type"] == "night_consumption"
+        and alert["evidence"].get("timezone") == "America/Sao_Paulo"
+        for alert in sample_alerts
+    )
+    assert any(
+        alert["detector_type"] == "device_offline"
+        and alert["evidence"].get("offline_threshold_seconds") == 600
+        for alert in sample_alerts
+    )
     assert consumption.status_code == 200
     assert consumption.json()["summary"]["total_volume_liters"] > 0
     await engine.dispose()

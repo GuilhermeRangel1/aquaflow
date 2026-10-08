@@ -117,7 +117,13 @@ async def seed_demo_data(
                 through=now,
             )
 
-        if await _add_sample_alerts(session, property_row, devices["AF-DEMO-004"], now):
+        if await _add_sample_alerts(
+            session,
+            property_row,
+            devices["AF-DEMO-004"],
+            devices["AF-DEMO-003"],
+            now,
+        ):
             created = True
         await session.commit()
         return created
@@ -209,7 +215,11 @@ def _laundry_readings(device: Device, now: datetime) -> list[TelemetryReading]:
 
 
 async def _add_sample_alerts(
-    session: AsyncSession, property_row: Property, device: Device, now: datetime
+    session: AsyncSession,
+    property_row: Property,
+    device: Device,
+    offline_device: Device,
+    now: datetime,
 ) -> bool:
     existing = list((await session.scalars(
         select(AnomalyEvent).where(AnomalyEvent.property_id == property_row.id)
@@ -219,32 +229,108 @@ async def _add_sample_alerts(
         for event in existing
         if isinstance(event.evidence, dict)
     }
-    fixtures = (
-        ("acknowledged", "Consumo noturno acima do padrão", "demo-alert-acknowledged"),
-        ("resolved", "Pico de consumo já normalizado", "demo-alert-resolved"),
-        ("false_positive", "Leitura compatível com uso planejado", "demo-alert-false-positive"),
+    sample_time = now - timedelta(days=2)
+    zone = ZoneInfo(property_row.timezone)
+    night_start = datetime.combine(
+        sample_time.astimezone(zone).date() - timedelta(days=1), time(22), tzinfo=zone
+    ).astimezone(UTC)
+    night_end = night_start + timedelta(minutes=15)
+    offline_last_seen = sample_time - timedelta(minutes=40)
+    fixtures: tuple[
+        tuple[str, str, str, str, Device, datetime, datetime, dict[str, str | int | float]], ...
+    ] = (
+        (
+            "acknowledged",
+            "night_consumption",
+            "Consumo noturno acima do padrão",
+            "demo-alert-night",
+            device,
+            night_start,
+            night_end,
+            {
+                "baseline_daytime_median_liters_minute": 0.05,
+                "minimum_increase_liters_minute": 0.1,
+                "threshold_liters_minute": 0.15,
+                "observed_flow_rate_liters_minute": 0.18,
+                "required_duration_minutes": 15,
+                "observed_duration_minutes": 15,
+                "measured_interval_count": 3,
+                "max_sample_gap_seconds": 300,
+                "night_window": "22:00-06:00",
+                "timezone": property_row.timezone,
+                "baseline_interval_count": 24,
+            },
+        ),
+        (
+            "resolved",
+            "demo_sample",
+            "Pico de consumo já normalizado",
+            "demo-alert-resolved",
+            device,
+            sample_time,
+            sample_time + timedelta(hours=1),
+            {},
+        ),
+        (
+            "false_positive",
+            "demo_sample",
+            "Leitura compatível com uso planejado",
+            "demo-alert-false-positive",
+            device,
+            sample_time,
+            sample_time + timedelta(hours=1),
+            {},
+        ),
+        (
+            "open",
+            "device_offline",
+            "Medidor sem comunicação por mais de dois intervalos",
+            "demo-alert-offline",
+            offline_device,
+            offline_last_seen + timedelta(seconds=600),
+            sample_time,
+            {
+                "last_seen_at": offline_last_seen.isoformat(),
+                "expected_interval_seconds": 300,
+                "offline_threshold_seconds": 600,
+                "seconds_since_last_seen": 2400,
+            },
+        ),
     )
     added = False
-    for status, reason, fixture_key in fixtures:
+    for (
+        status,
+        detector_type,
+        reason,
+        fixture_key,
+        sample_device,
+        window_start,
+        window_end,
+        evidence,
+    ) in fixtures:
         if fixture_key in existing_keys:
             continue
         anomaly = AnomalyEvent(
             property_id=property_row.id,
-            device_id=device.id,
-            detector_type="demo_sample",
+            device_id=sample_device.id,
+            detector_type=detector_type,
             score=Decimal("0.650"),
             severity="medium",
             reason=f"Amostra demonstrativa: {reason}",
-            window_start=now - timedelta(days=2),
-            window_end=now - timedelta(days=2) + timedelta(hours=1),
-            evidence={"is_demo_sample": True, "demo_fixture_key": fixture_key},
-            detected_at=now - timedelta(days=2),
+            window_start=window_start,
+            window_end=window_end,
+            evidence={
+                **evidence,
+                "is_demo_sample": True,
+                "demo_fixture_key": fixture_key,
+            },
+            detected_at=window_end,
         )
         session.add(anomaly)
         await session.flush()
-        acknowledged = now - timedelta(days=2) + timedelta(minutes=10) if status != "open" else None
+        acknowledged = anomaly.detected_at + timedelta(minutes=10) if status != "open" else None
         resolved = (
-            now - timedelta(days=2) + timedelta(minutes=30)
+            anomaly.detected_at + timedelta(minutes=30)
             if status in {"resolved", "false_positive"}
             else None
         )
