@@ -25,6 +25,9 @@ class ConsumptionItem(BaseModel):
 class ConsumptionSummary(BaseModel):
     total_volume_liters: float
     valid_interval_count: int
+    previous_period_total_volume_liters: float | None = None
+    change_volume_liters: float | None = None
+    change_percent: float | None = None
 
 
 class ConsumptionResponse(BaseModel):
@@ -80,13 +83,15 @@ async def get_consumption(
 
     device_ids = [device.id for device in devices]
     max_lookback = max(device.expected_interval_seconds * 2 for device in devices)
+    previous_start = start_utc - (end_utc - start_utc)
     readings = list(
         (
             await session.scalars(
                 select(TelemetryReading)
                 .where(
                     TelemetryReading.device_id.in_(device_ids),
-                    TelemetryReading.recorded_at >= start_utc - timedelta(seconds=max_lookback),
+                    TelemetryReading.recorded_at
+                    >= previous_start - timedelta(seconds=max_lookback),
                     TelemetryReading.recorded_at <= end_utc,
                 )
                 .order_by(TelemetryReading.device_id, TelemetryReading.recorded_at)
@@ -96,7 +101,9 @@ async def get_consumption(
     device_by_id = {device.id: device for device in devices}
     samples_by_device: dict[UUID, list[Sample]] = {device.id: [] for device in devices}
     for reading in readings:
-        if reading.quality == "counter_reset":
+        # Invalid/reset/out-of-order observations remain available in the raw
+        # history, but must not contribute to derived consumption.
+        if reading.quality != "valid":
             continue
         samples_by_device[reading.device_id].append(
             Sample(
@@ -108,26 +115,27 @@ async def get_consumption(
             )
         )
 
-    totals: dict[datetime, tuple[Decimal, int]] = {}
-    for device_id, samples in samples_by_device.items():
-        buckets = aggregate_samples(
-            samples,
-            device_by_id[device_id].expected_interval_seconds,
-            property_row.timezone,
-            granularity,
-            start=start_utc,
-            end=end_utc,
-        )
-        for bucket in buckets:
-            volume, count = totals.get(bucket.bucket_start, (Decimal(0), 0))
-            totals[bucket.bucket_start] = (
-                volume + bucket.volume_liters,
-                count + bucket.sample_count,
-            )
-
-    ordered = sorted(totals.items())
+    current_totals = _aggregate_period(
+        samples_by_device,
+        device_by_id,
+        property_row.timezone,
+        granularity,
+        start=start_utc,
+        end=end_utc,
+    )
+    previous_totals = _aggregate_period(
+        samples_by_device,
+        device_by_id,
+        property_row.timezone,
+        granularity,
+        start=previous_start,
+        end=start_utc,
+    )
+    ordered = sorted(current_totals.items())
     page = ordered[:limit]
     total = sum((value[0] for _, value in ordered), Decimal(0))
+    previous_total = sum((value[0] for value in previous_totals.values()), Decimal(0))
+    change = total - previous_total
     return ConsumptionResponse(
         items=[
             ConsumptionItem(
@@ -143,13 +151,54 @@ async def get_consumption(
         summary=ConsumptionSummary(
             total_volume_liters=float(total.quantize(Decimal("0.001"))),
             valid_interval_count=sum(value[1] for _, value in ordered),
+            previous_period_total_volume_liters=float(previous_total.quantize(Decimal("0.001"))),
+            change_volume_liters=float(change.quantize(Decimal("0.001"))),
+            change_percent=(
+                float((change / previous_total * Decimal(100)).quantize(Decimal("0.1")))
+                if previous_total > 0
+                else None
+            ),
         ),
     )
+
+
+def _aggregate_period(
+    samples_by_device: dict[UUID, list[Sample]],
+    device_by_id: dict[UUID, Device],
+    timezone_name: str,
+    granularity: Literal["hour", "day", "month"],
+    *,
+    start: datetime,
+    end: datetime,
+) -> dict[datetime, tuple[Decimal, int]]:
+    totals: dict[datetime, tuple[Decimal, int]] = {}
+    for device_id, samples in samples_by_device.items():
+        buckets = aggregate_samples(
+            samples,
+            device_by_id[device_id].expected_interval_seconds,
+            timezone_name,
+            granularity,
+            start=start,
+            end=end,
+        )
+        for bucket in buckets:
+            volume, count = totals.get(bucket.bucket_start, (Decimal(0), 0))
+            totals[bucket.bucket_start] = (
+                volume + bucket.volume_liters,
+                count + bucket.sample_count,
+            )
+    return totals
 
 
 def empty_response(limit: int) -> ConsumptionResponse:
     return ConsumptionResponse(
         items=[],
         limit=limit,
-        summary=ConsumptionSummary(total_volume_liters=0, valid_interval_count=0),
+        summary=ConsumptionSummary(
+            total_volume_liters=0,
+            valid_interval_count=0,
+            previous_period_total_volume_liters=0,
+            change_volume_liters=0,
+            change_percent=None,
+        ),
     )
