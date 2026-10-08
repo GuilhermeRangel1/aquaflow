@@ -16,5 +16,5 @@ export function resolveActivePropertyId(
 
 /** @param {string | null} requestedView */
 export function resolveDashboardView(requestedView) {
-  return requestedView === "meters" || requestedView === "alerts" ? requestedView : "overview";
+  return requestedView === "meters" || requestedView === "alerts" || requestedView === "settings" ? requestedView : "overview";
 }
