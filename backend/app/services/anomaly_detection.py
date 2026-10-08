@@ -5,7 +5,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Alert, AnomalyEvent, Device, Property, TelemetryReading
-from app.domain.anomalies import ReadingSample, detect_continuous_flow
+from app.domain.anomalies import (
+    AnomalyCandidate,
+    ReadingSample,
+    detect_continuous_flow,
+    detect_night_consumption,
+)
 
 
 async def evaluate_continuous_flow(
@@ -98,6 +103,94 @@ async def evaluate_continuous_flow(
             created_at=now,
         )
     )
+
+
+async def evaluate_night_consumption(
+    session: AsyncSession,
+    *,
+    device: Device,
+    property_row: Property,
+    through: datetime,
+) -> None:
+    through_utc = _as_utc(through)
+    lookback = timedelta(days=7) + timedelta(minutes=15) + timedelta(
+        seconds=device.expected_interval_seconds * 2
+    )
+    readings = list(
+        (
+            await session.scalars(
+                select(TelemetryReading)
+                .where(
+                    TelemetryReading.device_id == device.id,
+                    TelemetryReading.recorded_at >= through_utc - lookback,
+                    TelemetryReading.recorded_at <= through_utc,
+                )
+                .order_by(TelemetryReading.recorded_at)
+            )
+        ).all()
+    )
+    candidate = detect_night_consumption(
+        [
+            ReadingSample(
+                recorded_at=reading.recorded_at,
+                quality=reading.quality,
+                cumulative_volume_liters=reading.cumulative_volume_liters,
+                flow_rate_liters_minute=reading.flow_rate_liters_minute,
+            )
+            for reading in readings
+        ],
+        expected_interval_seconds=device.expected_interval_seconds,
+        timezone_name=property_row.timezone,
+    )
+    if candidate is not None:
+        await _persist_candidate(session, device, property_row, candidate)
+
+
+async def _persist_candidate(
+    session: AsyncSession,
+    device: Device,
+    property_row: Property,
+    candidate: AnomalyCandidate,
+) -> None:
+    active = await session.execute(
+        select(Alert, AnomalyEvent)
+        .join(AnomalyEvent, AnomalyEvent.id == Alert.anomaly_id)
+        .where(
+            AnomalyEvent.device_id == device.id,
+            AnomalyEvent.detector_type == candidate.detector_type,
+            Alert.status.in_(["open", "acknowledged"]),
+        )
+        .order_by(Alert.created_at.desc())
+        .limit(1)
+    )
+    active_pair = active.first()
+    now = datetime.now(UTC)
+    if active_pair is not None:
+        _, anomaly = active_pair
+        anomaly.window_end = candidate.window_end
+        anomaly.evidence = {
+            **anomaly.evidence,
+            **candidate.evidence,
+            "occurrence_count": int(anomaly.evidence.get("occurrence_count", 1)) + 1,
+            "last_detected_at": now.isoformat(),
+        }
+        return
+
+    anomaly = AnomalyEvent(
+        property_id=property_row.id,
+        device_id=device.id,
+        detector_type=candidate.detector_type,
+        score=candidate.score,
+        severity=candidate.severity,
+        reason=candidate.reason,
+        window_start=candidate.window_start,
+        window_end=candidate.window_end,
+        evidence={**candidate.evidence, "occurrence_count": 1},
+        detected_at=now,
+    )
+    session.add(anomaly)
+    await session.flush()
+    session.add(Alert(anomaly_id=anomaly.id, status="open", channel="dashboard", created_at=now))
 
 
 def _as_utc(value: datetime) -> datetime:

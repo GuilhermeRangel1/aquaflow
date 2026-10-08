@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -13,6 +14,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api import alerts, auth, consumption, resources, telemetry
 from app.core.config import Settings, settings
 from app.db.session import create_session_factory
+from app.services.device_monitor import run_offline_monitor
 
 
 def create_app(
@@ -24,8 +26,17 @@ def create_app(
     engine: Any = getattr(factory, "kw", {}).get("bind")
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> Any:
-        yield
+    async def lifespan(app: FastAPI) -> Any:
+        monitor_task = asyncio.create_task(run_offline_monitor(factory))
+        app.state.offline_monitor_task = monitor_task
+        try:
+            yield
+        finally:
+            monitor_task.cancel()
+            try:
+                await monitor_task
+            except asyncio.CancelledError:
+                pass
         if engine is not None:
             await engine.dispose()
 

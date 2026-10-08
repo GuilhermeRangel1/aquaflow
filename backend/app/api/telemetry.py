@@ -16,7 +16,8 @@ from app.schemas.telemetry import (
     TelemetryAccepted,
     TelemetryInput,
 )
-from app.services.anomaly_detection import evaluate_continuous_flow
+from app.services.anomaly_detection import evaluate_continuous_flow, evaluate_night_consumption
+from app.services.device_monitor import resolve_offline_alerts
 
 router = APIRouter(prefix="/api/v1/ingestion", tags=["ingestion"])
 
@@ -114,6 +115,7 @@ async def save_reading(
             .where(
                 Device.serial_number == payload.device_serial,
                 Device.device_key_hash == key_hash,
+                Device.is_active.is_(True),
             )
         )
         if device is None:
@@ -191,8 +193,15 @@ async def save_reading(
         if device.last_seen_at is None or _as_utc(device.last_seen_at) < now:
             device.last_seen_at = now
         await session.flush()
+        await resolve_offline_alerts(session, device, now=now)
         if quality == "valid":
             await evaluate_continuous_flow(
+                session,
+                device=device,
+                property_row=property_row,
+                through=recorded_at,
+            )
+            await evaluate_night_consumption(
                 session,
                 device=device,
                 property_row=property_row,
