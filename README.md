@@ -57,6 +57,8 @@ No Compose local, entre com a conta sintética `demo@example.com` e a senha `Aqu
 
 Para testar também o cadastro e a ingestão, adicione outro medidor com número de série ainda não usado. A chave é exibida uma única vez; use “Simular leituras” para enviar eventos pela mesma rota de telemetria do dispositivo. A lista, os indicadores e o gráfico atualizam pela API.
 
+Para conectar um ESP32 na rede local, consulte o [guia de integração](docs/integracao-esp32.md), incluindo o endereço da API visto pelo dispositivo, o formato de telemetria e um teste de idempotência via PowerShell.
+
 Essas credenciais são apenas para desenvolvimento local. O seed não roda em `ENVIRONMENT=production` e a API rejeita `DEMO_MODE=true` nesse ambiente.
 
 ### Regra inicial de fluxo contínuo
@@ -83,4 +85,4 @@ Os testes de API usam SQLite assíncrono para não depender de serviço externo.
 
 ## Próximas fatias
 
-O fluxo de ingestão, consumo, primeira regra/alerta, gestão de estado da fila e dados de demonstração estão implementados. As próximas entregas são regras noturnas e de dispositivo offline, configurações editáveis, comparativos, observabilidade operacional e validação de integração em PostgreSQL. Firmware ESP32, alertas externos e compartilhamento entre usuários permanecem fora do MVP atual.
+O fluxo de ingestão, consulta de saúde/leitura bruta de medidores, atualização das configurações principais, comparação de períodos e regras de fluxo contínuo, consumo noturno e dispositivo offline estão implementados. A regra noturna compara o fluxo com a mediana diurna recente, e o alerta offline é encerrado quando o medidor volta a enviar leituras. As próximas entregas são telas para edição das configurações, observabilidade operacional e validação de integração em PostgreSQL. O firmware ESP32 e a calibração do sensor dependem do hardware do protótipo. Alertas externos e compartilhamento entre usuários permanecem fora do MVP atual. Machine learning segue como etapa opcional após formar histórico real com qualidade avaliada.

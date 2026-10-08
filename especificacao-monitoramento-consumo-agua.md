@@ -215,6 +215,7 @@ class TelemetryReading(Base):
 | POST | `/devices` | cadastra dispositivo |
 | GET | `/devices/{device_id}` | detalhes e status |
 | PATCH | `/devices/{device_id}` | renomeia ou configura |
+| DELETE | `/devices/{device_id}` | desativa medidor, preservando telemetria e alertas históricos |
 | POST | `/devices/{device_id}/rotate-key` | gira credencial |
 | GET | `/devices/{device_id}/health` | heartbeat e qualidade |
 
@@ -343,6 +344,8 @@ O MVP deve comecar por regras deterministicas, faceis de explicar e auditar:
 | Pico impossivel | valor acima do limite fisico do medidor | alta |
 | Dispositivo silencioso | nenhuma leitura dentro da janela esperada | media |
 | Baixa qualidade | muitos eventos invalidos ou fora de ordem | baixa |
+
+Decisoes do MVP para as duas primeiras regras ainda nao parametrizaveis: consumo noturno e avaliado entre 22h e 6h no fuso da propriedade. O fluxo do medidor deve exceder em pelo menos 0,1 L/min a mediana das vazoes diurnas validas dos ultimos sete dias por 15 minutos consecutivos; sem ao menos seis intervalos validos para a baseline, a regra nao gera alerta. Dispositivo silencioso e considerado offline apos dois intervalos esperados sem leitura; a verificacao roda periodicamente e o alerta ativo e resolvido quando uma nova leitura chega.
 
 As regras devem permitir configuracao por propriedade e registrar qual limiar foi aplicado.
 
