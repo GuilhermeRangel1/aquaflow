@@ -1,5 +1,6 @@
+import asyncio
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest_asyncio
@@ -109,4 +110,65 @@ async def empty_api_client() -> AsyncIterator[AsyncClient]:
     app = create_app(settings=settings, session_factory=sessions)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def stale_meter_api_client() -> AsyncIterator[tuple[AsyncClient, UUID, str, str]]:
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    settings = Settings(
+        database_url="sqlite+aiosqlite:///:memory:",
+        jwt_secret="test-only-secret-with-enough-entropy-for-tests",
+    )
+    app = create_app(settings=settings, session_factory=sessions)
+    user_id = uuid4()
+    property_id = uuid4()
+    device_id = uuid4()
+    device_key = "stale-device-key-never-used-outside-tests"
+    async with sessions.begin() as session:
+        session.add(
+            User(
+                id=user_id,
+                name="Offline Test Owner",
+                email="offline-owner@example.test",
+                password_hash="test-password-hash",
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            Property(
+                id=property_id,
+                owner_id=user_id,
+                name="Casa com medidor offline",
+                timezone="America/Sao_Paulo",
+                volume_unit="L",
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            Device(
+                id=device_id,
+                property_id=property_id,
+                serial_number="OFFLINE-TEST-001",
+                name="Medidor offline",
+                device_key_hash=hash_device_key(device_key),
+                expected_interval_seconds=300,
+                last_seen_at=datetime.now(UTC) - timedelta(minutes=20),
+            )
+        )
+
+    token = issue_access_token(user_id, settings)
+    transport = ASGITransport(app=app)
+    async with app.router.lifespan_context(app):
+        await asyncio.sleep(0.05)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client, property_id, device_key, token
     await engine.dispose()

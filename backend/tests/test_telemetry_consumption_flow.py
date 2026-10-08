@@ -12,7 +12,7 @@ async def test_cumulative_readings_are_idempotent_and_visible_as_consumption(
     api_client: tuple[AsyncClient, object, str, str],
 ) -> None:
     client, property_id, device_key, token = api_client
-    start = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+    start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(days=1)
     headers = {"X-Device-Key": device_key}
     first = reading_payload(str(uuid4()), start.isoformat(), cumulative_volume_liters=100.0)
     second = reading_payload(
@@ -51,11 +51,52 @@ async def test_cumulative_readings_are_idempotent_and_visible_as_consumption(
 
 
 @pytest.mark.asyncio
+async def test_consumption_summary_compares_with_the_equivalent_previous_period(
+    api_client: tuple[AsyncClient, object, str, str],
+) -> None:
+    client, property_id, device_key, token = api_client
+    start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(days=1)
+    readings = [
+        (start - timedelta(minutes=5), 100.0),
+        (start, 110.0),
+        (start + timedelta(minutes=5), 130.0),
+    ]
+    for recorded_at, volume in readings:
+        response = await client.post(
+            "/api/v1/ingestion/telemetry",
+            headers={"X-Device-Key": device_key},
+            json=reading_payload(
+                str(uuid4()),
+                recorded_at.isoformat(),
+                cumulative_volume_liters=volume,
+            ),
+        )
+        assert response.status_code == 202
+
+    response = await client.get(
+        f"/api/v1/properties/{property_id}/consumption",
+        params={
+            "start": start.isoformat(),
+            "end": (start + timedelta(hours=1)).isoformat(),
+            "granularity": "hour",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["summary"]
+    assert summary["total_volume_liters"] == pytest.approx(20.0)
+    assert summary["previous_period_total_volume_liters"] == pytest.approx(10.0)
+    assert summary["change_volume_liters"] == pytest.approx(10.0)
+    assert summary["change_percent"] == pytest.approx(100.0)
+
+
+@pytest.mark.asyncio
 async def test_batch_keeps_valid_events_and_reports_invalid_items_individually(
     api_client: tuple[AsyncClient, object, str, str],
 ) -> None:
     client, _, device_key, _ = api_client
-    start = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+    start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(days=1)
     response = await client.post(
         "/api/v1/ingestion/telemetry/batch",
         headers={"X-Device-Key": device_key},
@@ -89,7 +130,7 @@ async def test_instantaneous_flow_is_integrated_when_samples_are_close_enough(
     api_client: tuple[AsyncClient, object, str, str],
 ) -> None:
     client, property_id, device_key, token = api_client
-    start = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+    start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(days=1)
     headers = {"X-Device-Key": device_key}
     for event_id, timestamp, rate in [
         (str(uuid4()), start, 0.2),
@@ -130,7 +171,7 @@ async def test_ingestion_rejects_unknown_device_key(
         headers={"X-Device-Key": "not-the-device-key"},
         json=reading_payload(
             str(uuid4()),
-            datetime(2026, 10, 1, 12, 0, tzinfo=UTC).isoformat(),
+            datetime.now(UTC).isoformat(),
             cumulative_volume_liters=100.0,
         ),
     )

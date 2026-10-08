@@ -1,7 +1,93 @@
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
+
+from tests.conftest import reading_payload
+
+
+@pytest.mark.asyncio
+async def test_owner_can_update_property_settings_through_public_api(
+    api_client: tuple[AsyncClient, UUID, str, str],
+) -> None:
+    client, property_id, _, token = api_client
+    headers = {"Authorization": f"Bearer {token}"}
+
+    updated = await client.patch(
+        f"/api/v1/properties/{property_id}",
+        headers=headers,
+        json={
+            "name": "Casa de campo",
+            "address": "Rua das Águas, 42",
+            "timezone": "America/Manaus",
+            "continuous_flow_threshold_liters_minute": 0.35,
+            "continuous_flow_duration_minutes": 45,
+            "late_reading_window_days": 12,
+        },
+    )
+    retrieved = await client.get(f"/api/v1/properties/{property_id}", headers=headers)
+
+    assert updated.status_code == 200
+    assert updated.json()["timezone"] == "America/Manaus"
+    assert Decimal(updated.json()["continuous_flow_threshold_liters_minute"]) == Decimal("0.35")
+    assert updated.json()["continuous_flow_duration_minutes"] == 45
+    assert updated.json()["late_reading_window_days"] == 12
+    assert retrieved.status_code == 200
+    assert retrieved.json()["name"] == "Casa de campo"
+    assert retrieved.json()["address"] == "Rua das Águas, 42"
+
+
+@pytest.mark.asyncio
+async def test_owner_can_edit_and_retire_meter_without_losing_consumption_history(
+    api_client: tuple[AsyncClient, UUID, str, str],
+) -> None:
+    client, property_id, device_key, token = api_client
+    authorization = {"Authorization": f"Bearer {token}"}
+    devices = await client.get("/api/v1/devices", headers=authorization)
+    device_id = devices.json()["items"][0]["id"]
+    start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(hours=2)
+    for event_id, recorded_at, volume in [
+        (str(uuid4()), start, 80.0),
+        (str(uuid4()), start + timedelta(minutes=5), 85.0),
+    ]:
+        accepted = await client.post(
+            "/api/v1/ingestion/telemetry",
+            headers={"X-Device-Key": device_key},
+            json=reading_payload(
+                event_id,
+                recorded_at.isoformat(),
+                cumulative_volume_liters=volume,
+            ),
+        )
+        assert accepted.status_code == 202
+
+    edited = await client.patch(
+        f"/api/v1/devices/{device_id}",
+        headers=authorization,
+        json={"name": "Medidor da cozinha", "expected_interval_seconds": 600},
+    )
+    retired = await client.delete(f"/api/v1/devices/{device_id}", headers=authorization)
+    listed_after_retirement = await client.get("/api/v1/devices", headers=authorization)
+    consumption = await client.get(
+        f"/api/v1/properties/{property_id}/consumption",
+        params={
+            "start": start.isoformat(),
+            "end": (start + timedelta(hours=1)).isoformat(),
+            "granularity": "hour",
+        },
+        headers=authorization,
+    )
+
+    assert edited.status_code == 200
+    assert edited.json()["name"] == "Medidor da cozinha"
+    assert edited.json()["expected_interval_seconds"] == 600
+    assert retired.status_code == 204
+    assert all(item["id"] != device_id for item in listed_after_retirement.json()["items"])
+    assert consumption.status_code == 200
+    assert consumption.json()["summary"]["total_volume_liters"] == pytest.approx(5.0)
+
 
 
 @pytest.mark.asyncio

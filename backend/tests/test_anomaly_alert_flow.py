@@ -1,10 +1,125 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import AsyncClient
 
 from tests.conftest import reading_payload
+
+
+@pytest.mark.asyncio
+async def test_sustained_night_flow_creates_explained_alert_in_property_timezone(
+    api_client: tuple[AsyncClient, object, str, str],
+) -> None:
+    client, property_id, device_key, token = api_client
+    zone = ZoneInfo("America/Sao_Paulo")
+    previous_day = datetime.now(UTC).astimezone(zone).date() - timedelta(days=1)
+    day_start = datetime(
+        previous_day.year,
+        previous_day.month,
+        previous_day.day,
+        10,
+        tzinfo=zone,
+    )
+    night_start = day_start.replace(hour=22)
+    payloads = [
+        reading_payload(
+            str(uuid4()),
+            (day_start + timedelta(minutes=5 * index)).isoformat(),
+            cumulative_volume_liters=1000 + index * 0.25,
+        )
+        for index in range(7)
+    ]
+    payloads.extend(
+        reading_payload(
+            str(uuid4()),
+            (night_start + timedelta(minutes=5 * index)).isoformat(),
+            cumulative_volume_liters=2000 + index * 0.75,
+        )
+        for index in range(4)
+    )
+
+    ingestion = await client.post(
+        "/api/v1/ingestion/telemetry/batch",
+        headers={"X-Device-Key": device_key},
+        json={"items": payloads},
+    )
+    alerts_response = await client.get(
+        f"/api/v1/properties/{property_id}/alerts",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert ingestion.status_code == 200
+    assert all(item["status"] == "accepted" for item in ingestion.json()["items"])
+    assert alerts_response.status_code == 200
+    alerts = alerts_response.json()["items"]
+    assert len(alerts) == 1
+    alert = alerts[0]
+    assert alert["detector_type"] == "night_consumption"
+    assert alert["severity"] == "medium"
+    assert "horário local" in alert["reason"] or "noturno" in alert["reason"]
+    assert alert["evidence"]["timezone"] == "America/Sao_Paulo"
+    assert alert["evidence"]["night_window"] == "22:00-06:00"
+    assert alert["evidence"]["baseline_daytime_median_liters_minute"] == pytest.approx(0.05)
+    assert alert["evidence"]["minimum_increase_liters_minute"] == pytest.approx(0.1)
+    assert alert["evidence"]["observed_duration_minutes"] >= 15
+
+
+@pytest.mark.asyncio
+async def test_offline_alert_is_opened_and_resolved_after_meter_reconnects(
+    stale_meter_api_client: tuple[AsyncClient, object, str, str],
+) -> None:
+    client, property_id, device_key, token = stale_meter_api_client
+    authorization = {"Authorization": f"Bearer {token}"}
+    devices = await client.get("/api/v1/devices", headers=authorization)
+    device_id = devices.json()["items"][0]["id"]
+    health = await client.get(f"/api/v1/devices/{device_id}/health", headers=authorization)
+    alerts_response = None
+    for _ in range(20):
+        alerts_response = await client.get(
+            f"/api/v1/properties/{property_id}/alerts",
+            headers=authorization,
+        )
+        if alerts_response.json()["items"]:
+            break
+        await asyncio.sleep(0.025)
+
+    assert alerts_response is not None
+    assert alerts_response.status_code == 200
+    assert health.status_code == 200
+    assert health.json()["connectivity"] == "offline"
+    alerts = alerts_response.json()["items"]
+    assert len(alerts) == 1
+    offline_alert = alerts[0]
+    assert offline_alert["detector_type"] == "device_offline"
+    assert offline_alert["status"] == "open"
+    assert offline_alert["evidence"]["expected_interval_seconds"] == 300
+    assert offline_alert["evidence"]["offline_threshold_seconds"] == 600
+
+    reconnect_payload = reading_payload(
+        str(uuid4()),
+        datetime.now(UTC).isoformat(),
+        cumulative_volume_liters=100.0,
+    )
+    reconnect_payload["device_serial"] = "OFFLINE-TEST-001"
+    reading = await client.post(
+        "/api/v1/ingestion/telemetry",
+        headers={"X-Device-Key": device_key},
+        json=reconnect_payload,
+    )
+    refreshed_alerts = await client.get(
+        f"/api/v1/properties/{property_id}/alerts",
+        headers=authorization,
+    )
+    resolved = refreshed_alerts.json()["items"][0]
+
+    assert reading.status_code == 202
+    assert refreshed_alerts.status_code == 200
+    assert resolved["id"] == offline_alert["id"]
+    assert resolved["status"] == "resolved"
+    assert "reconnected_at" in resolved["evidence"]
 
 
 @pytest.mark.asyncio
