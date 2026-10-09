@@ -184,6 +184,9 @@ export default function Dashboard() {
     () => devices.filter((item) => item.property_id === selectedId),
     [devices, selectedId],
   );
+  const activeAlertCount = alerts.filter(
+    (alert) => alert.status === "open" || alert.status === "acknowledged",
+  ).length;
 
   const load = useCallback(
     async (propertyId?: string) => {
@@ -544,9 +547,9 @@ export default function Dashboard() {
                 onClick={() => navigateView(destination)}
               >
                 {label}
-                {destination === "alerts" && alerts.some((alert) => alert.status === "open") && (
-                  <span className="nav-count" aria-label="alertas abertos">
-                    {alerts.filter((alert) => alert.status === "open").length}
+                {destination === "alerts" && activeAlertCount > 0 && (
+                  <span className="nav-count" aria-label="alertas em acompanhamento">
+                    {activeAlertCount}
                   </span>
                 )}
               </button>
@@ -1031,11 +1034,8 @@ export default function Dashboard() {
                     <span className="eyebrow">Acompanhamento</span>
                     <h2 id="alerts-title">Alertas da propriedade</h2>
                   </div>
-                  <span className="count-chip">
-                    {alerts
-                      .filter((alert) => alert.status === "open" || alert.status === "acknowledged")
-                      .length.toString()
-                      .padStart(2, "0")}
+                  <span className="count-chip" aria-label="alertas em acompanhamento">
+                    {activeAlertCount.toString().padStart(2, "0")}
                   </span>
                 </div>
                 <p className="section-subtitle">
@@ -1153,14 +1153,7 @@ export default function Dashboard() {
                 </button>
                 <button className="surface shortcut-card" onClick={() => navigateView("alerts")}>
                   <span className="eyebrow">Acompanhamento</span>
-                  <strong>
-                    {
-                      alerts.filter(
-                        (alert) => alert.status === "open" || alert.status === "acknowledged",
-                      ).length
-                    }{" "}
-                    alertas em acompanhamento
-                  </strong>
+                  <strong>{activeAlertCount} alertas em acompanhamento</strong>
                   <span>Revisar evidências e atualizar o estado dos alertas</span>
                   <b aria-hidden="true">→</b>
                 </button>
