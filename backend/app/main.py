@@ -1,4 +1,5 @@
 import asyncio
+from collections import Counter
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -6,7 +7,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -43,6 +44,16 @@ def create_app(
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.session_factory = factory
+    request_counts: Counter[tuple[str, str, int]] = Counter()
+
+    @app.middleware("http")
+    async def count_http_requests(request: Request, call_next: Any) -> Any:
+        response = await call_next(request)
+        route = request.scope.get("route")
+        route_template = getattr(route, "path", "unmatched")
+        request_counts[(request.method, route_template, response.status_code)] += 1
+        return response
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -88,6 +99,23 @@ def create_app(
         async with factory() as session:
             await session.execute(text("SELECT 1"))
         return {"status": "ready"}
+
+    @app.get("/metrics", tags=["health"], response_class=PlainTextResponse)
+    async def metrics() -> PlainTextResponse:
+        lines = [
+            "# HELP aquaflow_http_requests_total HTTP requests handled by this API process.",
+            "# TYPE aquaflow_http_requests_total counter",
+        ]
+        for (method, route, status), count in sorted(request_counts.items()):
+            safe_route = route.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+            lines.append(
+                f'aquaflow_http_requests_total{{method="{method}",route="{safe_route}",'
+                f'status="{status}"}} {count}'
+            )
+        return PlainTextResponse(
+            "\n".join(lines) + "\n",
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     return app
 

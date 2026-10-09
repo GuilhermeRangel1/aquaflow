@@ -2,9 +2,10 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.cursors import decode_time_id, encode_time_id
 from app.api.deps import current_user
 from app.db.models import Alert, AnomalyEvent, Property, User
 from app.db.session import get_session
@@ -19,6 +20,7 @@ AlertStatus = Literal["open", "acknowledged", "resolved", "false_positive"]
 async def list_property_anomalies(
     property_id: UUID,
     limit: int = Query(default=100, ge=1, le=200),
+    cursor: str | None = None,
     user: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> AnomalyList:
@@ -27,22 +29,34 @@ async def list_property_anomalies(
     )
     if property_exists is None:
         raise _not_found("property_not_found", "Property was not found")
+    statement = select(AnomalyEvent).where(AnomalyEvent.property_id == property_id)
+    if cursor is not None:
+        try:
+            cursor_at, cursor_id = decode_time_id(cursor)
+        except ValueError:
+            raise _invalid_cursor() from None
+        statement = statement.where(
+            or_(
+                AnomalyEvent.detected_at < cursor_at,
+                and_(AnomalyEvent.detected_at == cursor_at, AnomalyEvent.id < cursor_id),
+            )
+        )
     rows = list(
         (
             await session.scalars(
-                select(AnomalyEvent)
-                .where(AnomalyEvent.property_id == property_id)
-                .order_by(AnomalyEvent.detected_at.desc())
-                .limit(limit + 1)
+                statement.order_by(AnomalyEvent.detected_at.desc(), AnomalyEvent.id.desc()).limit(
+                    limit + 1
+                )
             )
         ).all()
     )
     page = rows[:limit]
+    has_more = len(rows) > limit
     return AnomalyList(
         items=[_anomaly_output(item) for item in page],
         limit=limit,
-        cursor=None,
-        has_more=len(rows) > limit,
+        cursor=encode_time_id(page[-1].detected_at, page[-1].id) if has_more and page else None,
+        has_more=has_more,
     )
 
 
@@ -67,6 +81,7 @@ async def list_property_alerts(
     property_id: UUID,
     status: AlertStatus | None = None,
     limit: int = Query(default=100, ge=1, le=200),
+    cursor: str | None = None,
     user: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> AlertList:
@@ -84,13 +99,33 @@ async def list_property_alerts(
     )
     if status is not None:
         statement = statement.where(Alert.status == status)
-    rows = list((await session.execute(statement.limit(limit + 1))).all())
+    if cursor is not None:
+        try:
+            cursor_at, cursor_id = decode_time_id(cursor)
+        except ValueError:
+            raise _invalid_cursor() from None
+        statement = statement.where(
+            or_(
+                Alert.created_at < cursor_at,
+                and_(Alert.created_at == cursor_at, Alert.id < cursor_id),
+            )
+        )
+    rows = list(
+        (
+            await session.execute(
+                statement.order_by(Alert.created_at.desc(), Alert.id.desc()).limit(limit + 1)
+            )
+        ).all()
+    )
     page = rows[:limit]
+    has_more = len(rows) > limit
     return AlertList(
         items=[_to_output(alert, anomaly) for alert, anomaly in page],
         limit=limit,
-        cursor=None,
-        has_more=len(rows) > limit,
+        cursor=encode_time_id(page[-1][0].created_at, page[-1][0].id)
+        if has_more and page
+        else None,
+        has_more=has_more,
     )
 
 
@@ -181,6 +216,13 @@ def _anomaly_output(anomaly: AnomalyEvent) -> AnomalyOutput:
 
 def _not_found(code: str, message: str) -> HTTPException:
     return HTTPException(status_code=404, detail={"code": code, "message": message})
+
+
+def _invalid_cursor() -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail={"code": "invalid_cursor", "message": "Cursor is invalid"},
+    )
 
 
 def _invalid_transition(current: str, target: str) -> HTTPException:

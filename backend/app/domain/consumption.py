@@ -65,7 +65,7 @@ def aggregate_samples(
 
     for previous, current in pairwise(ordered):
         volume = interval_volume(previous, current, expected_interval_seconds)
-        if volume is None or volume == 0:
+        if volume is None:
             continue
         _distribute_interval(
             totals,

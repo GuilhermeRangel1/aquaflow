@@ -1,4 +1,3 @@
-import base64
 import secrets
 from datetime import UTC, datetime
 from uuid import UUID
@@ -8,6 +7,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.cursors import decode_time_id, encode_time_id
 from app.api.deps import current_user
 from app.core.security import hash_device_key
 from app.db.models import Alert, AnomalyEvent, Device, Property, TelemetryReading, User
@@ -26,6 +26,7 @@ from app.schemas.resources import (
     PropertyPatch,
     ProvisionedDeviceOutput,
 )
+from app.services.audit import add_audit_entry, audit_value
 
 router = APIRouter(tags=["properties and devices"])
 
@@ -96,8 +97,35 @@ async def update_property(
             status_code=404,
             detail={"code": "property_not_found", "message": "Property was not found"},
         )
+    changed_fields: list[str] = []
+    auditable_values: dict[str, object] = {}
+    auditable_fields = {
+        "timezone",
+        "volume_unit",
+        "notification_threshold_liters",
+        "continuous_flow_threshold_liters_minute",
+        "continuous_flow_duration_minutes",
+        "late_reading_window_days",
+    }
     for field_name, value in payload.model_dump(exclude_unset=True).items():
+        previous = getattr(property_row, field_name)
+        if previous != value:
+            changed_fields.append(field_name)
+            if field_name in auditable_fields:
+                auditable_values[field_name] = {
+                    "from": audit_value(previous),
+                    "to": audit_value(value),
+                }
         setattr(property_row, field_name, value)
+    if changed_fields:
+        add_audit_entry(
+            session,
+            actor_id=user.id,
+            action="property.updated",
+            resource_type="property",
+            resource_id=property_row.id,
+            metadata={"changed_fields": changed_fields, "changes": auditable_values},
+        )
     await session.commit()
     await session.refresh(property_row)
     return PropertyOutput.model_validate(property_row)
@@ -148,8 +176,21 @@ async def update_device(
     session: AsyncSession = Depends(get_session),
 ) -> DeviceOutput:
     device = await _owned_device(session, user, device_id)
+    changes: dict[str, object] = {}
     for field_name, value in payload.model_dump(exclude_unset=True).items():
+        previous = getattr(device, field_name)
+        if previous != value:
+            changes[field_name] = {"from": audit_value(previous), "to": audit_value(value)}
         setattr(device, field_name, value)
+    if changes:
+        add_audit_entry(
+            session,
+            actor_id=user.id,
+            action="device.updated",
+            resource_type="device",
+            resource_id=device.id,
+            metadata={"changes": changes},
+        )
     await session.commit()
     await session.refresh(device)
     return DeviceOutput.model_validate(device)
@@ -178,10 +219,31 @@ async def retire_device(
         ).all()
     )
     for alert, anomaly in offline_alerts:
+        previous_status = alert.status
         alert.status = "resolved"
         alert.resolved_at = now
         anomaly.window_end = now
         anomaly.evidence = {**anomaly.evidence, "device_retired_at": now.isoformat()}
+        add_audit_entry(
+            session,
+            actor_id=user.id,
+            action="alert.resolved",
+            resource_type="alert",
+            resource_id=alert.id,
+            metadata={
+                "from_status": previous_status,
+                "to_status": "resolved",
+                "reason": "device_retired",
+            },
+        )
+    add_audit_entry(
+        session,
+        actor_id=user.id,
+        action="device.retired",
+        resource_type="device",
+        resource_id=device.id,
+        metadata={"is_active": False},
+    )
     await session.commit()
     return Response(status_code=204)
 
@@ -349,6 +411,14 @@ async def rotate_device_key(
 
     device_key = f"af_{secrets.token_urlsafe(32)}"
     device.device_key_hash = hash_device_key(device_key)
+    add_audit_entry(
+        session,
+        actor_id=user.id,
+        action="device.key_rotated",
+        resource_type="device",
+        resource_id=device.id,
+        metadata={"previous_key_revoked": True},
+    )
     await session.commit()
     await session.refresh(device)
     return ProvisionedDeviceOutput.model_validate(
@@ -357,21 +427,14 @@ async def rotate_device_key(
 
 
 def _encode_reading_cursor(reading: TelemetryReading) -> str:
-    recorded_at = _as_utc(reading.recorded_at).isoformat()
-    value = f"{recorded_at}|{reading.id}"
-    return base64.urlsafe_b64encode(value.encode("utf-8")).decode("ascii").rstrip("=")
+    return encode_time_id(_as_utc(reading.recorded_at), reading.id)
 
 
 def _decode_reading_cursor(cursor: str) -> tuple[datetime, UUID]:
     try:
-        padded = cursor + "=" * (-len(cursor) % 4)
-        decoded = base64.b64decode(padded, altchars=b"-_", validate=True).decode("utf-8")
-        recorded_at_raw, reading_id_raw = decoded.rsplit("|", maxsplit=1)
-        recorded_at = datetime.fromisoformat(recorded_at_raw)
-        if recorded_at.tzinfo is None or recorded_at.utcoffset() is None:
-            raise ValueError("cursor timestamp must be timezone-aware")
-        return recorded_at.astimezone(UTC), UUID(reading_id_raw)
-    except (ValueError, UnicodeDecodeError):
+        recorded_at, reading_id = decode_time_id(cursor)
+        return recorded_at.astimezone(UTC), reading_id
+    except ValueError:
         raise HTTPException(
             status_code=422,
             detail={"code": "invalid_cursor", "message": "Reading cursor is invalid"},

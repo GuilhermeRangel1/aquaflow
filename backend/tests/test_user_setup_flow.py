@@ -9,6 +9,19 @@ from tests.conftest import reading_payload
 
 
 @pytest.mark.asyncio
+async def test_metrics_exposes_request_counts_by_route_template(
+    empty_api_client: AsyncClient,
+) -> None:
+    health = await empty_api_client.get("/health/live")
+    metrics = await empty_api_client.get("/metrics")
+
+    assert health.status_code == 200
+    assert metrics.status_code == 200
+    assert metrics.headers["content-type"].startswith("text/plain; version=0.0.4")
+    assert 'method="GET",route="/health/live",status="200"} 1' in metrics.text
+
+
+@pytest.mark.asyncio
 async def test_owner_can_update_property_settings_through_public_api(
     api_client: tuple[AsyncClient, UUID, str, str],
 ) -> None:
@@ -87,7 +100,6 @@ async def test_owner_can_edit_and_retire_meter_without_losing_consumption_histor
     assert all(item["id"] != device_id for item in listed_after_retirement.json()["items"])
     assert consumption.status_code == 200
     assert consumption.json()["summary"]["total_volume_liters"] == pytest.approx(5.0)
-
 
 
 @pytest.mark.asyncio

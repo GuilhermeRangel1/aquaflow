@@ -5,7 +5,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Alert, AnomalyEvent, AuditLog, Property
+from app.db.models import Alert, AnomalyEvent, Property
+from app.services.audit import add_audit_entry
 
 AlertAction = Literal["acknowledged", "resolved", "false_positive"]
 
@@ -55,15 +56,13 @@ async def transition_alert(
         alert.acknowledged_at = now
     else:
         alert.resolved_at = now
-    session.add(
-        AuditLog(
-            actor_id=owner_id,
-            action=f"alert.{target}",
-            resource_type="alert",
-            resource_id=str(alert.id),
-            metadata_json={"from_status": previous_status, "to_status": target},
-            created_at=now,
-        )
+    add_audit_entry(
+        session,
+        actor_id=owner_id,
+        action=f"alert.{target}",
+        resource_type="alert",
+        resource_id=alert.id,
+        metadata={"from_status": previous_status, "to_status": target},
     )
     await session.commit()
     await session.refresh(alert)

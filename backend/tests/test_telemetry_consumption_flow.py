@@ -89,6 +89,92 @@ async def test_consumption_summary_compares_with_the_equivalent_previous_period(
     assert summary["previous_period_total_volume_liters"] == pytest.approx(10.0)
     assert summary["change_volume_liters"] == pytest.approx(10.0)
     assert summary["change_percent"] == pytest.approx(100.0)
+    assert summary["average_daily_volume_liters"] == pytest.approx(20.0)
+    assert summary["average_hourly_volume_liters"] == pytest.approx(20.0)
+    assert summary["maximum_interval_volume_liters"] == pytest.approx(20.0)
+    assert summary["valid_interval_count"] == 1
+    assert summary["expected_interval_count"] == 12
+    assert summary["valid_data_percentage"] == pytest.approx(8.3)
+    assert summary["days_with_valid_data"] == 1
+    assert summary["hours_with_valid_data"] == 1
+    assert datetime.fromisoformat(summary["last_reading_at"].replace("Z", "+00:00")) == (
+        start + timedelta(minutes=5)
+    )
+    assert summary["open_alert_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_consumption_cursor_returns_next_bucket_without_changing_summary(
+    api_client: tuple[AsyncClient, object, str, str],
+) -> None:
+    client, property_id, device_key, token = api_client
+    start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(days=1)
+    for index in range(25):
+        response = await client.post(
+            "/api/v1/ingestion/telemetry",
+            headers={"X-Device-Key": device_key},
+            json=reading_payload(
+                str(uuid4()),
+                (start + timedelta(minutes=5 * index)).isoformat(),
+                cumulative_volume_liters=100 + index,
+            ),
+        )
+        assert response.status_code == 202
+
+    params = {
+        "start": start.isoformat(),
+        "end": (start + timedelta(hours=2)).isoformat(),
+        "granularity": "hour",
+        "limit": 1,
+    }
+    headers = {"Authorization": f"Bearer {token}"}
+    first = await client.get(
+        f"/api/v1/properties/{property_id}/consumption", params=params, headers=headers
+    )
+    first_body = first.json()
+    assert first.status_code == 200
+    assert first_body["has_more"] is True
+    assert first_body["cursor"]
+
+    second = await client.get(
+        f"/api/v1/properties/{property_id}/consumption",
+        params={**params, "cursor": first_body["cursor"]},
+        headers=headers,
+    )
+    second_body = second.json()
+    assert second.status_code == 200
+    assert second_body["items"][0]["bucket_start"] != first_body["items"][0]["bucket_start"]
+    assert second_body["summary"] == first_body["summary"]
+
+
+@pytest.mark.asyncio
+async def test_zero_consumption_interval_is_counted_as_valid_data(
+    api_client: tuple[AsyncClient, object, str, str],
+) -> None:
+    client, property_id, device_key, token = api_client
+    start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(days=1)
+    for index in range(2):
+        response = await client.post(
+            "/api/v1/ingestion/telemetry",
+            headers={"X-Device-Key": device_key},
+            json=reading_payload(
+                str(uuid4()),
+                (start + timedelta(minutes=5 * index)).isoformat(),
+                cumulative_volume_liters=100,
+            ),
+        )
+        assert response.status_code == 202
+
+    result = await client.get(
+        f"/api/v1/properties/{property_id}/consumption",
+        params={"start": start.isoformat(), "end": (start + timedelta(hours=1)).isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert result.status_code == 200
+    assert result.json()["summary"]["valid_interval_count"] == 1
+    assert result.json()["summary"]["total_volume_liters"] == 0
+    assert result.json()["summary"]["valid_data_percentage"] == pytest.approx(8.3)
 
 
 @pytest.mark.asyncio

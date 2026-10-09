@@ -65,7 +65,7 @@ Use esta ordem como guia de dependências, não como um plano rígido. Siga outr
 3. **Telemetria:** validação, persistência transacional, chave por dispositivo e idempotência. Implementada para ingestão individual e em lote.
 4. **Consumo:** agregações horária, diária e mensal com timezone, resets e lacunas explícitos. Implementada para a primeira visualização do dashboard.
 5. **Anomalias e alertas:** regras de fluxo contínuo, consumo noturno (aumento de 0,1 L/min sobre a mediana diurna recente, sustentado por 15 minutos, na janela 22h–6h local) e dispositivo offline (mais de dois intervalos esperados) geram alertas agrupados no dashboard. O alerta offline é resolvido ao reconectar. Cobertura de integração PostgreSQL permanece.
-6. **Fechamento operacional:** OpenAPI, Docker, health/readiness e logs seguros estão implementados. O Compose sobe a conta local com dados sintéticos e as migrations; cobertura automatizada de integração PostgreSQL ainda precisa ser ampliada.
+6. **Fechamento operacional:** OpenAPI, Docker, health/readiness, métricas HTTP e logs seguros estão implementados. O Compose sobe a conta local com dados sintéticos e as migrations. A suíte HTTP pode rodar com SQLite ou PostgreSQL usando `AQUAFLOW_TEST_DATABASE_URL`; cada fixture cria e remove um schema temporário próprio no banco de teste.
 
 Não implemente itens fora do MVP, como fechamento remoto de válvula, faturamento, integração com concessionárias ou ML decisório, a menos que o usuário altere explicitamente o escopo.
 
