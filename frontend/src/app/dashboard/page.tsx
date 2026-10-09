@@ -184,9 +184,9 @@ export default function Dashboard() {
     () => devices.filter((item) => item.property_id === selectedId),
     [devices, selectedId],
   );
-  const activeAlertCount = alerts.filter(
-    (alert) => alert.status === "open" || alert.status === "acknowledged",
-  ).length;
+  const openAlertCount = alerts.filter((alert) => alert.status === "open").length;
+  const acknowledgedAlertCount = alerts.filter((alert) => alert.status === "acknowledged").length;
+  const activeAlertCount = openAlertCount + acknowledgedAlertCount;
 
   const load = useCallback(
     async (propertyId?: string) => {
@@ -683,9 +683,9 @@ export default function Dashboard() {
                   }
                 />
                 <Metric
-                  label="Alertas abertos"
-                  value={`${alerts.filter((alert) => alert.status === "open").length}`}
-                  note="precisam de acompanhamento"
+                  label="Alertas em acompanhamento"
+                  value={`${activeAlertCount}`}
+                  note={`${openAlertCount} ${openAlertCount === 1 ? "aberto" : "abertos"} · ${acknowledgedAlertCount} ${acknowledgedAlertCount === 1 ? "reconhecido" : "reconhecidos"}`}
                 />
               </section>
             )}
