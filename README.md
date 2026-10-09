@@ -1,35 +1,96 @@
 # AquaFlow
 
-Plataforma de monitoramento de consumo de água. A API recebe telemetria autenticada por dispositivo, preserva as leituras brutas e calcula consumo entre amostras compatíveis. O dashboard mostra o total e o histórico diário, sem tratar intervalos sem dados como consumo zero.
+O AquaFlow é uma aplicação para acompanhar o consumo de água de uma propriedade. Medidores conectados enviam leituras para a API; o sistema preserva os eventos recebidos, calcula o consumo entre leituras compatíveis e destaca comportamentos que merecem verificação.
 
-## MVP implementado
+Uma anomalia é um sinal para investigar. O AquaFlow não afirma localizar fisicamente um vazamento.
 
-- Cadastro e login com senha Argon2id, access token JWT e refresh token rotativo.
-- Cadastro de propriedade com fuso IANA e unidade em litros.
-- Provisionamento de medidor com chave individual; a chave é mostrada uma vez e apenas o hash fica no banco.
-- Ingestão individual e em lote, com idempotência por dispositivo e `event_id`.
-- Leituras acumuladas e vazão instantânea, com agregação por hora, dia ou mês.
-- Detecção explicável de fluxo contínuo e alertas agrupados, com reconhecimento, resolução e marcação como falso positivo.
-- Dashboard responsivo e simulador de leituras para demonstração.
-- Migrations Alembic e ambiente de desenvolvimento via Docker Compose.
+## O que o MVP já faz
 
-## Executar com Docker
+- Cria conta e autentica usuários com senha protegida, access token e renovação de sessão.
+- Organiza medidores e leituras por propriedade, com isolamento entre proprietários.
+- Permite cadastrar, editar e retirar medidores sem apagar o histórico de telemetria.
+- Recebe leituras individuais ou em lote. Reenvios com o mesmo identificador não duplicam consumo.
+- Calcula séries de consumo a partir de vazão instantânea ou volume acumulado, considerando o fuso da propriedade e sem transformar lacunas em consumo zero.
+- Apresenta resumo de consumo, histórico, saúde dos medidores e evidências das anomalias.
+- Permite reconhecer, resolver ou marcar alertas como falso positivo; as transições ficam registradas.
+- Oferece configurações de propriedade, incluindo endereço, fuso horário e parâmetros de monitoramento.
+- Inclui dados sintéticos para explorar o dashboard sem hardware.
 
-Com o Docker Desktop aberto, execute na raiz do projeto:
+### Regras de monitoramento
+
+- **Fluxo contínuo:** vazão acima do limite configurado — por padrão, `0,1 L/min` — por pelo menos 360 minutos. Leituras inválidas ou lacunas longas interrompem a janela.
+- **Consumo noturno:** entre 22h e 6h no fuso da propriedade, fluxo pelo menos `0,1 L/min` acima da mediana diurna recente por 15 minutos consecutivos. Sem dados suficientes para a referência, não gera alerta.
+- **Medidor offline:** ausência de leitura por mais de dois intervalos esperados. O alerta é encerrado quando o medidor volta a enviar dados.
+
+Os alertas guardam a regra aplicada, a explicação e as evidências usadas. Recorrências podem gerar novos alertas depois que o anterior é encerrado.
+
+## Executar com Docker Compose
+
+Requisitos: Docker Desktop instalado e em execução.
+
+Na raiz do projeto, execute:
 
 ```powershell
 docker compose up --build
 ```
 
-Quando os serviços ficarem prontos, abra `http://localhost:3000`. A API e sua documentação OpenAPI ficam em `http://localhost:8000/docs`.
+Quando os serviços estiverem prontos, acesse:
 
-Para parar, pressione `Ctrl+C` ou execute `docker compose down`. O volume do PostgreSQL é preservado; para reiniciar a demonstração do zero e apagar os dados locais, use `docker compose down --volumes`.
+- Aplicação: [http://localhost:3000](http://localhost:3000)
+- Documentação interativa da API: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Verificação de prontidão da API: [http://localhost:8000/health/ready](http://localhost:8000/health/ready)
 
-O serviço da API aplica `alembic upgrade head` e prepara os dados sintéticos antes de iniciar. O PostgreSQL usa volume nomeado para preservar os dados entre reinícios. A demonstração local pode ser desativada com `DEMO_MODE=false` no `.env`.
+O Compose inicia PostgreSQL, API e frontend, aplica as migrations e prepara os dados demonstrativos. Para executar em segundo plano, use `docker compose up --build -d`; para acompanhar a saída depois, use `docker compose logs -f`.
 
-## Executar localmente
+Para parar os serviços sem apagar o banco, pressione `Ctrl+C` no terminal ou execute `docker compose down`. O volume do PostgreSQL é preservado entre inicializações. Para apagar também o banco local e recriar a demonstração do zero, execute `docker compose down --volumes`.
+
+### Acesso de demonstração
+
+- **E-mail:** `demo@example.com`
+- **Senha:** `AquaFlow-demo-123!`
+- **Propriedade:** Casa da demonstração
+
+Essas credenciais servem somente para desenvolvimento local. O seed sintético é habilitado por padrão no Compose e não pode ser usado em ambiente de produção. Os valores locais podem ser configurados por variáveis de ambiente; consulte `.env.example`.
+
+## Explorar os dados demonstrativos
+
+A conta de demonstração é preparada automaticamente pelo serviço da API e contém:
+
+- Histórico variável de aproximadamente 90 dias para consumo doméstico.
+- Um medidor principal, um medidor de irrigação com sessões programadas, um medidor de lavanderia e um medidor de reserva offline.
+- Leituras de bateria, sinal e versão de firmware para os medidores simulados.
+- Alertas de exemplo em diferentes estados, identificados como simulados, além de um alerta de fluxo contínuo gerado pelo detector.
+
+O seed é aditivo e idempotente: ele acrescenta dados que ainda não existem e preserva os registros existentes. Para experimentar ingestão de ponta a ponta, abra **Medidores**, cadastre um medidor com número de série exclusivo e use **Simular leituras**. O simulador envia eventos pela mesma API usada por um dispositivo.
+
+## Integração com ESP32
+
+A API já aceita telemetria autenticada por chave individual do dispositivo. O firmware e a calibração dependem da placa e do sensor escolhidos para o protótipo. O projeto não presume pinos, modelo de sensor ou fator de calibração.
+
+O guia [Integração de um ESP32](docs/integracao-esp32.md) explica como provisionar um medidor, enviar uma leitura para a API local e testar o contrato sem firmware. No computador, a API fica em `http://localhost:8000`; um ESP32 precisa usar o endereço IP local da máquina que executa o Docker.
+
+## Tecnologias e organização
+
+- **Frontend:** Next.js, React, TypeScript e Recharts.
+- **API:** Python 3.12+, FastAPI, Pydantic e SQLAlchemy assíncrono.
+- **Banco:** PostgreSQL 16, com migrations Alembic.
+- **Execução local:** Docker Compose.
+
+```text
+backend/    API, domínio, persistência, migrations e testes
+docs/       integração ESP32 e orientações específicas da API
+frontend/   aplicação web e dashboard
+```
+
+O MVP é um monólito modular: a API reúne autenticação, propriedades, dispositivos, telemetria, consumo e alertas, mantendo os dados no PostgreSQL.
+
+## Desenvolvimento local sem Compose
+
+O fluxo recomendado para testar o produto é o Docker Compose. Para desenvolver os serviços separadamente, mantenha um PostgreSQL compatível com a configuração local disponível.
 
 ### API
+
+No PowerShell:
 
 ```powershell
 cd backend
@@ -37,12 +98,15 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
 $env:DATABASE_URL = "postgresql+asyncpg://aquaflow:aquaflow-local@localhost:5432/aquaflow"
-$env:JWT_SECRET = "local-only-change-this-secret-before-deploy"
+$env:JWT_SECRET = "local-only-change-this-secret"
 alembic upgrade head
+python -m app.demo_seed
 uvicorn app.main:app --reload
 ```
 
-### Dashboard
+### Frontend
+
+Em outro terminal:
 
 ```powershell
 cd frontend
@@ -51,25 +115,9 @@ $env:AQUAFLOW_API_URL = "http://localhost:8000"
 npm run dev
 ```
 
-## Fluxo de demonstração
+## Verificações de desenvolvimento
 
-No Compose local, entre com a conta sintética `demo@example.com` e a senha `AquaFlow-demo-123!`. A conta traz uma propriedade, leituras diárias de três medidores ativos, um medidor sem comunicação e exemplos de alertas abertos, reconhecidos, resolvidos e marcados como falso positivo. Os alertas de amostra são identificados como dados demonstrativos; o alerta de fluxo contínuo é gerado pela regra real. O seed é aditivo e idempotente: ao iniciar uma base que já contém a conta demo, acrescenta apenas os exemplos ausentes e preserva os dados existentes. Uma base criada por versão anterior migra o e-mail local da conta demo automaticamente para o endereço de exemplo aceito pelo validador.
-
-Para testar também o cadastro e a ingestão, adicione outro medidor com número de série ainda não usado. A chave é exibida uma única vez; use “Simular leituras” para enviar eventos pela mesma rota de telemetria do dispositivo. A lista, os indicadores e o gráfico atualizam pela API.
-
-Para conectar um ESP32 na rede local, consulte o [guia de integração](docs/integracao-esp32.md), incluindo o endereço da API visto pelo dispositivo, o formato de telemetria e um teste de idempotência via PowerShell.
-
-Essas credenciais são apenas para desenvolvimento local. O seed não roda em `ENVIRONMENT=production` e a API rejeita `DEMO_MODE=true` nesse ambiente.
-
-### Regra inicial de fluxo contínuo
-
-O primeiro detector considera uma anomalia quando a vazão média entre amostras válidas fica acima de `0,1 L/min` por pelo menos `360 minutos`. O limite e a duração podem ser informados ao criar a propriedade pelos campos `continuous_flow_threshold_liters_minute` e `continuous_flow_duration_minutes`; esses valores também ficam registrados como evidência. Lacunas acima de duas vezes o intervalo esperado ou leituras inválidas interrompem a janela. Leituras com vazão instantânea e volume acumulado são aceitas.
-
-Quando a janela é atingida, a ingestão persiste uma anomalia e abre um alerta de severidade alta. Novas detecções da mesma regra e dispositivo são agrupadas enquanto o alerta estiver aberto ou reconhecido. Os endpoints de consulta são `GET /api/v1/properties/{property_id}/anomalies`, `GET /api/v1/anomalies/{anomaly_id}` e `GET /api/v1/properties/{property_id}/alerts`. O proprietário pode usar `POST /api/v1/alerts/{alert_id}/acknowledge`, `/resolve` ou `/false-positive`; uma recorrência após o encerramento cria outro alerta.
-
-Leituras atrasadas dentro da janela configurada são aceitas; relógios mais de cinco minutos no futuro são rejeitados. Fluxo instantâneo só gera volume quando há amostras consecutivas dentro de duas vezes o intervalo esperado.
-
-## Verificações
+Os comandos abaixo executam as verificações disponíveis no repositório:
 
 ```powershell
 cd backend
@@ -78,11 +126,27 @@ ruff check app tests migrations
 mypy app
 cd ..\frontend
 npm run lint
+npm run typecheck
+npm test
 npm run build
 ```
 
-Os testes de API usam SQLite assíncrono para não depender de serviço externo. A migração adicionada para anomalias e alertas deve ser aplicada pelo serviço da API na inicialização do Compose.
+Por padrão, os testes da API usam SQLite em memória. Para executá-los contra o PostgreSQL do Compose, use na raiz do projeto:
 
-## Próximas fatias
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.test.yml --profile test run --build --rm tests
+```
 
-O fluxo de ingestão, consulta de saúde/leitura bruta de medidores, atualização das configurações principais, comparação de períodos e regras de fluxo contínuo, consumo noturno e dispositivo offline estão implementados. A regra noturna compara o fluxo com a mediana diurna recente, e o alerta offline é encerrado quando o medidor volta a enviar leituras. As próximas entregas são telas para edição das configurações, observabilidade operacional e validação de integração em PostgreSQL. O firmware ESP32 e a calibração do sensor dependem do hardware do protótipo. Alertas externos e compartilhamento entre usuários permanecem fora do MVP atual. Machine learning segue como etapa opcional após formar histórico real com qualidade avaliada.
+O serviço de testes usa dependências de desenvolvimento e a mesma suíte HTTP, criando um schema temporário isolado por fixture e removendo-o ao terminar. O usuário PostgreSQL configurado precisa poder criar e remover schemas.
+
+## Estado e próximos passos
+
+O MVP cobre a jornada principal com API e dados sintéticos: autenticação, gestão de propriedade e medidores, ingestão, consumo, detecção baseada em regras e tratamento de alertas. O dashboard e o Compose permitem explorar essa jornada sem hardware.
+
+Ainda dependem de evolução do projeto:
+
+- Firmware do ESP32 e calibração com o sensor físico escolhido.
+- Validação de ponta a ponta com hardware e rede reais.
+- Ampliação da cobertura de integração com PostgreSQL.
+- Histórico real com qualidade suficiente para avaliar métodos estatísticos ou machine learning. O MVP atual usa regras explicáveis; ML não decide alertas.
+- Notificações externas e compartilhamento de propriedade, que estão fora do escopo atual.
