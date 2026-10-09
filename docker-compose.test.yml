@@ -1,0 +1,12 @@
+services:
+  tests:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.test
+    environment:
+      AQUAFLOW_TEST_DATABASE_URL: postgresql+asyncpg://aquaflow:${POSTGRES_PASSWORD:-aquaflow-local}@db:5432/aquaflow
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - test
