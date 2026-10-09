@@ -289,3 +289,98 @@
   font-size: 10px;
   font-weight: 700;
 }
+
+/* Larger type and clearer grouping for the operational screens. */
+.alerts-card {
+  padding: 28px;
+}
+
+.alerts-card .section-heading h2 {
+  font-size: 22px;
+}
+
+.alerts-card .section-subtitle {
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.alert-list {
+  gap: 13px;
+  margin-top: 22px;
+}
+
+.alert-row {
+  gap: 24px;
+  padding: 20px;
+  border-radius: 15px;
+}
+
+.alert-main {
+  flex: 1;
+}
+
+.alert-title-line {
+  gap: 9px;
+  font-size: 16px;
+  line-height: 1.45;
+}
+
+.severity-badge,
+.alert-status,
+.demo-badge {
+  min-height: 26px;
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+.alert-main p {
+  margin: 12px 0 9px;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.alert-main small {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.alert-actions {
+  gap: 8px;
+}
+
+.alert-actions .button {
+  min-height: 40px;
+  padding: 0 13px;
+  font-size: 12px;
+}
+
+.form-help {
+  font-size: 12px;
+}
+
+.form-notice {
+  font-size: 13px;
+}
+
+@media (max-width: 700px) {
+  .alerts-card {
+    padding: 20px 16px;
+  }
+
+  .alert-row {
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .alert-title-line {
+    font-size: 15px;
+  }
+
+  .alert-actions {
+    width: 100%;
+  }
+
+  .alert-actions .button {
+    flex: 1 1 auto;
+  }
+}

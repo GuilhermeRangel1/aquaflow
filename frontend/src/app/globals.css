@@ -48,3 +48,42 @@ body,button,input,select{font-family:Inter,"Segoe UI Variable","Segoe UI",system
 @media(max-width:700px){.app-nav{flex:1;min-width:0;overflow-x:auto;scrollbar-width:none}.app-nav::-webkit-scrollbar{display:none}.nav-link{flex:0 0 auto}}
 .alert-evidence{margin-top:10px;border-top:1px solid var(--line);color:var(--muted);font-size:10px}.alert-evidence summary{width:max-content;padding:9px 0; color:var(--accent);font-weight:700;cursor:pointer}.alert-evidence summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:3px}.alert-evidence dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 18px;margin:0 0 8px}.alert-evidence dl>div{min-width:0}.alert-evidence dt{font-size:9px}.alert-evidence dd{margin:3px 0 0;overflow-wrap:anywhere;color:var(--ink);font-size:11px;font-weight:650}
 @media(max-width:680px){.alert-evidence dl{grid-template-columns:minmax(0,1fr)}}
+
+/* Property settings: keep field labels and controls aligned across both columns. */
+.settings-card{width:100%;max-width:none;margin:0;padding:clamp(22px,3vw,34px)}
+.settings-card .section-heading{min-height:40px}
+.settings-card .section-heading h2{margin-top:7px}
+.settings-grid{align-items:start;column-gap:24px;row-gap:22px}
+.settings-grid .field select{width:100%;min-height:47px;padding:0 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);font-size:14px;outline:none;transition:border-color .16s,box-shadow .16s}
+.settings-grid .field select:focus{border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 12%,transparent)}
+.field-label-row{display:flex;align-items:baseline;gap:6px;min-height:15px}
+.settings-optional{font-size:11px}
+.settings-grid .field-hint{margin:-2px 0 0;line-height:1.5}
+.settings-form input[type=number]{appearance:textfield;-moz-appearance:textfield}
+.settings-form input[type=number]::-webkit-inner-spin-button,.settings-form input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.settings-actions{margin-top:30px}
+@media(max-width:680px){.settings-card{padding:20px}.settings-grid{grid-template-columns:minmax(0,1fr);gap:18px}}
+
+/* Readability improvements for device and alert management screens. */
+.meters-card .section-heading h2,.alerts-card .section-heading h2{font-size:22px}
+.meters-card .section-heading .eyebrow,.alerts-card .section-heading .eyebrow{font-size:10px}
+.meters-card .section-subtitle,.alerts-card .section-subtitle{font-size:13px;line-height:1.55}
+.meter-list{margin-top:22px}
+.meter-row{gap:14px;padding:16px 0}
+.meter-icon{width:44px;height:44px;border-radius:14px}
+.meter-info{gap:6px}
+.meter-info strong{font-size:14px;line-height:1.35}
+.meter-info small{font-size:12px;line-height:1.45}
+.meter-status{padding:6px 9px;font-size:11px}
+.meter-actions{gap:7px}
+.meter-actions .button{min-height:38px;padding:0 12px;font-size:12px}
+.device-form{gap:11px;margin-top:22px;padding-top:20px}
+.device-form h3{font-size:15px}
+.device-form .form-help{font-size:12px;line-height:1.55}
+.device-form .field input{height:44px;font-size:14px}
+.alert-evidence{margin-top:14px;font-size:12px;line-height:1.5}
+.alert-evidence summary{padding:10px 0;font-size:12px}
+.alert-evidence dl{gap:12px 20px}
+.alert-evidence dt{font-size:11px}
+.alert-evidence dd{font-size:13px;line-height:1.45}
+@media(max-width:680px){.meter-row{gap:10px;padding:15px 0}.meter-icon{width:40px;height:40px}.meter-info strong{font-size:14px}.meter-info small{font-size:12px}.meter-status{margin-left:50px}.meter-actions{width:100%;margin-left:50px}.meter-actions .button{min-height:40px}.device-form .field input{font-size:16px}}
