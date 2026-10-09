@@ -1,0 +1,46 @@
+{
+  "description": "Hooks locais do AquaFlow para proteção de segredos, formatação e qualidade.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|apply_patch|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/secret-leak-prevention.mjs\"",
+            "commandWindows": "node (Join-Path (git rev-parse --show-toplevel) '.codex/hooks/secret-leak-prevention.mjs')",
+            "timeout": 5,
+            "statusMessage": "Verificando possíveis segredos"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/format-frontend.mjs\"",
+            "commandWindows": "node (Join-Path (git rev-parse --show-toplevel) '.codex/hooks/format-frontend.mjs')",
+            "timeout": 30,
+            "statusMessage": "Formatando arquivos do frontend"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/quality-gate.mjs\"",
+            "commandWindows": "node (Join-Path (git rev-parse --show-toplevel) '.codex/hooks/quality-gate.mjs')",
+            "timeout": 600,
+            "statusMessage": "Executando a verificação de qualidade"
+          }
+        ]
+      }
+    ]
+  }
+}
