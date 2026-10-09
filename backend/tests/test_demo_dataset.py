@@ -36,8 +36,9 @@ async def test_demo_dataset_is_idempotent_and_visible_through_public_api() -> No
             )
         )
         await session.commit()
-    assert await seed_demo_data(sessions, password=password) is True
-    assert await seed_demo_data(sessions, password=password) is False
+    demo_email = f"custom-{DEMO_EMAIL}"
+    assert await seed_demo_data(sessions, password=password, email=demo_email) is True
+    assert await seed_demo_data(sessions, password=password, email=demo_email) is False
 
     async with sessions() as session:
         assert await session.scalar(select(func.count()).select_from(User)) == 1
@@ -54,7 +55,7 @@ async def test_demo_dataset_is_idempotent_and_visible_through_public_api() -> No
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         login = await client.post(
             "/api/v1/auth/login",
-            json={"email": DEMO_EMAIL, "password": password},
+            json={"email": demo_email, "password": password},
         )
         assert login.status_code == 200
         headers = {"Authorization": f"Bearer {login.json()['tokens']['access_token']}"}

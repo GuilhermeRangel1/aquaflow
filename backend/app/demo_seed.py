@@ -22,21 +22,27 @@ PROPERTY_TIMEZONE = "America/Sao_Paulo"
 
 
 async def seed_demo_data(
-    session_factory: async_sessionmaker[AsyncSession], *, password: str
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    password: str,
+    email: str | None = None,
 ) -> bool:
     """Add the local demo dataset without overwriting existing demo data."""
+    configured_email = email or DEMO_EMAIL
     async with session_factory() as session:
         now = datetime.now(UTC).replace(second=0, microsecond=0)
-        user = await session.scalar(select(User).where(User.email == DEMO_EMAIL))
+        user = await session.scalar(select(User).where(User.email == configured_email))
+        if user is None:
+            user = await session.scalar(select(User).where(User.email == DEMO_EMAIL))
         if user is None:
             user = await session.scalar(select(User).where(User.email == LEGACY_DEMO_EMAIL))
-            if user is not None:
-                user.email = DEMO_EMAIL
+        if user is not None and user.email != configured_email:
+            user.email = configured_email
         created = user is None
         if user is None:
             user = User(
                 name="Conta de demonstração",
-                email=DEMO_EMAIL,
+                email=configured_email,
                 password_hash=hash_password(password),
                 created_at=now,
             )
@@ -523,7 +529,11 @@ async def main() -> None:
         return
     factory = create_session_factory(settings)
     try:
-        created = await seed_demo_data(factory, password=settings.demo_user_password)
+        created = await seed_demo_data(
+            factory,
+            password=settings.demo_user_password,
+            email=settings.demo_user_email,
+        )
         if created:
             print("Dados sintéticos de demonstração preparados.")
         else:

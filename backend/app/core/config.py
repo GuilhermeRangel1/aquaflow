@@ -1,4 +1,4 @@
-from pydantic import Field, model_validator
+from pydantic import EmailStr, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     future_clock_skew_seconds: int = 300
     cors_origins: list[str] = ["http://localhost:3000"]
     demo_mode: bool = False
+    demo_user_email: EmailStr | None = None
     demo_user_password: str = Field(default="AquaFlow-demo-123!", min_length=12, max_length=128)
 
     @model_validator(mode="after")

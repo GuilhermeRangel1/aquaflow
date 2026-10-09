@@ -50,7 +50,7 @@ Para parar os serviços sem apagar o banco, pressione `Ctrl+C` no terminal ou ex
 - **Senha:** `AquaFlow-demo-123!`
 - **Propriedade:** Casa da demonstração
 
-Essas credenciais servem somente para desenvolvimento local. O seed sintético é habilitado por padrão no Compose e não pode ser usado em ambiente de produção. Os valores locais podem ser configurados por variáveis de ambiente; consulte `.env.example`.
+Essas credenciais servem somente para desenvolvimento local. O seed sintético é habilitado por padrão no Compose e não pode ser usado em ambiente de produção. Para alterar o e-mail ou a senha da demonstração, defina `DEMO_USER_EMAIL` e `DEMO_USER_PASSWORD` no `.env` antes de iniciar os serviços. Consulte `.env.example`.
 
 ## Explorar os dados demonstrativos
 

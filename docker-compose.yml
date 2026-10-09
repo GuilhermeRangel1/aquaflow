@@ -24,6 +24,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-local-only-change-this-secret-before-deploy}
       CORS_ORIGINS: '["http://localhost:3000"]'
       DEMO_MODE: ${DEMO_MODE:-true}
+      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-demo@example.com}
       DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-AquaFlow-demo-123!}
     command: >-
       sh -c "alembic upgrade head && python -m app.demo_seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"
