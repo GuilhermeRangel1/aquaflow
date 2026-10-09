@@ -29,9 +29,7 @@ async def seed_demo_data(
         now = datetime.now(UTC).replace(second=0, microsecond=0)
         user = await session.scalar(select(User).where(User.email == DEMO_EMAIL))
         if user is None:
-            user = await session.scalar(
-                select(User).where(User.email == LEGACY_DEMO_EMAIL)
-            )
+            user = await session.scalar(select(User).where(User.email == LEGACY_DEMO_EMAIL))
             if user is not None:
                 user.email = DEMO_EMAIL
         created = user is None
@@ -66,21 +64,18 @@ async def seed_demo_data(
             await session.flush()
             created = True
 
+        stale_last_seen = now - timedelta(days=2, minutes=40)
         device_specs = (
             ("AF-DEMO-001", "Medidor principal", now),
             ("AF-DEMO-002", "Irrigação externa", now),
-            ("AF-DEMO-003", "Medidor de reserva", None),
+            ("AF-DEMO-003", "Medidor de reserva", stale_last_seen),
             ("AF-DEMO-004", "Lavanderia", now),
         )
         devices: dict[str, Device] = {}
         for serial, name, last_seen in device_specs:
-            device = await session.scalar(
-                select(Device).where(Device.serial_number == serial)
-            )
+            device = await session.scalar(select(Device).where(Device.serial_number == serial))
             if device is None:
-                device = _device(
-                    property_row.id, serial, name, now, last_seen_at=last_seen
-                )
+                device = _device(property_row.id, serial, name, now, last_seen_at=last_seen)
                 session.add(device)
                 created = True
             elif device.property_id != property_row.id:
@@ -94,16 +89,21 @@ async def seed_demo_data(
         await session.flush()
 
         existing_event_ids = set(
-            (await session.scalars(
-                select(TelemetryReading.event_id).where(
-                    TelemetryReading.device_id.in_([d.id for d in devices.values()])
+            (
+                await session.scalars(
+                    select(TelemetryReading.event_id).where(
+                        TelemetryReading.device_id.in_([d.id for d in devices.values()])
+                    )
                 )
-            )).all()
+            ).all()
         )
         samples = (
             _daily_readings(devices["AF-DEMO-001"], now)
             + _continuous_flow_readings(devices["AF-DEMO-002"], now)
+            + _irrigation_readings(devices["AF-DEMO-002"], now)
             + _laundry_readings(devices["AF-DEMO-004"], now)
+            + _health_readings(devices, now)
+            + [_offline_reading(devices["AF-DEMO-003"], stale_last_seen, now)]
         )
         missing = [sample for sample in samples if sample.event_id not in existing_event_ids]
         if missing:
@@ -153,8 +153,51 @@ def _daily_readings(device: Device, now: datetime) -> list[TelemetryReading]:
     today = now.astimezone(zone).date()
     readings: list[TelemetryReading] = []
     total = Decimal("1200")
-    for days_ago in range(6, -1, -1):
+    for days_ago in range(89, -1, -1):
         day: date = today - timedelta(days=days_ago)
+        if days_ago > 6:
+            # Backfill a three-month household baseline with variable, plausible
+            # usage. Flow-rate samples avoid inventing a cumulative counter before
+            # the older seven-day fixture already present in local databases.
+            historical_sessions = (
+                ("manha", 7, Decimal("18.4")),
+                ("almoco", 12, Decimal("9.2")),
+                ("pausa", 14, Decimal("6.7")),
+                ("tarde", 16, Decimal("13.8")),
+                ("noite", 19, Decimal("27.6")),
+            )
+            for session_index, (session_name, hour, baseline_liters) in enumerate(
+                historical_sessions
+            ):
+                weekend_factor = Decimal("1.10") if day.weekday() >= 5 else Decimal("1.00")
+                variation = Decimal(85 + ((day.toordinal() * 7 + session_index * 13) % 31)) / 100
+                liters = baseline_liters * weekend_factor * variation
+                average_rate = (liters / Decimal(5)).quantize(Decimal("0.001"))
+                local_start = datetime.combine(day, time(hour, 30), tzinfo=zone)
+                start = local_start.astimezone(UTC)
+                end = start + timedelta(minutes=5)
+                if end >= now:
+                    continue
+                battery = max(55, 96 - (90 - days_ago) // 8)
+                signal = -48 - ((day.toordinal() + session_index * 5) % 19)
+                for suffix, recorded_at, rate in (
+                    ("inicio", start, average_rate * Decimal("0.85")),
+                    ("fim", end, average_rate * Decimal("1.15")),
+                ):
+                    readings.append(
+                        TelemetryReading(
+                            device_id=device.id,
+                            event_id=f"demo-history-{day:%Y%m%d}-{session_name}-{suffix}",
+                            recorded_at=recorded_at,
+                            received_at=now,
+                            flow_rate_liters_minute=rate.quantize(Decimal("0.001")),
+                            quality="valid",
+                            battery_percent=battery,
+                            signal_dbm=signal,
+                            firmware_version="0.4.2-demo",
+                        )
+                    )
+            continue
         sessions_for_day = (
             ("manha", 7, Decimal("18.4")),
             ("almoco", 12, Decimal("9.2")),
@@ -193,24 +236,86 @@ def _laundry_readings(device: Device, now: datetime) -> list[TelemetryReading]:
     today = now.astimezone(zone).date()
     total = Decimal("320")
     readings: list[TelemetryReading] = []
-    for days_ago in range(6, -1, -1):
-        start = datetime.combine(
-            today - timedelta(days=days_ago), time(10, 0), tzinfo=zone
-        ).astimezone(UTC)
+    for days_ago in range(89, -1, -1):
+        day = today - timedelta(days=days_ago)
+        if days_ago > 6:
+            # A household washing machine usually runs a few loads per week,
+            # rather than drawing water every day.
+            if day.weekday() not in {1, 4, 6}:
+                continue
+            liters = Decimal(38 + ((day.toordinal() * 11) % 19))
+            average_rate = (liters / Decimal(5)).quantize(Decimal("0.001"))
+            start = datetime.combine(day, time(10, 0), tzinfo=zone).astimezone(UTC)
+            end = start + timedelta(minutes=5)
+            if end >= now:
+                continue
+            for suffix, recorded_at, rate in (
+                ("inicio", start, average_rate * Decimal("0.85")),
+                ("fim", end, average_rate * Decimal("1.15")),
+            ):
+                readings.append(
+                    TelemetryReading(
+                        device_id=device.id,
+                        event_id=f"demo-laundry-history-{day:%Y%m%d}-{suffix}",
+                        recorded_at=recorded_at,
+                        received_at=now,
+                        flow_rate_liters_minute=rate.quantize(Decimal("0.001")),
+                        quality="valid",
+                        battery_percent=max(55, 94 - (90 - days_ago) // 8),
+                        signal_dbm=-50 - (day.toordinal() % 16),
+                        firmware_version="0.4.2-demo",
+                    )
+                )
+            continue
+        start = datetime.combine(day, time(10, 0), tzinfo=zone).astimezone(UTC)
         end = start + timedelta(minutes=5)
         if end >= now:
             continue
         first = total
         total += Decimal("42.5") + Decimal(days_ago % 3 * 4)
         for suffix, recorded_at, volume in (("inicio", start, first), ("fim", end, total)):
-            readings.append(TelemetryReading(
-                device_id=device.id,
-                event_id=f"demo-laundry-{today - timedelta(days=days_ago):%Y%m%d}-{suffix}",
-                recorded_at=recorded_at,
-                received_at=now,
-                cumulative_volume_liters=volume,
-                quality="valid",
-            ))
+            readings.append(
+                TelemetryReading(
+                    device_id=device.id,
+                    event_id=f"demo-laundry-{today - timedelta(days=days_ago):%Y%m%d}-{suffix}",
+                    recorded_at=recorded_at,
+                    received_at=now,
+                    cumulative_volume_liters=volume,
+                    quality="valid",
+                )
+            )
+    return readings
+
+
+def _irrigation_readings(device: Device, now: datetime) -> list[TelemetryReading]:
+    """Model short scheduled watering sessions alongside the recent anomaly."""
+    zone = ZoneInfo(PROPERTY_TIMEZONE)
+    today = now.astimezone(zone).date()
+    readings: list[TelemetryReading] = []
+    for days_ago in range(89, -1, -1):
+        day = today - timedelta(days=days_ago)
+        if day.weekday() not in {0, 3, 6}:
+            continue
+        start = datetime.combine(day, time(6, 0), tzinfo=zone).astimezone(UTC)
+        variation = Decimal(90 + (day.toordinal() % 21)) / 100
+        rate = (Decimal("0.6") * variation).quantize(Decimal("0.001"))
+        for sample_index in range(7):
+            recorded_at = start + timedelta(minutes=5 * sample_index)
+            if recorded_at >= now:
+                continue
+            readings.append(
+                TelemetryReading(
+                    device_id=device.id,
+                    event_id=f"demo-irrigation-{day:%Y%m%d}-{sample_index:02d}",
+                    recorded_at=recorded_at,
+                    received_at=now,
+                    flow_rate_liters_minute=rate,
+                    quality="valid",
+                    battery_percent=84,
+                    signal_dbm=-63 - (day.toordinal() % 10),
+                    firmware_version="0.4.2-demo",
+                )
+            )
     return readings
 
 
@@ -221,9 +326,13 @@ async def _add_sample_alerts(
     offline_device: Device,
     now: datetime,
 ) -> bool:
-    existing = list((await session.scalars(
-        select(AnomalyEvent).where(AnomalyEvent.property_id == property_row.id)
-    )).all())
+    existing = list(
+        (
+            await session.scalars(
+                select(AnomalyEvent).where(AnomalyEvent.property_id == property_row.id)
+            )
+        ).all()
+    )
     existing_keys = {
         event.evidence.get("demo_fixture_key")
         for event in existing
@@ -334,31 +443,79 @@ async def _add_sample_alerts(
             if status in {"resolved", "false_positive"}
             else None
         )
-        session.add(Alert(
-            anomaly_id=anomaly.id,
-            status=status,
-            channel="dashboard",
-            created_at=anomaly.detected_at,
-            acknowledged_at=acknowledged,
-            resolved_at=resolved,
-        ))
+        session.add(
+            Alert(
+                anomaly_id=anomaly.id,
+                status=status,
+                channel="dashboard",
+                created_at=anomaly.detected_at,
+                acknowledged_at=acknowledged,
+                resolved_at=resolved,
+            )
+        )
         added = True
     return added
 
 
 def _continuous_flow_readings(device: Device, now: datetime) -> list[TelemetryReading]:
-    start = now - timedelta(hours=6)
+    aligned_now = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0)
+    start = aligned_now - timedelta(hours=6)
+    readings: list[TelemetryReading] = []
+    for index in range(73):
+        recorded_at = start + timedelta(minutes=5 * index)
+        readings.append(
+            TelemetryReading(
+                device_id=device.id,
+                event_id=f"demo-flow-{recorded_at:%Y%m%d%H%M}",
+                recorded_at=recorded_at,
+                received_at=now,
+                flow_rate_liters_minute=Decimal("0.2"),
+                quality="valid",
+                battery_percent=83,
+                signal_dbm=-61,
+                firmware_version="0.4.2-demo",
+            )
+        )
+    return readings
+
+
+def _health_readings(devices: dict[str, Device], now: datetime) -> list[TelemetryReading]:
+    """Add one zero-flow heartbeat per five-minute slot for active demo meters."""
+    recorded_at = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0)
     return [
         TelemetryReading(
-            device_id=device.id,
-            event_id=f"demo-flow-{index:03d}",
-            recorded_at=start + timedelta(minutes=5 * index),
+            device_id=devices[serial].id,
+            event_id=f"demo-health-{serial}-{recorded_at:%Y%m%d%H%M}",
+            recorded_at=recorded_at,
             received_at=now,
-            flow_rate_liters_minute=Decimal("0.2"),
+            flow_rate_liters_minute=Decimal("0"),
             quality="valid",
+            battery_percent=battery,
+            signal_dbm=signal,
+            firmware_version="0.4.2-demo",
         )
-        for index in range(73)
+        for serial, battery, signal in (
+            ("AF-DEMO-001", 92, -52),
+            ("AF-DEMO-004", 78, -68),
+        )
     ]
+
+
+def _offline_reading(
+    device: Device, recorded_at: datetime, received_at: datetime
+) -> TelemetryReading:
+    """Keep the stale meter's last reported sample consistent with its health state."""
+    return TelemetryReading(
+        device_id=device.id,
+        event_id=f"demo-offline-{device.serial_number}-{recorded_at:%Y%m%d%H%M}",
+        recorded_at=recorded_at,
+        received_at=received_at,
+        flow_rate_liters_minute=Decimal("0"),
+        quality="valid",
+        battery_percent=31,
+        signal_dbm=-79,
+        firmware_version="0.4.1-demo",
+    )
 
 
 async def main() -> None:
