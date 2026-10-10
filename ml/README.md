@@ -48,6 +48,20 @@ O serviço MLflow é iniciado por `docker compose up --build` em [http://localho
 
 O treinamento grava `metrics.json`, `split_manifest.json`, `best_model.joblib` e `training_report.md` em `data/ml/training/`, além das execuções e artefatos do MLflow em `data/ml/mlflow-server/`. O relatório compara os modelos, mostra o gap treino/CV, a variação entre folds, os resultados por perfil, matrizes de confusão e os hiperparâmetros escolhidos. O campo `overfitting_diagnostics.domain_shift_assessment` sinaliza quando o desempenho cai entre perfis. Esses sinais são diagnósticos; não existe garantia de ausência de overfitting com dados sintéticos.
 
+## Notebook de exploração e avaliação visual
+
+O notebook [`notebooks/01_exploracao_e_avaliacao.ipynb`](notebooks/01_exploracao_e_avaliacao.ipynb) documenta a análise e a preparação da série mockada usando as mesmas funções do pipeline (`generate_mock_data.py` e `prepare_dataset.py`). Em uma seção separada, ele visualiza a comparação dos modelos e avalia o artefato treinado na partição temporal de teste, incluindo matriz de confusão, curvas precisão-recall e ROC. As figuras são exibidas no notebook e salvas localmente em `data/ml/notebook/figures/`; esse conteúdo não é enviado ao frontend.
+
+Para abrir e executar no VS Code, instale as dependências específicas do notebook e selecione o kernel desse ambiente:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r ml/requirements-notebook.txt
+```
+
+Inicie o projeto com `docker compose up --build` antes de executar a seção de avaliação dos modelos. Ela lê o artefato e o relatório gerados pelo treinamento do Compose e verifica que a série preparada no notebook corresponde à série usada no treino. O notebook não substitui nem retreina o pipeline automatizado. Todos os exemplos e gráficos descrevem cenários sintéticos, não vazamentos reais.
+
 Para rodar sem Docker, instale `ml/requirements-training.txt` e execute `python ml/train_model.py` depois da preparação. Os arquivos preparados mantêm as transformações determinísticas e as unidades; o scaler da regressão logística é ajustado dentro do pipeline em cada treino. Os rótulos não entram nas features. Resultados descrevem somente o reconhecimento dos cenários simulados e não comprovam detecção no mundo real.
 
 ## Inferir em uma nova série simulada
