@@ -66,6 +66,8 @@ docker compose logs -f ml-trainer ml-inference api mqtt-ingestor
 
 O dashboard pode indicar que a análise do modelo ainda está indisponível durante o treinamento. Se o trainer falhar, consulte os logs desse serviço. Artefatos e resultados ficam em `data/ml/training/`; os arquivos são locais e ignorados pelo Git. O experimento aparece em MLflow. Mais detalhes sobre perfis, métricas e limitações estão em [Dados e modelos](../ml/README.md).
 
+Os parâmetros e limites atuais estão em [Métricas e parâmetros](metricas-e-parametros.md), e uma execução de referência com métricas, hashes e interpretação está registrada em [Resultado do experimento](../ml/docs/resultado-experimento.md).
+
 Para abrir o notebook de exploração e gráficos, configure as dependências em [ml/README.md](../ml/README.md#notebook-de-exploração-e-avaliação-visual). A primeira parte gera e prepara sua própria série mockada; a seção de avaliação precisa dos artefatos de treinamento acima.
 
 ## 5. Publicar uma leitura pelo MQTT

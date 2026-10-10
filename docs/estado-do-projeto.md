@@ -28,7 +28,7 @@ Os arquivos gerados e os modelos ficam em `data/`, que não é versionada. Os va
 
 ## O que os resultados de ML permitem concluir
 
-Os experimentos mostram que a infraestrutura de preparação, validação temporal, busca de hiperparâmetros, comparação e inferência funciona sobre os cenários programados. As métricas e curvas do notebook medem o reconhecimento desses cenários.
+Os experimentos mostram que a infraestrutura de preparação, validação temporal, busca de hiperparâmetros, comparação e inferência funciona sobre os cenários programados. Na execução de referência, o Random Forest atingiu AP 1,000 no teste temporal padrão, mas AP 0,438 no perfil `shifted` e 0,569 no perfil `stress`. Esse contraste evidencia sensibilidade a mudanças de rotina simuladas. Consulte [Resultado do experimento](../ml/docs/resultado-experimento.md) para métricas completas, hashes e ambiente reproduzível; os parâmetros usados estão em [Métricas e parâmetros](metricas-e-parametros.md).
 
 Eles **não** demonstram que o modelo detecta vazamentos reais, que generaliza para diferentes casas ou medidores, ou que deixou de sofrer overfitting. Os testes com perfis deslocado e de estresse são verificações artificiais de sensibilidade, não substitutos de uma coleta independente de telemetria real e de rótulos confiáveis.
 

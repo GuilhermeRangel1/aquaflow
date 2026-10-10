@@ -68,3 +68,5 @@ Previsões positivas podem abrir alertas experimentais tratáveis; previsões no
 ## Limites operacionais
 
 O Airflow roda no modo `standalone`, com SQLite persistido e autenticação local desativada. Sua porta é vinculada ao loopback. O MLflow também é local. Essas opções são adequadas para a demonstração, não para uma implantação compartilhada ou de produção. Consulte [Estado atual do projeto](../../docs/estado-do-projeto.md) antes de interpretar o alcance do experimento.
+
+As métricas, parâmetros selecionados e limitações de uma execução de referência estão em [Resultado do experimento](resultado-experimento.md). Consulte também [Métricas e parâmetros](../../docs/metricas-e-parametros.md) para os padrões e limiares que afetam a ingestão, as regras e o dashboard.

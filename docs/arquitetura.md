@@ -29,6 +29,16 @@ flowchart LR
 
 O backend é um monólito modular: autenticação, propriedades, medidores, ingestão, consumo e alertas ficam na mesma API e no mesmo banco. MQTT, treinamento, inferência e interface são processos separados no Compose, mas não formam uma arquitetura de microsserviços de produção.
 
+## Decisões da solução
+
+- **HTTP como fronteira de ingestão:** MQTT e envio HTTP convergem para a mesma API, que centraliza validação, autenticação do medidor, idempotência e persistência. Isso reduz a duplicação de regras entre transportes.
+- **PostgreSQL como fonte persistente:** leituras brutas, estados dos alertas e inferências ficam no banco relacional, permitindo rastrear de onde vieram agregações e resultados.
+- **Regras independentes do ML:** as regras determinísticas continuam ativas quando o artefato ou o worker de ML está indisponível. O classificador continua experimental e suas previsões não apagam nem substituem alertas de regras.
+- **Dados gerados para o primeiro ciclo:** geradores reproduzíveis permitem exercitar preparação, treinamento e interface sem aguardar hardware; em contrapartida, não sustentam alegações de desempenho no mundo real.
+- **Airflow manual e treinamento no Compose:** o DAG demonstra orquestração de geração, análise e preparação; o serviço de treinamento do Compose mantém o caminho de inicialização completa reproduzível sem depender de disparar o DAG pela interface.
+
+Os valores usados por essas decisões e os resultados de referência do classificador estão em [Métricas e parâmetros](metricas-e-parametros.md) e [Resultado do experimento](../ml/docs/resultado-experimento.md).
+
 ## Caminho de uma leitura
 
 ### Ingestão HTTP

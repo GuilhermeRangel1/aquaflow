@@ -4,6 +4,8 @@ Esta pasta concentra o experimento de machine learning do AquaFlow: dados mockad
 
 O Compose inicia o treinamento automaticamente quando não encontra os artefatos esperados; depois inicia o worker. Separadamente, o Airflow pode repetir manualmente geração, análise e preparação, mas seu DAG não treina o modelo. O notebook documenta a preparação e visualiza as avaliações sem substituir o pipeline automatizado. Para entender os caminhos e limites, veja [arquitetura](../docs/arquitetura.md), [estado atual do projeto](../docs/estado-do-projeto.md) e [pipeline detalhado](docs/pipeline.md).
 
+O [relatório de resultado do experimento](docs/resultado-experimento.md) registra uma execução reproduzível do código atual, com comparação de candidatos, avaliação em perfis distintos, hashes e limitações. Os [parâmetros e métricas do projeto](../docs/metricas-e-parametros.md) explicam os padrões usados no experimento e no restante da aplicação.
+
 ## Gerar dados simulados
 
 Na raiz do repositório:

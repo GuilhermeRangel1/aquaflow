@@ -14,3 +14,8 @@
 - **Alerta por regras:** alerta produzido por condições determinísticas e explicáveis sobre leituras e janelas observadas. Continua ativo mesmo quando o worker de ML está indisponível.
 - **Airflow:** ferramenta que, nesta demonstração, orquestra manualmente geração, análise e preparação de dados. O DAG atual não inicia o treinamento.
 - **MLflow:** interface e armazenamento local de parâmetros, métricas e artefatos dos experimentos de treinamento.
+- **Average precision (AP):** resumo da curva precisão-recall; no experimento, é o critério principal de comparação e seleção dos candidatos.
+- **Precisão:** proporção das previsões positivas que correspondem a rótulos positivos no conjunto avaliado.
+- **Recall:** proporção dos rótulos positivos que o modelo classificou como positivos.
+- **F1:** média harmônica entre precisão e recall; resume as duas medidas em um único valor.
+- **Matriz de confusão:** contagem de verdadeiros/falsos positivos e verdadeiros/falsos negativos para um limiar específico.
