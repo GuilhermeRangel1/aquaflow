@@ -98,6 +98,8 @@ services:
     build:
       context: ./ml
       dockerfile: Dockerfile.training
+    environment:
+      MLFLOW_SERVER_ENABLE_JOB_EXECUTION: "false"
     command:
       - mlflow
       - server
@@ -105,6 +107,8 @@ services:
       - 0.0.0.0
       - --port
       - "5000"
+      - --workers
+      - "1"
       - --backend-store-uri
       - sqlite:////mlflow/mlflow.db
       - --default-artifact-root
@@ -181,6 +185,8 @@ services:
     environment:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__PARALLELISM: "2"
+      AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "2"
       # Local-only convenience: the UI is bound to localhost below.
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
     ports:
