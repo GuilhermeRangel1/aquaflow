@@ -30,16 +30,40 @@ def _start(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _flow(hour: int, rng: random.Random) -> float:
-    if 6 <= hour < 9:
-        base = 0.32
-    elif 12 <= hour < 14:
-        base = 0.18
-    elif 18 <= hour < 22:
-        base = 0.27
+def _flow(hour: int, rng: random.Random, profile: str) -> float:
+    if profile == "standard":
+        if 6 <= hour < 9:
+            base = 0.32
+        elif 12 <= hour < 14:
+            base = 0.18
+        elif 18 <= hour < 22:
+            base = 0.27
+        else:
+            base = 0.01
+        noise = 0.02
+    elif profile == "shifted":
+        if 5 <= hour < 10:
+            base = 0.38
+        elif 11 <= hour < 15:
+            base = 0.16
+        elif 17 <= hour < 21:
+            base = 0.31
+        else:
+            base = 0.015
+        noise = 0.04
+    elif profile == "stress":
+        if 7 <= hour < 11:
+            base = 0.28
+        elif 13 <= hour < 16:
+            base = 0.23
+        elif 19 <= hour < 23:
+            base = 0.34
+        else:
+            base = 0.02
+        noise = 0.06
     else:
-        base = 0.01
-    return round(max(0, base + rng.uniform(-0.02, 0.02)), 3)
+        raise ValueError(f"unknown profile: {profile}")
+    return round(max(0, base + rng.uniform(-noise, noise)), 3)
 
 
 def generate(
@@ -50,6 +74,7 @@ def generate(
     days: int,
     interval_minutes: int,
     timezone: str,
+    profile: str = "standard",
 ) -> None:
     if days < 4 or interval_minutes < 1 or 1440 % interval_minutes:
         raise ValueError("days must be >= 4 and interval_minutes must divide one day")
@@ -70,18 +95,31 @@ def generate(
             recorded_local = recorded_at.astimezone(local_timezone)
             day = (recorded_local.date() - local_start_date).days
             hour = recorded_local.hour
+            scenario_day = day if profile == "standard" else (day + 2) % 4
             scenario = "normal"
             present = True
-            if day % 4 == 1 and 9 <= hour < 15:
+            continuous_hours = (
+                9 <= hour < 15
+                if profile == "standard"
+                else 7 <= hour < 16
+                if profile == "shifted"
+                else 10 <= hour < 17
+            )
+            if scenario_day % 4 == 1 and continuous_hours:
                 scenario = "continuous_flow"
-            elif day % 4 == 2 and (hour >= 22 or hour < 6):
+            elif scenario_day % 4 == 2 and (hour >= 22 or hour < 6):
                 scenario = "night_consumption"
-            elif day % 4 == 3 and 12 <= hour < 14:
+            elif scenario_day % 4 == 3 and 12 <= hour < 14:
                 scenario = "missing_reading"
                 present = False
-            flow = _flow(hour, rng)
+            flow = _flow(hour, rng, profile)
             if scenario in {"continuous_flow", "night_consumption"}:
-                flow = round(flow + 0.2, 3)
+                anomaly_increment = {
+                    "standard": 0.2,
+                    "shifted": 0.1,
+                    "stress": 0.16,
+                }[profile]
+                flow = round(flow + anomaly_increment, 3)
             cumulative = round(cumulative + flow * interval_minutes, 3)
             timestamp = recorded_at.isoformat().replace("+00:00", "Z")
             writer.writerow(
@@ -113,6 +151,7 @@ def main() -> None:
     parser.add_argument("--timezone", default="America/Sao_Paulo")
     parser.add_argument("--days", type=int, default=16)
     parser.add_argument("--interval-minutes", type=int, default=5)
+    parser.add_argument("--profile", choices=("standard", "shifted", "stress"), default="standard")
     args = parser.parse_args()
     generate(
         args.output,
@@ -121,6 +160,7 @@ def main() -> None:
         days=args.days,
         interval_minutes=args.interval_minutes,
         timezone=args.timezone,
+        profile=args.profile,
     )
     print(f"Dados simulados gerados em {args.output}")
 

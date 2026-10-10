@@ -13,7 +13,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import joblib
 import mlflow
 import numpy as np
+from generate_mock_data import generate as generate_mock_data
 from mlflow import MlflowClient
+from prepare_dataset import prepare as prepare_dataset
 from sklearn.base import ClassifierMixin, clone
 from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
@@ -76,7 +78,10 @@ def _load_dataset(
             datetime.fromisoformat(row["recorded_at"].replace("Z", "+00:00"))
             for row in metadata
         ]
-        if any(timestamp.tzinfo is None or timestamp.utcoffset() is None for timestamp in parsed_timestamps):
+        if any(
+            timestamp.tzinfo is None or timestamp.utcoffset() is None
+            for timestamp in parsed_timestamps
+        ):
             raise ValueError("recorded_at deve incluir fuso horário")
         timestamps = [timestamp.astimezone(UTC) for timestamp in parsed_timestamps]
         targets = np.asarray([int(row[TARGET_NAME]) for row in labels], dtype=np.int8)
@@ -118,9 +123,39 @@ def _split_indices(timestamps: list[datetime], timezone: str) -> dict[str, np.nd
             raise ValueError(f"partição {name} vazia")
         if len(set(indices.tolist())) != len(indices):
             raise ValueError(f"partição {name} contém amostras duplicadas")
-    if any(set(splits[left]) & set(splits[right]) for left, right in (("train", "validation"), ("validation", "test"), ("train", "test"))):
+    adjacent_split_pairs = (("train", "validation"), ("validation", "test"), ("train", "test"))
+    if any(set(splits[left]) & set(splits[right]) for left, right in adjacent_split_pairs):
         raise ValueError("partições de treino, validação e teste se sobrepõem")
     return splits
+
+
+def _generate_evaluation_profiles(
+    timezone: str, seed: int, output_root: Path
+) -> tuple[tuple[Path, Path, Path], tuple[Path, Path, Path]]:
+    profile_inputs: dict[str, tuple[Path, Path, Path]] = {}
+    for profile, profile_seed, start in (
+        ("shifted", seed + 57, "2026-10-01T00:00:00-03:00"),
+        ("stress", seed + 199, "2026-11-01T00:00:00-03:00"),
+    ):
+        profile_dir = output_root / "generalization" / profile
+        raw_path = profile_dir / "raw_readings.csv"
+        prepared_dir = profile_dir / "prepared"
+        generate_mock_data(
+            raw_path,
+            seed=profile_seed,
+            start=datetime.fromisoformat(start),
+            days=16,
+            interval_minutes=5,
+            timezone=timezone,
+            profile=profile,
+        )
+        prepare_dataset(raw_path, prepared_dir, timezone)
+        profile_inputs[profile] = (
+            prepared_dir / "features.csv",
+            prepared_dir / "labels.csv",
+            prepared_dir / "metadata.csv",
+        )
+    return profile_inputs["shifted"], profile_inputs["stress"]
 
 
 def _models(seed: int) -> dict[str, tuple[ClassifierMixin, dict[str, list[Any]]]]:
@@ -132,23 +167,25 @@ def _models(seed: int) -> dict[str, tuple[ClassifierMixin, dict[str, list[Any]]]
                     ("model", LogisticRegression(max_iter=1000, class_weight="balanced")),
                 ]
             ),
-            {"model__C": [0.1, 1.0, 10.0], "model__class_weight": ["balanced", None]},
+            {"model__C": [0.01, 0.1, 1.0], "model__class_weight": ["balanced", None]},
         ),
         "random_forest": (
             RandomForestClassifier(class_weight="balanced", random_state=seed, n_jobs=1),
             {
                 "n_estimators": [100, 200],
-                "max_depth": [4, 8, None],
-                "min_samples_leaf": [2, 5],
+                "max_depth": [2, 4, 6],
+                "min_samples_leaf": [10, 20, 50],
+                "max_features": ["sqrt", 0.7],
             },
         ),
         "hist_gradient_boosting": (
             HistGradientBoostingClassifier(random_state=seed),
             {
-                "learning_rate": [0.05, 0.1],
-                "max_iter": [100, 150],
-                "max_leaf_nodes": [7, 15],
-                "l2_regularization": [0.0, 1.0],
+                "learning_rate": [0.03, 0.05],
+                "max_iter": [30, 60],
+                "max_leaf_nodes": [3, 5],
+                "min_samples_leaf": [20, 40],
+                "l2_regularization": [1.0, 10.0],
             },
         ),
     }
@@ -179,12 +216,29 @@ def train(
     timezone: str,
     seed: int,
     search_iterations: int,
+    generalization_validation_paths: tuple[Path, Path, Path] | None = None,
+    stress_test_paths: tuple[Path, Path, Path] | None = None,
 ) -> dict[str, Any]:
     if not 1 <= search_iterations <= 12:
         raise ValueError("search_iterations deve estar entre 1 e 12")
     values, targets, timestamps, data_hash = _load_dataset(
         features_path, labels_path, metadata_path, timezone
     )
+    if (generalization_validation_paths is None) != (stress_test_paths is None):
+        raise ValueError("generalization validation e stress test devem ser informados juntos")
+    shifted_values: np.ndarray | None = None
+    shifted_targets: np.ndarray | None = None
+    shifted_hash: str | None = None
+    stress_values: np.ndarray | None = None
+    stress_targets: np.ndarray | None = None
+    stress_hash: str | None = None
+    if generalization_validation_paths and stress_test_paths:
+        shifted_values, shifted_targets, _, shifted_hash = _load_dataset(
+            *generalization_validation_paths, timezone
+        )
+        stress_values, stress_targets, _, stress_hash = _load_dataset(
+            *stress_test_paths, timezone
+        )
     splits = _split_indices(timestamps, timezone)
     if any(set(targets[indices]) != {0, 1} for indices in splits.values()):
         raise ValueError("cada partição temporal precisa conter as duas classes")
@@ -228,7 +282,11 @@ def train(
                     float(average_precision_score(targets[actual_train], train_probabilities))
                 )
                 validation_scores.append(
-                    float(average_precision_score(targets[actual_validation], validation_probabilities))
+                    float(
+                        average_precision_score(
+                            targets[actual_validation], validation_probabilities
+                        )
+                    )
                 )
             mean_validation = float(np.mean(validation_scores))
             if mean_validation > best_cv_score:
@@ -242,6 +300,11 @@ def train(
         validation_metrics = _metrics(
             targets[validation_indices], tuned.predict_proba(values[validation_indices])[:, 1]
         )
+        generalization_metrics = (
+            _metrics(shifted_targets, tuned.predict_proba(shifted_values)[:, 1])
+            if shifted_values is not None and shifted_targets is not None
+            else None
+        )
         candidates[name] = {
             "best_parameters": best_parameters,
             "cv_mean_train_average_precision": best_cv_train_score,
@@ -249,6 +312,7 @@ def train(
             "cv_validation_average_precision_std": best_cv_std,
             "cv_generalization_gap": best_cv_train_score - best_cv_score,
             "validation": validation_metrics,
+            "generalization_validation": generalization_metrics,
         }
 
     dummy = DummyClassifier(strategy="prior")
@@ -257,27 +321,86 @@ def train(
         targets[validation_indices], dummy.predict_proba(values[validation_indices])[:, 1]
     )
     train_validation = np.concatenate((train_indices, validation_indices))
-    dummy_final = DummyClassifier(strategy="prior")
-    dummy_final.fit(values[train_validation], targets[train_validation])
-    dummy_test = _metrics(targets[test_indices], dummy_final.predict_proba(values[test_indices])[:, 1])
     candidates["dummy_prior"] = {"best_parameters": {}, "validation": dummy_validation}
+    candidates["dummy_prior"]["generalization_validation"] = (
+        _metrics(shifted_targets, dummy.predict_proba(shifted_values)[:, 1])
+        if shifted_values is not None and shifted_targets is not None
+        else None
+    )
+
+    def selection_score(name: str) -> float:
+        in_domain_score = candidates[name]["validation"]["average_precision"]
+        shifted_result = candidates[name]["generalization_validation"]
+        if shifted_result is None:
+            return in_domain_score
+        return float(
+            np.mean(
+                [
+                    in_domain_score,
+                    shifted_result["average_precision"],
+                ]
+            )
+        )
 
     selected_model = max(
         specifications,
-        key=lambda name: candidates[name]["validation"]["average_precision"],
+        key=selection_score,
     )
     selected_estimator, _ = specifications[selected_model]
     selected_final = clone(selected_estimator).set_params(
         **candidates[selected_model]["best_parameters"]
     )
-    selected_final.fit(values[train_validation], targets[train_validation])
+    final_train_values = values[train_validation]
+    final_train_targets = targets[train_validation]
+    if shifted_values is not None and shifted_targets is not None:
+        final_train_values = np.concatenate((final_train_values, shifted_values))
+        final_train_targets = np.concatenate((final_train_targets, shifted_targets))
+    final_training_fingerprint = hashlib.sha256(data_hash.encode("ascii"))
+    if shifted_hash is not None:
+        final_training_fingerprint.update(shifted_hash.encode("ascii"))
+    final_training_data_hash = final_training_fingerprint.hexdigest()
+    dummy_final = DummyClassifier(strategy="prior")
+    dummy_final.fit(final_train_values, final_train_targets)
+    dummy_test = _metrics(
+        targets[test_indices], dummy_final.predict_proba(values[test_indices])[:, 1]
+    )
+    selected_final.fit(final_train_values, final_train_targets)
     selected_test = _metrics(
         targets[test_indices], selected_final.predict_proba(values[test_indices])[:, 1]
     )
+    stress_test_metrics = (
+        _metrics(stress_targets, selected_final.predict_proba(stress_values)[:, 1])
+        if stress_values is not None and stress_targets is not None
+        else None
+    )
+    selected_shifted_metrics = candidates[selected_model]["generalization_validation"]
+    validation_domain_gap = (
+        abs(
+            candidates[selected_model]["validation"]["average_precision"]
+            - selected_shifted_metrics["average_precision"]
+        )
+        if selected_shifted_metrics is not None
+        else None
+    )
+    cv_gap = candidates[selected_model]["cv_generalization_gap"]
+    cv_std = candidates[selected_model]["cv_validation_average_precision_std"]
+    stress_average_precision = (
+        stress_test_metrics["average_precision"] if stress_test_metrics else None
+    )
+    temporal_cv_assessment = _overfitting_assessment(cv_gap, cv_std)
+    domain_shift_assessment = (
+        "sensitivity_detected"
+        if validation_domain_gap is not None and validation_domain_gap > 0.15
+        else "no_large_validation_gap_detected"
+        if validation_domain_gap is not None
+        else "not_evaluated"
+    )
+    if stress_average_precision is not None and stress_average_precision < 0.7:
+        domain_shift_assessment = "sensitivity_detected"
     model_path = output_dir / "best_model.joblib"
     joblib.dump(selected_final, model_path)
     model_hash = hashlib.sha256(model_path.read_bytes()).hexdigest()
-    split_counts = {name: int(len(indices)) for name, indices in splits.items()}
+    split_counts = {name: len(indices) for name, indices in splits.items()}
     first_local = timestamps[0].astimezone(ZoneInfo(timezone))
     origin = datetime.combine(first_local.date(), time.min, tzinfo=ZoneInfo(timezone))
     split_manifest = {
@@ -296,11 +419,25 @@ def train(
         "sample_unit": "valid_reading_after_a_predecessor_reading",
         "timezone": timezone,
         "feature_names": list(FEATURE_NAMES),
+        "explanation_reference": {
+            name: float(value)
+            for name, value in zip(
+                FEATURE_NAMES,
+                np.median(values[train_indices], axis=0),
+                strict=True,
+            )
+        },
         "threshold": 0.5,
-        "selection_metric": "validation_average_precision",
+        "selection_metric": (
+            "mean_average_precision_across_temporal_and_shifted_validation"
+            if shifted_values is not None
+            else "validation_average_precision"
+        ),
+        "selection_scores": {name: selection_score(name) for name in candidates},
         "selected_model": selected_model,
         "model_sha256": model_hash,
         "training_data_sha256": data_hash,
+        "final_training_data_sha256": final_training_data_hash,
         "search": {
             "strategy": "random_parameter_sampling_with_time_series_cross_validation",
             "iterations_per_model": search_iterations,
@@ -311,6 +448,51 @@ def train(
         "split_counts": split_counts,
         "candidates": candidates,
         "test_evaluation": {selected_model: selected_test, "dummy_prior": dummy_test},
+        "generalization_validation": (
+            {
+                "profile": "shifted",
+                "data_sha256": shifted_hash,
+                "sample_count": len(shifted_targets),
+                "candidates": {
+                    name: result["generalization_validation"]
+                    for name, result in candidates.items()
+                },
+            }
+            if shifted_values is not None and shifted_targets is not None
+            else None
+        ),
+        "stress_test_evaluation": (
+            {
+                "profile": "stress",
+                "data_sha256": stress_hash,
+                "sample_count": len(stress_targets),
+                "selected_model": stress_test_metrics,
+                "dummy_prior": _metrics(
+                    stress_targets,
+                    dummy_final.predict_proba(stress_values)[:, 1],
+                ),
+            }
+            if stress_values is not None
+            and stress_targets is not None
+            and stress_test_metrics is not None
+            else None
+        ),
+        "overfitting_diagnostics": {
+            "cv_generalization_gap": cv_gap,
+            "cv_validation_average_precision_std": cv_std,
+            "temporal_cv_assessment": temporal_cv_assessment,
+            "validation_domain_gap": validation_domain_gap,
+            "stress_test_average_precision": stress_average_precision,
+            "domain_shift_assessment": domain_shift_assessment,
+            "assessment_thresholds": {
+                "cv_gap_warning": 0.1,
+                "cv_validation_std_warning": 0.1,
+                "validation_domain_gap_warning": 0.15,
+                "stress_test_average_precision_warning_below": 0.7,
+            },
+            "limits": "Heuristic diagnostics for investigation; synthetic profiles do not establish real-world generalization.",
+        },
+        "final_training_sample_count": len(final_train_targets),
         "synthetic_data_notice": (
             "metrics describe recognition of generated scenarios, not real-world leak detection"
         ),
@@ -322,6 +504,8 @@ def train(
         json.dumps(split_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    report_markdown_path = output_dir / "training_report.md"
+    report_markdown_path.write_text(_training_report_markdown(report), encoding="utf-8")
 
     for name, result in candidates.items():
         with mlflow.start_run(run_name=name):
@@ -335,8 +519,12 @@ def train(
                     "search_iterations": search_iterations,
                     "seed": seed,
                     "data_sha256": data_hash,
-                    "model_sha256": model_hash,
-                    **{f"best_{key}": str(value) for key, value in result["best_parameters"].items()},
+                    "final_training_data_sha256": final_training_data_hash,
+                    **({"model_sha256": model_hash} if name == selected_model else {}),
+                    **{
+                        f"best_{key}": str(value)
+                        for key, value in result["best_parameters"].items()
+                    },
                 }
             )
             split_results = {"validation": result["validation"]}
@@ -353,7 +541,10 @@ def train(
                     f"{split_name}_confusion_matrix.json",
                 )
             if name != "dummy_prior":
-                mlflow.log_metric("cv_mean_train_average_precision", result["cv_mean_train_average_precision"])
+                mlflow.log_metric(
+                    "cv_mean_train_average_precision",
+                    result["cv_mean_train_average_precision"],
+                )
                 mlflow.log_metric(
                     "cv_mean_validation_average_precision",
                     result["cv_mean_validation_average_precision"],
@@ -367,6 +558,7 @@ def train(
                 mlflow.log_artifact(str(output_dir / "best_model.joblib"), artifact_path="model")
                 mlflow.log_dict(report, "metrics.json")
                 mlflow.log_dict(split_manifest, "split_manifest.json")
+                mlflow.log_artifact(str(report_markdown_path))
 
     experiment = mlflow.get_experiment_by_name(experiment_name)
     if experiment is None:
@@ -377,6 +569,103 @@ def train(
     )
     print(json.dumps(report, ensure_ascii=False, sort_keys=True))
     return report
+
+
+def _overfitting_assessment(generalization_gap: float, validation_std: float) -> str:
+    if generalization_gap > 0.1 or validation_std > 0.1:
+        return "possible_overfitting_or_instability"
+    return "no_large_gap_detected_in_temporal_cv"
+
+
+def _training_report_markdown(report: dict[str, Any]) -> str:
+    selected = report["selected_model"]
+    diagnostics = report["overfitting_diagnostics"]
+
+    def format_metric(value: float | None) -> str:
+        return f"{value:.3f}" if value is not None else "—"
+
+    lines = [
+        "# Relatório do experimento de classificação de anomalias",
+        "",
+        f"Modelo selecionado: **{selected}**.",
+        "",
+        f"- Amostras usadas no ajuste final: {report['final_training_sample_count']}.",
+        f"- Partições temporais originais: {report['split_counts']}.",
+        f"- Busca de hiperparâmetros: {report['search']['total_candidate_fits']} ajustes; seed {report['search']['seed']}.",
+        f"- Hash dos dados da série principal: `{report['training_data_sha256']}`.",
+        f"- Hash combinado dos dados usados no ajuste final: `{report['final_training_data_sha256']}`.",
+        f"- Hiperparâmetros escolhidos: `{report['candidates'][selected]['best_parameters']}`.",
+        "",
+        "## Como foi avaliado",
+        "",
+        (
+            "A seleção usa average precision média entre a validação temporal e a validação com perfil deslocado. "
+            "O perfil de estresse só é avaliado depois da seleção e não participa do ajuste dos hiperparâmetros."
+        ),
+        "",
+        "| Candidato | AP temporal | AP perfil deslocado | AP média de seleção | Gap treino/CV | Variação CV |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for name, result in report["candidates"].items():
+        cv_gap = result.get("cv_generalization_gap")
+        cv_std = result.get("cv_validation_average_precision_std")
+        shifted = result.get("generalization_validation")
+        lines.append(
+            f"| {name} | {result['validation']['average_precision']:.3f} | "
+            f"{format_metric(shifted['average_precision'] if shifted else None)} | "
+            f"{report['selection_scores'][name]:.3f} | "
+            f"{format_metric(cv_gap)} | {format_metric(cv_std)} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Diagnóstico",
+            "",
+            f"- Avaliação temporal: `{diagnostics['temporal_cv_assessment']}`.",
+            f"- Diferença de AP entre validação temporal e perfil deslocado: {format_metric(diagnostics['validation_domain_gap'])}.",
+            f"- AP no perfil de estresse independente: {format_metric(diagnostics['stress_test_average_precision'])}.",
+            "- Os limiares do diagnóstico são sinais de investigação, não critérios de aprovação estatística.",
+            "",
+            "## Resultado no teste",
+            "",
+        ]
+    )
+    test_metrics = report["test_evaluation"][selected]
+    lines.extend(
+        [
+            (
+                f"- Série principal: AP {test_metrics['average_precision']:.3f}, precisão {test_metrics['precision']:.3f}, "
+                f"recall {test_metrics['recall']:.3f}, F1 {test_metrics['f1']:.3f}."
+            ),
+            f"- Matriz de confusão da série principal: `{test_metrics['confusion_matrix']}` (linhas: real 0/1; colunas: previsto 0/1).",
+        ]
+    )
+    stress_metrics = report["stress_test_evaluation"]
+    if stress_metrics:
+        metrics = stress_metrics["selected_model"]
+        lines.extend(
+            [
+                (
+                    f"- Perfil de estresse: AP {metrics['average_precision']:.3f}, precisão {metrics['precision']:.3f}, "
+                    f"recall {metrics['recall']:.3f}, F1 {metrics['f1']:.3f}."
+                ),
+                f"- Matriz de confusão do perfil de estresse: `{metrics['confusion_matrix']}` (linhas: real 0/1; colunas: previsto 0/1).",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Limitações",
+            "",
+            (
+                "Todos os perfis são sintéticos e definidos pelo gerador do projeto. O teste de estresse mede sensibilidade "
+                "a mudanças construídas de rotina, ruído e intensidade; não demonstra desempenho em consumo real nem "
+                "confirma vazamentos."
+            ),
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def main() -> None:
@@ -393,7 +682,37 @@ def main() -> None:
     parser.add_argument("--timezone", default=DEFAULT_TIMEZONE)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--search-iterations", type=int, default=4)
+    parser.add_argument("--generalization-validation-features", type=Path)
+    parser.add_argument("--generalization-validation-labels", type=Path)
+    parser.add_argument("--generalization-validation-metadata", type=Path)
+    parser.add_argument("--stress-test-features", type=Path)
+    parser.add_argument("--stress-test-labels", type=Path)
+    parser.add_argument("--stress-test-metadata", type=Path)
     args = parser.parse_args()
+    shifted_paths = (
+        args.generalization_validation_features,
+        args.generalization_validation_labels,
+        args.generalization_validation_metadata,
+    )
+    stress_paths = (
+        args.stress_test_features,
+        args.stress_test_labels,
+        args.stress_test_metadata,
+    )
+    if any(path is not None for path in shifted_paths) and not all(
+        path is not None for path in shifted_paths
+    ):
+        parser.error("informe os três arquivos de generalization validation juntos")
+    if any(path is not None for path in stress_paths) and not all(
+        path is not None for path in stress_paths
+    ):
+        parser.error("informe os três arquivos de stress test juntos")
+    shifted_input = tuple(shifted_paths) if all(path is not None for path in shifted_paths) else None
+    stress_input = tuple(stress_paths) if all(path is not None for path in stress_paths) else None
+    if shifted_input is None and stress_input is None:
+        shifted_input, stress_input = _generate_evaluation_profiles(
+            args.timezone, args.seed, args.output_dir.parent
+        )
     train(
         args.features,
         args.labels,
@@ -404,6 +723,8 @@ def main() -> None:
         args.timezone,
         args.seed,
         args.search_iterations,
+        shifted_input,
+        stress_input,
     )
 
 
