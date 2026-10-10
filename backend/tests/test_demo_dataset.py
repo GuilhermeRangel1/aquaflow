@@ -43,9 +43,17 @@ async def test_demo_dataset_is_idempotent_and_visible_through_public_api() -> No
     async with sessions() as session:
         assert await session.scalar(select(func.count()).select_from(User)) == 1
         assert await session.scalar(select(func.count()).select_from(Property)) == 1
-        assert await session.scalar(select(func.count()).select_from(Device)) == 4
+        assert await session.scalar(select(func.count()).select_from(Device)) == 3
         assert await session.scalar(select(func.count()).select_from(TelemetryReading)) >= 900
-        assert await session.scalar(select(func.count()).select_from(Alert)) == 5
+        assert await session.scalar(select(func.count()).select_from(Alert)) == 4
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(TelemetryReading)
+                .where(TelemetryReading.event_id.like("demo-ml-showcase-%"))
+            )
+            == 4
+        )
 
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
@@ -125,19 +133,16 @@ async def test_demo_dataset_is_idempotent_and_visible_through_public_api() -> No
 
     assert properties.status_code == devices.status_code == alerts.status_code == 200
     assert len(properties.json()["items"]) == 1
-    assert len(devices.json()["items"]) == 4
-    assert len(alert_pages) == 5
-    assert len({alert["id"] for alert in alert_pages}) == 5
-    assert len(anomaly_pages) >= 5
+    assert len(devices.json()["items"]) == 3
+    assert len(alert_pages) == 4
+    assert len({alert["id"] for alert in alert_pages}) == 4
+    assert len(anomaly_pages) >= 4
     assert len({anomaly["id"] for anomaly in anomaly_pages}) == len(anomaly_pages)
-    offline_meter = next(
-        device for device in devices.json()["items"] if device["serial_number"] == "AF-DEMO-003"
-    )
-    assert offline_meter["last_seen_at"] is not None
-    offline_last_seen = datetime.fromisoformat(offline_meter["last_seen_at"])
-    if offline_last_seen.tzinfo is None:
-        offline_last_seen = offline_last_seen.replace(tzinfo=UTC)
-    assert offline_last_seen < end - timedelta(minutes=10)
+    assert {device["serial_number"] for device in devices.json()["items"]} == {
+        "AF-DEMO-001",
+        "AF-DEMO-002",
+        "AF-DEMO-ML-001",
+    }
     assert {alert["status"] for alert in alert_pages} == {
         "open",
         "acknowledged",
@@ -150,11 +155,7 @@ async def test_demo_dataset_is_idempotent_and_visible_through_public_api() -> No
         and alert["evidence"].get("timezone") == "America/Sao_Paulo"
         for alert in sample_alerts
     )
-    assert any(
-        alert["detector_type"] == "device_offline"
-        and alert["evidence"].get("offline_threshold_seconds") == 600
-        for alert in sample_alerts
-    )
+    assert not any(alert["detector_type"] == "device_offline" for alert in sample_alerts)
     assert consumption.status_code == 200
     assert consumption.json()["summary"]["total_volume_liters"] > 0
     assert consumption.json()["has_more"] is True

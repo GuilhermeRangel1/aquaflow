@@ -15,6 +15,7 @@ from app.core.security import hash_device_key, hash_password
 from app.db.models import Alert, AnomalyEvent, Device, Property, TelemetryReading, User
 from app.db.session import create_session_factory
 from app.services.anomaly_detection import evaluate_continuous_flow
+from app.services.audit import add_audit_entry
 
 DEMO_EMAIL = "demo@example.com"
 LEGACY_DEMO_EMAIL = "demo@aquaflow.local"
@@ -27,7 +28,7 @@ async def seed_demo_data(
     password: str,
     email: str | None = None,
 ) -> bool:
-    """Add the local demo dataset without overwriting existing demo data."""
+    """Add demo fixtures and retire replaced meters without deleting their history."""
     configured_email = email or DEMO_EMAIL
     async with session_factory() as session:
         now = datetime.now(UTC).replace(second=0, microsecond=0)
@@ -70,12 +71,10 @@ async def seed_demo_data(
             await session.flush()
             created = True
 
-        stale_last_seen = now - timedelta(days=2, minutes=40)
         device_specs = (
             ("AF-DEMO-001", "Medidor principal", now),
             ("AF-DEMO-002", "Irrigação externa", now),
-            ("AF-DEMO-003", "Medidor de reserva", stale_last_seen),
-            ("AF-DEMO-004", "Lavanderia", now),
+            ("AF-DEMO-ML-001", "Demonstração ML", now),
         )
         devices: dict[str, Device] = {}
         for serial, name, last_seen in device_specs:
@@ -93,6 +92,7 @@ async def seed_demo_data(
                 device.last_seen_at = last_seen
             devices[serial] = device
         await session.flush()
+        created = await _retire_legacy_demo_devices(session, user, now) or created
 
         existing_event_ids = set(
             (
@@ -107,9 +107,8 @@ async def seed_demo_data(
             _daily_readings(devices["AF-DEMO-001"], now)
             + _continuous_flow_readings(devices["AF-DEMO-002"], now)
             + _irrigation_readings(devices["AF-DEMO-002"], now)
-            + _laundry_readings(devices["AF-DEMO-004"], now)
+            + _ml_showcase_readings(devices["AF-DEMO-ML-001"], now)
             + _health_readings(devices, now)
-            + [_offline_reading(devices["AF-DEMO-003"], stale_last_seen, now)]
         )
         missing = [sample for sample in samples if sample.event_id not in existing_event_ids]
         if missing:
@@ -126,8 +125,7 @@ async def seed_demo_data(
         if await _add_sample_alerts(
             session,
             property_row,
-            devices["AF-DEMO-004"],
-            devices["AF-DEMO-003"],
+            devices["AF-DEMO-002"],
             now,
         ):
             created = True
@@ -152,6 +150,100 @@ def _device(
         created_at=created_at,
         last_seen_at=last_seen_at,
     )
+
+
+async def _retire_legacy_demo_devices(
+    session: AsyncSession,
+    user: User,
+    now: datetime,
+) -> bool:
+    """Retire superseded demo meters without deleting their telemetry or history."""
+    devices = list(
+        (
+            await session.scalars(
+                select(Device)
+                .join(Property, Device.property_id == Property.id)
+                .where(
+                    Property.owner_id == user.id,
+                    Device.serial_number.in_(("AF-DEMO-003", "AF-DEMO-004")),
+                    Device.is_active.is_(True),
+                )
+            )
+        ).all()
+    )
+    changed = bool(devices)
+    for device in devices:
+        device.is_active = False
+        add_audit_entry(
+            session,
+            actor_id=user.id,
+            action="device.retired",
+            resource_type="device",
+            resource_id=device.id,
+            metadata={"is_active": False, "reason": "demo_seed_refresh"},
+        )
+        offline_alerts = list(
+            (
+                await session.execute(
+                    select(Alert, AnomalyEvent)
+                    .join(AnomalyEvent, AnomalyEvent.id == Alert.anomaly_id)
+                    .where(
+                        AnomalyEvent.device_id == device.id,
+                        AnomalyEvent.detector_type == "device_offline",
+                        Alert.status.in_(("open", "acknowledged")),
+                    )
+                )
+            ).all()
+        )
+        for alert, anomaly in offline_alerts:
+            previous_status = alert.status
+            alert.status = "resolved"
+            alert.resolved_at = now
+            anomaly.window_end = now
+            anomaly.evidence = {
+                **anomaly.evidence,
+                "device_retired_at": now.isoformat(),
+            }
+            add_audit_entry(
+                session,
+                actor_id=user.id,
+                action="alert.resolved",
+                resource_type="alert",
+                resource_id=alert.id,
+                metadata={
+                    "from": previous_status,
+                    "to": "resolved",
+                    "reason": "demo_device_retired",
+                },
+            )
+    return changed
+
+
+def _ml_showcase_readings(device: Device, now: datetime) -> list[TelemetryReading]:
+    """Create one normal point followed by two consecutive synthetic ML positives."""
+    aligned_now = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0)
+    start = aligned_now - timedelta(minutes=20)
+    points = (
+        ("baseline", Decimal("2000.000"), Decimal("0.05")),
+        ("normal", Decimal("2000.250"), Decimal("0.05")),
+        ("peak-1", Decimal("2002.750"), Decimal("0.50")),
+        ("peak-2", Decimal("2005.250"), Decimal("0.50")),
+    )
+    return [
+        TelemetryReading(
+            device_id=device.id,
+            event_id=f"demo-ml-showcase-{suffix}",
+            recorded_at=start + timedelta(minutes=5 * index),
+            received_at=now,
+            cumulative_volume_liters=volume,
+            flow_rate_liters_minute=flow,
+            quality="valid",
+            battery_percent=88,
+            signal_dbm=-55,
+            firmware_version="0.4.2-demo",
+        )
+        for index, (suffix, volume, flow) in enumerate(points)
+    ]
 
 
 def _daily_readings(device: Device, now: datetime) -> list[TelemetryReading]:
@@ -236,63 +328,6 @@ def _daily_readings(device: Device, now: datetime) -> list[TelemetryReading]:
     return readings
 
 
-def _laundry_readings(device: Device, now: datetime) -> list[TelemetryReading]:
-    """A second cumulative meter with regular, lower-volume daily use."""
-    zone = ZoneInfo(PROPERTY_TIMEZONE)
-    today = now.astimezone(zone).date()
-    total = Decimal("320")
-    readings: list[TelemetryReading] = []
-    for days_ago in range(89, -1, -1):
-        day = today - timedelta(days=days_ago)
-        if days_ago > 6:
-            # A household washing machine usually runs a few loads per week,
-            # rather than drawing water every day.
-            if day.weekday() not in {1, 4, 6}:
-                continue
-            liters = Decimal(38 + ((day.toordinal() * 11) % 19))
-            average_rate = (liters / Decimal(5)).quantize(Decimal("0.001"))
-            start = datetime.combine(day, time(10, 0), tzinfo=zone).astimezone(UTC)
-            end = start + timedelta(minutes=5)
-            if end >= now:
-                continue
-            for suffix, recorded_at, rate in (
-                ("inicio", start, average_rate * Decimal("0.85")),
-                ("fim", end, average_rate * Decimal("1.15")),
-            ):
-                readings.append(
-                    TelemetryReading(
-                        device_id=device.id,
-                        event_id=f"demo-laundry-history-{day:%Y%m%d}-{suffix}",
-                        recorded_at=recorded_at,
-                        received_at=now,
-                        flow_rate_liters_minute=rate.quantize(Decimal("0.001")),
-                        quality="valid",
-                        battery_percent=max(55, 94 - (90 - days_ago) // 8),
-                        signal_dbm=-50 - (day.toordinal() % 16),
-                        firmware_version="0.4.2-demo",
-                    )
-                )
-            continue
-        start = datetime.combine(day, time(10, 0), tzinfo=zone).astimezone(UTC)
-        end = start + timedelta(minutes=5)
-        if end >= now:
-            continue
-        first = total
-        total += Decimal("42.5") + Decimal(days_ago % 3 * 4)
-        for suffix, recorded_at, volume in (("inicio", start, first), ("fim", end, total)):
-            readings.append(
-                TelemetryReading(
-                    device_id=device.id,
-                    event_id=f"demo-laundry-{today - timedelta(days=days_ago):%Y%m%d}-{suffix}",
-                    recorded_at=recorded_at,
-                    received_at=now,
-                    cumulative_volume_liters=volume,
-                    quality="valid",
-                )
-            )
-    return readings
-
-
 def _irrigation_readings(device: Device, now: datetime) -> list[TelemetryReading]:
     """Model short scheduled watering sessions alongside the recent anomaly."""
     zone = ZoneInfo(PROPERTY_TIMEZONE)
@@ -329,7 +364,6 @@ async def _add_sample_alerts(
     session: AsyncSession,
     property_row: Property,
     device: Device,
-    offline_device: Device,
     now: datetime,
 ) -> bool:
     existing = list(
@@ -350,7 +384,6 @@ async def _add_sample_alerts(
         sample_time.astimezone(zone).date() - timedelta(days=1), time(22), tzinfo=zone
     ).astimezone(UTC)
     night_end = night_start + timedelta(minutes=15)
-    offline_last_seen = sample_time - timedelta(minutes=40)
     fixtures: tuple[
         tuple[str, str, str, str, Device, datetime, datetime, dict[str, str | int | float]], ...
     ] = (
@@ -395,21 +428,6 @@ async def _add_sample_alerts(
             sample_time,
             sample_time + timedelta(hours=1),
             {},
-        ),
-        (
-            "open",
-            "device_offline",
-            "Medidor sem comunicação por mais de dois intervalos",
-            "demo-alert-offline",
-            offline_device,
-            offline_last_seen + timedelta(seconds=600),
-            sample_time,
-            {
-                "last_seen_at": offline_last_seen.isoformat(),
-                "expected_interval_seconds": 300,
-                "offline_threshold_seconds": 600,
-                "seconds_since_last_seen": 2400,
-            },
         ),
     )
     added = False
@@ -502,26 +520,10 @@ def _health_readings(devices: dict[str, Device], now: datetime) -> list[Telemetr
         )
         for serial, battery, signal in (
             ("AF-DEMO-001", 92, -52),
-            ("AF-DEMO-004", 78, -68),
+            ("AF-DEMO-002", 84, -63),
+            ("AF-DEMO-ML-001", 88, -55),
         )
     ]
-
-
-def _offline_reading(
-    device: Device, recorded_at: datetime, received_at: datetime
-) -> TelemetryReading:
-    """Keep the stale meter's last reported sample consistent with its health state."""
-    return TelemetryReading(
-        device_id=device.id,
-        event_id=f"demo-offline-{device.serial_number}-{recorded_at:%Y%m%d%H%M}",
-        recorded_at=recorded_at,
-        received_at=received_at,
-        flow_rate_liters_minute=Decimal("0"),
-        quality="valid",
-        battery_percent=31,
-        signal_dbm=-79,
-        firmware_version="0.4.1-demo",
-    )
 
 
 async def main() -> None:
