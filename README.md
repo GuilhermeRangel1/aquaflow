@@ -56,12 +56,13 @@ Essas credenciais servem somente para desenvolvimento local. O seed sintético �
 
 A conta de demonstração é preparada automaticamente pelo serviço da API e contém:
 
-- Histórico variável de aproximadamente 90 dias para consumo doméstico.
-- Um medidor principal, um medidor de irrigação com sessões programadas, um medidor de lavanderia e um medidor de reserva offline.
-- Leituras de bateria, sinal e versão de firmware para os medidores simulados.
-- Alertas de exemplo em diferentes estados, identificados como simulados, além de um alerta de fluxo contínuo gerado pelo detector.
+- Três medidores ativos: consumo doméstico, irrigação e uma demonstração dedicada à inferência de ML.
+- Histórico variável de aproximadamente 90 dias para consumo doméstico e sessões programadas de irrigação.
+- Uma sequência curta de leituras normais e picos simulados no medidor de ML; com o worker experimental e um modelo treinado disponíveis, as previsões positivas são agrupadas em um alerta com evidências.
+- Um alerta de fluxo contínuo produzido pelo detector por regras, além de poucos exemplos históricos para demonstrar os estados de tratamento.
+- Leituras de bateria, sinal e versão de firmware nos dispositivos simulados.
 
-O seed é aditivo e idempotente: ele acrescenta dados que ainda não existem e preserva os registros existentes. Para experimentar ingestão de ponta a ponta, abra **Medidores**, cadastre um medidor com número de série exclusivo e use **Simular leituras**. O simulador envia eventos pela mesma API usada por um dispositivo.
+O seed é aditivo e idempotente: ele acrescenta dados que ainda não existem e preserva a telemetria e o histórico. Os antigos medidores de reserva e lavanderia são desativados, sem apagar os registros. Para ver os alertas experimentais de ML, treine o modelo e inicie o perfil `ml` conforme a seção de aquisição MQTT e ML. Para experimentar ingestão de ponta a ponta, abra **Medidores**, cadastre um medidor com número de série exclusivo e use **Simular leituras**. O simulador envia eventos pela mesma API usada por um dispositivo.
 
 ## Integração com ESP32
 
@@ -73,7 +74,7 @@ O guia [Integração de um ESP32](firmware/docs/integracao-esp32.md) explica com
 
 O Compose também oferece um broker MQTT interno e um consumidor que encaminha as mensagens para a ingestão HTTP existente. Cadastre um medidor em **Medidores**, copie a chave mostrada e siga o [contrato MQTT](docs/contrato-mqtt.md) para publicar leituras de teste e consultá-las na aplicação. O broker não publica uma porta no host.
 
-O [módulo de ML](ml/README.md) gera uma série temporal reproduzível e contém um DAG Airflow para análise exploratória e preparação dos dados. Os rótulos descrevem cenários simulados e não representam vazamentos confirmados. A interface local do Airflow é iniciada pelo comando padrão do Compose; habilite o DAG e execute-o manualmente. O acesso sem login é apenas para desenvolvimento local e a porta fica vinculada ao próprio computador.
+O [módulo de ML](ml/README.md) gera séries temporais reproduzíveis, prepara os dados com um DAG Airflow e compara modelos offline. Depois de treinar um modelo localmente, inicie o worker com `docker compose --profile ml up --build -d ml-inference`; ele grava inferências experimentais para novas leituras. Uma previsão positiva cria um alerta experimental tratável, enquanto previsões normais permanecem registradas sem alerta. Os rótulos descrevem cenários simulados e não representam vazamentos confirmados. A interface local do Airflow é iniciada pelo comando padrão do Compose; habilite o DAG e execute-o manualmente. O acesso sem login é apenas para desenvolvimento local e a porta fica vinculada ao próprio computador.
 
 ## Tecnologias e organização
 
@@ -158,5 +159,5 @@ Ainda dependem de evolução do projeto:
 - Firmware do ESP32 e calibração com o sensor físico escolhido.
 - Validação de ponta a ponta com hardware e rede reais.
 - Ampliação da cobertura de integração com PostgreSQL.
-- Análise exploratória, preparação e comparação offline de modelos com registro no MLflow estão disponíveis para dados simulados. Inferência integrada e validação com telemetria real ainda fazem parte da evolução acadêmica; as métricas atuais não representam desempenho em vazamentos reais.
+- Análise exploratória, preparação, comparação de modelos com registro no MLflow e inferência experimental integrada estão disponíveis para dados simulados. Previsões positivas geram alertas experimentais separados dos detectores por regras. O worker é opcional e ainda falta validação com telemetria real; as métricas atuais não representam desempenho em vazamentos reais.
 - Notificações externas e compartilhamento de propriedade, que estão fora do escopo atual.
