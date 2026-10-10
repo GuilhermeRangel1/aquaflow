@@ -9,6 +9,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 REQUIRED_FIELDS = {
     "device_serial",
@@ -31,19 +32,16 @@ MEASUREMENTS = (
     "signal_dbm",
 )
 FEATURE_FIELDS = (
-    "event_id",
-    "recorded_at",
-    "device_serial",
-    "cumulative_volume_liters",
     "flow_rate_liters_minute",
-    "battery_percent",
-    "signal_dbm",
-    "hour_sin",
-    "hour_cos",
-    "weekday_sin",
-    "weekday_cos",
+    "volume_delta_liters",
+    "elapsed_minutes",
+    "local_hour_sin",
+    "local_hour_cos",
+    "local_weekday_sin",
+    "local_weekday_cos",
 )
 LABEL_FIELDS = ("event_id", "scenario_label", "anomaly_label")
+METADATA_FIELDS = ("event_id", "recorded_at", "device_serial")
 
 
 def _parse_time(value: str) -> datetime:
@@ -218,7 +216,7 @@ def analyze(input_path: Path, output_dir: Path) -> dict[str, Any]:
     return report
 
 
-def prepare(input_path: Path, output_dir: Path) -> dict[str, Any]:
+def prepare(input_path: Path, output_dir: Path, timezone: str) -> dict[str, Any]:
     records: list[dict[str, Any]] = []
     with input_path.open(newline="", encoding="utf-8") as source:
         reader = csv.DictReader(source)
@@ -231,26 +229,49 @@ def prepare(input_path: Path, output_dir: Path) -> dict[str, Any]:
             if record is not None and record["reading_present"]:
                 records.append(record)
 
+    try:
+        local_timezone = ZoneInfo(timezone)
+    except ZoneInfoNotFoundError as error:
+        raise ValueError(f"unknown IANA timezone: {timezone}") from error
+    records.sort(key=lambda record: record["recorded_at"])
+
+    prepared_records: list[dict[str, Any]] = []
+    previous: dict[str, Any] | None = None
+    for record in records:
+        if previous is not None:
+            elapsed_minutes = (
+                record["recorded_at"] - previous["recorded_at"]
+            ).total_seconds() / 60
+            if elapsed_minutes <= 0:
+                raise ValueError("leituras precisam ter timestamps crescentes e únicos")
+            record["volume_delta_liters"] = round(
+                record["cumulative_volume_liters"] - previous["cumulative_volume_liters"], 6
+            )
+            record["elapsed_minutes"] = round(elapsed_minutes, 6)
+            prepared_records.append(record)
+        previous = record
+
     output_dir.mkdir(parents=True, exist_ok=True)
     features_path = output_dir / "features.csv"
     labels_path = output_dir / "labels.csv"
+    metadata_path = output_dir / "metadata.csv"
     with features_path.open("w", newline="", encoding="utf-8") as features_file:
         writer = csv.DictWriter(features_file, fieldnames=FEATURE_FIELDS)
         writer.writeheader()
-        for record in records:
+        for record in prepared_records:
             timestamp: datetime = record["recorded_at"]
-            hour = timestamp.hour + timestamp.minute / 60
-            weekday = timestamp.weekday()
+            local_timestamp = timestamp.astimezone(local_timezone)
+            hour = local_timestamp.hour + local_timestamp.minute / 60
+            weekday = local_timestamp.weekday()
             writer.writerow(
                 {
-                    "event_id": record["event_id"],
-                    "recorded_at": timestamp.isoformat().replace("+00:00", "Z"),
-                    "device_serial": record["device_serial"],
-                    **{field: record[field] for field in MEASUREMENTS},
-                    "hour_sin": round(math.sin(2 * math.pi * hour / 24), 8),
-                    "hour_cos": round(math.cos(2 * math.pi * hour / 24), 8),
-                    "weekday_sin": round(math.sin(2 * math.pi * weekday / 7), 8),
-                    "weekday_cos": round(math.cos(2 * math.pi * weekday / 7), 8),
+                    "flow_rate_liters_minute": record["flow_rate_liters_minute"],
+                    "volume_delta_liters": record["volume_delta_liters"],
+                    "elapsed_minutes": record["elapsed_minutes"],
+                    "local_hour_sin": round(math.sin(2 * math.pi * hour / 24), 8),
+                    "local_hour_cos": round(math.cos(2 * math.pi * hour / 24), 8),
+                    "local_weekday_sin": round(math.sin(2 * math.pi * weekday / 7), 8),
+                    "local_weekday_cos": round(math.cos(2 * math.pi * weekday / 7), 8),
                 }
             )
     with labels_path.open("w", newline="", encoding="utf-8") as labels_file:
@@ -262,20 +283,33 @@ def prepare(input_path: Path, output_dir: Path) -> dict[str, Any]:
                 "scenario_label": record["scenario_label"],
                 "anomaly_label": record["anomaly_label"],
             }
-            for record in records
+            for record in prepared_records
+        )
+
+    with metadata_path.open("w", newline="", encoding="utf-8") as metadata_file:
+        writer = csv.DictWriter(metadata_file, fieldnames=METADATA_FIELDS)
+        writer.writeheader()
+        writer.writerows(
+            {
+                "event_id": record["event_id"],
+                "recorded_at": record["recorded_at"].isoformat().replace("+00:00", "Z"),
+                "device_serial": record["device_serial"],
+            }
+            for record in prepared_records
         )
 
     manifest = {
         "source_file": input_path.name,
-        "prepared_readings": len(records),
+        "prepared_readings": len(prepared_records),
         "missing_rows_policy": "missing slots are excluded from feature/label tables, not imputed",
+        "first_reading_policy": "excluded because no preceding reading exists to calculate volume delta",
         "label_policy": "scenario and anomaly labels are written separately from model features",
-        "time_features": "hour and weekday encoded with sine/cosine cycles in UTC",
-        "scaling_policy": (
-            "not fitted yet; choose task and split by time before fitting data-dependent transforms"
-        ),
+        "time_features": f"hour and weekday encoded with sine/cosine cycles in {timezone}",
+        "scaling_policy": "values retain their units; fit scaling inside each training pipeline only",
         "feature_file": features_path.name,
         "label_file": labels_path.name,
+        "metadata_file": metadata_path.name,
+        "timezone": timezone,
     }
     manifest_path = output_dir / "preparation_manifest.json"
     manifest_path.write_text(
@@ -290,11 +324,12 @@ def main() -> None:
     parser.add_argument("action", choices=("analyze", "prepare"))
     parser.add_argument("--input", type=Path, default=Path("data/mock-ml/readings.csv"))
     parser.add_argument("--output-dir", type=Path, default=Path("data/ml"))
+    parser.add_argument("--timezone", default="America/Sao_Paulo")
     args = parser.parse_args()
     result = (
         analyze(args.input, args.output_dir)
         if args.action == "analyze"
-        else prepare(args.input, args.output_dir)
+        else prepare(args.input, args.output_dir, args.timezone)
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
 

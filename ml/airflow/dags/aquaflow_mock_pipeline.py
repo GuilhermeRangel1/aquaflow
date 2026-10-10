@@ -34,7 +34,9 @@ def mock_telemetry_pipeline():
                 "--seed",
                 "42",
                 "--start",
-                "2026-09-01T00:00:00Z",
+                "2026-09-01T00:00:00-03:00",
+                "--timezone",
+                "America/Sao_Paulo",
                 "--days",
                 "16",
                 "--interval-minutes",
@@ -55,6 +57,8 @@ def mock_telemetry_pipeline():
                 input_file,
                 "--output-dir",
                 str(ANALYSIS_DATA),
+                "--timezone",
+                "America/Sao_Paulo",
             ],
             check=True,
         )
@@ -71,6 +75,8 @@ def mock_telemetry_pipeline():
                 input_file,
                 "--output-dir",
                 str(PREPARED_DATA),
+                "--timezone",
+                "America/Sao_Paulo",
             ],
             check=True,
         )

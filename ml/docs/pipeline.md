@@ -4,10 +4,22 @@ O DAG `aquaflow_mock_telemetry_pipeline` está em `ml/airflow/dags/`. Ele é exe
 
 1. **Geração:** grava a entrada em `data/ml/raw/mock_readings.csv`.
 2. **Análise e validação:** verifica schema, timestamps, UUIDs, valores plausíveis e rótulos; produz `data/ml/analysis/eda_report.json` com cobertura, lacunas, duplicatas, faixa temporal, contagem por cenário e estatísticas descritivas.
-3. **Preparação:** produz `features.csv`, `labels.csv` e `preparation_manifest.json` em `data/ml/prepared/`.
+3. **Preparação:** produz `features.csv`, `labels.csv`, `metadata.csv` e `preparation_manifest.json` em `data/ml/prepared/`.
 
-Os valores simulados mantêm suas unidades originais. O horário é codificado em ciclos de seno e cosseno para hora do dia e dia da semana, em UTC. UUID, timestamp e serial acompanham as features para rastreabilidade, mas são metadados e não devem ser usados como variáveis de entrada do modelo. Os rótulos ficam em arquivo separado para reduzir risco de vazamento do alvo.
+`features.csv` contém apenas vazão, delta do volume acumulado, duração do intervalo e codificações cíclicas de hora e dia da semana no fuso local da propriedade (`America/Sao_Paulo` por padrão). `labels.csv` mantém `scenario_label` e `anomaly_label`; `metadata.csv` guarda UUID, timestamp UTC e série para rastreabilidade. Esses metadados não entram no modelo. A primeira leitura é excluída porque não há leitura anterior para calcular o delta. As unidades permanecem explícitas; o escalonamento da regressão logística é ajustado dentro do pipeline em cada partição de treino.
 
-Horários sem leitura não são preenchidos com zeros nem interpolados: são contados no relatório e excluídos das tabelas de observações. Normalização, escala ajustada aos dados e codificação de categorias ficam para depois da definição da tarefa e da separação temporal de treino/validação. Ajustar essas transformações antes da divisão poderia vazar informação da validação.
+Horários sem leitura não são preenchidos com zeros nem interpolados: são contados no relatório e excluídos das tabelas de observações. Uma lacuna entre duas leituras válidas permanece visível em `elapsed_minutes` e no delta acumulado. A preparação é determinística e compartilhada pelos arquivos usados no experimento offline; a API ainda não consome o modelo.
+
+## Experimento offline
+
+Depois de executar o DAG, compare os candidatos com:
+
+```powershell
+docker compose --profile tools run --build --rm ml-trainer
+```
+
+A CLI usa blocos cronológicos locais de 8/4/4 dias para treino, validação e teste. Ela compara um baseline de prevalência com regressão logística, floresta aleatória e HistGradientBoosting. A busca usa amostragem aleatória reproduzível e validação cruzada temporal de três blocos apenas no período de treino. Average precision seleciona parâmetros e modelo na validação; o teste final avalia apenas o modelo selecionado e o baseline. Métricas, matrizes de confusão, manifesto do split, modelo serializado e execuções MLflow são gravados em `data/ml/training/` e `data/ml/mlflow.db`.
+
+Esses resultados medem reconhecimento dos cenários artificiais definidos pelo gerador. Eles não estimam a precisão de detecção de vazamentos ou de consumo real.
 
 O modo standalone e o SQLite persistido do Airflow são apenas para desenvolvimento local. O Compose padrão inicia o Airflow em `http://localhost:8080`, sem login e vinculado ao loopback da máquina. A execução Airflow e seu banco de metadados ainda precisam de uma configuração mais robusta caso o ambiente deixe de ser uma demonstração local.
