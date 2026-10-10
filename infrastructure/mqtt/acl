@@ -1,0 +1,6 @@
+user aquaflow-publisher
+topic write aquaflow/v1/devices/+/telemetry
+topic write aquaflow/health
+
+user aquaflow-ingestor
+topic read aquaflow/v1/devices/+/telemetry
