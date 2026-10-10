@@ -157,6 +157,10 @@ export default function Dashboard() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [deviceHealth, setDeviceHealth] = useState<Record<string, DeviceHealth>>({});
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [alertVisibleLimit, setAlertVisibleLimit] = useState(5);
+  const [alertsCursor, setAlertsCursor] = useState<string | null>(null);
+  const [alertsHasMore, setAlertsHasMore] = useState(false);
+  const [loadingMoreAlerts, setLoadingMoreAlerts] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   const [periodDays, setPeriodDays] = useState<7 | 30 | 90>(7);
   const [consumption, setConsumption] = useState<Consumption | null>(null);
@@ -208,6 +212,9 @@ export default function Dashboard() {
         if (!activeId) {
           setConsumption(null);
           setAlerts([]);
+          setAlertVisibleLimit(5);
+          setAlertsCursor(null);
+          setAlertsHasMore(false);
         }
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "Falha ao carregar os dados.");
@@ -281,13 +288,24 @@ export default function Dashboard() {
   useEffect(() => {
     if (!selectedId || loading) return;
     let cancelled = false;
-    api<{ items: Alert[] }>(`properties/${selectedId}/alerts?limit=50`)
-      .then((result) => {
-        if (!cancelled) setAlerts(result.items);
+    setAlerts([]);
+    setAlertVisibleLimit(5);
+    setAlertsCursor(null);
+    setAlertsHasMore(false);
+    api<{ items: Alert[]; cursor: string | null; has_more: boolean }>(
+      `properties/${selectedId}/alerts?limit=200`,
+    )
+      .then((alertResult) => {
+        if (!cancelled) {
+          setAlerts(alertResult.items);
+          setAlertsCursor(alertResult.cursor);
+          setAlertsHasMore(alertResult.has_more);
+        }
       })
       .catch((caught: unknown) => {
-        if (!cancelled)
+        if (!cancelled) {
           setError(caught instanceof Error ? caught.message : "Falha ao carregar alertas.");
+        }
       });
     return () => {
       cancelled = true;
@@ -434,6 +452,30 @@ export default function Dashboard() {
       setError(caught instanceof Error ? caught.message : "Não foi possível atualizar o alerta.");
     } finally {
       setAlertActionId("");
+    }
+  }
+
+  async function loadMoreAlerts() {
+    if (alertVisibleLimit < alerts.length) {
+      setAlertVisibleLimit((current) => current + 5);
+      return;
+    }
+    if (!alertsHasMore || !alertsCursor || !selectedId) return;
+    setLoadingMoreAlerts(true);
+    try {
+      const page = await api<{ items: Alert[]; cursor: string | null; has_more: boolean }>(
+        `properties/${selectedId}/alerts?limit=200&cursor=${encodeURIComponent(alertsCursor)}`,
+      );
+      setAlerts((current) => [...current, ...page.items]);
+      setAlertsCursor(page.cursor);
+      setAlertsHasMore(page.has_more);
+      setAlertVisibleLimit((current) => current + 5);
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Não foi possível carregar mais alertas.",
+      );
+    } finally {
+      setLoadingMoreAlerts(false);
     }
   }
 
@@ -1028,120 +1070,142 @@ export default function Dashboard() {
               </section>
             )}
             {view === "alerts" && (
-              <section className="surface alerts-card" id="alerts" aria-labelledby="alerts-title">
-                <div className="section-heading">
-                  <div>
-                    <span className="eyebrow">Acompanhamento</span>
-                    <h2 id="alerts-title">Alertas da propriedade</h2>
+              <>
+                <section className="surface alerts-card" id="alerts" aria-labelledby="alerts-title">
+                  <div className="section-heading">
+                    <div>
+                      <span className="eyebrow">Acompanhamento</span>
+                      <h2 id="alerts-title">Alertas da propriedade</h2>
+                    </div>
+                    <span className="count-chip" aria-label="alertas em acompanhamento">
+                      {activeAlertCount.toString().padStart(2, "0")}
+                    </span>
                   </div>
-                  <span className="count-chip" aria-label="alertas em acompanhamento">
-                    {activeAlertCount.toString().padStart(2, "0")}
-                  </span>
-                </div>
-                <p className="section-subtitle">
-                  Comportamentos que merecem verificação, com dados e período observados.
-                </p>
-                {alertNotice && (
-                  <p role="status" className="form-notice form-notice--success">
-                    {alertNotice}
+                  <p className="section-subtitle">
+                    Regras de monitoramento e previsões experimentais de ML, com dados e período
+                    observados.
                   </p>
-                )}
-                {alerts.length ? (
-                  <ul className="alert-list">
-                    {alerts.map((alert) => {
-                      const observedRate = alert.evidence.observed_flow_rate_liters_minute;
-                      const observedDuration = alert.evidence.observed_duration_minutes;
-                      const isDemoSample = alert.evidence.is_demo_sample === true;
-                      const detectorLabel =
-                        alert.detector_type === "continuous_flow"
-                          ? "Fluxo contínuo"
-                          : alert.detector_type === "night_consumption"
-                            ? "Consumo noturno"
-                            : alert.detector_type === "device_offline"
-                              ? "Medidor sem comunicação"
-                              : alert.detector_type === "demo_sample"
-                                ? "Alerta demonstrativo"
-                                : alert.detector_type;
-                      return (
-                        <li className="alert-row" key={alert.id}>
-                          <div className="alert-main">
-                            <div className="alert-title-line">
-                              <strong>{detectorLabel}</strong>
-                              <span className={`severity-badge severity-badge--${alert.severity}`}>
-                                {alert.severity === "high"
-                                  ? "Alta"
-                                  : alert.severity === "medium"
-                                    ? "Média"
-                                    : "Baixa"}
-                              </span>
-                              <span className={`alert-status alert-status--${alert.status}`}>
-                                {alert.status === "open"
-                                  ? "Aberto"
-                                  : alert.status === "acknowledged"
-                                    ? "Reconhecido"
-                                    : alert.status === "resolved"
-                                      ? "Resolvido"
-                                      : "Falso positivo"}
-                              </span>
-                              {isDemoSample && <span className="demo-badge">Simulado</span>}
-                            </div>
-                            <p>{alert.reason}</p>
-                            <small>
-                              {typeof observedRate === "number"
-                                ? `${observedRate.toLocaleString("pt-BR")} L/min · `
-                                : ""}
-                              {typeof observedDuration === "number"
-                                ? `${observedDuration} min · `
-                                : ""}
-                              {devices.find((device) => device.id === alert.device_id)?.name ??
-                                "Medidor"}{" "}
-                              ·{" "}
-                              {new Intl.DateTimeFormat("pt-BR", {
-                                dateStyle: "short",
-                                timeStyle: "short",
-                              }).format(new Date(alert.detected_at))}
-                            </small>
-                            <AlertEvidence alert={alert} />
-                          </div>
-                          <div className="alert-actions">
-                            {alert.status === "open" && (
-                              <button
-                                disabled={alertActionId === alert.id}
-                                className="button button--outline"
-                                onClick={() => void updateAlert(alert, "acknowledge")}
-                              >
-                                Reconhecer
-                              </button>
-                            )}
-                            {(alert.status === "open" || alert.status === "acknowledged") && (
-                              <>
-                                <button
-                                  disabled={alertActionId === alert.id}
-                                  className="button button--quiet"
-                                  onClick={() => void updateAlert(alert, "resolve")}
-                                >
-                                  Resolver
-                                </button>
-                                <button
-                                  disabled={alertActionId === alert.id}
-                                  className="button button--quiet"
-                                  onClick={() => void updateAlert(alert, "false-positive")}
-                                >
-                                  Falso positivo
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : (
-                  <div className="empty-meter alert-empty">
-                    Nenhum alerta registrado para esta propriedade.
-                  </div>
-                )}
-              </section>
+                  {alertNotice && (
+                    <p role="status" className="form-notice form-notice--success">
+                      {alertNotice}
+                    </p>
+                  )}
+                  {alerts.length ? (
+                    <>
+                      <ul className="alert-list" id="alerts-list">
+                        {alerts.slice(0, alertVisibleLimit).map((alert) => {
+                          const observedRate = alert.evidence.observed_flow_rate_liters_minute;
+                          const observedDuration = alert.evidence.observed_duration_minutes;
+                          const isDemoSample = alert.evidence.is_demo_sample === true;
+                          const detectorLabel =
+                            alert.detector_type === "continuous_flow"
+                              ? "Fluxo contínuo"
+                              : alert.detector_type === "night_consumption"
+                                ? "Consumo noturno"
+                                : alert.detector_type === "device_offline"
+                                  ? "Medidor sem comunicação"
+                                  : alert.detector_type === "ml_anomaly"
+                                    ? "Anomalia prevista pelo modelo"
+                                    : alert.detector_type === "demo_sample"
+                                      ? "Alerta demonstrativo"
+                                      : alert.detector_type;
+                          return (
+                            <li className="alert-row" key={alert.id}>
+                              <div className="alert-main">
+                                <div className="alert-title-line">
+                                  <strong>{detectorLabel}</strong>
+                                  <span
+                                    className={`severity-badge severity-badge--${alert.severity}`}
+                                  >
+                                    {alert.severity === "high"
+                                      ? "Alta"
+                                      : alert.severity === "medium"
+                                        ? "Média"
+                                        : "Baixa"}
+                                  </span>
+                                  <span className={`alert-status alert-status--${alert.status}`}>
+                                    {alert.status === "open"
+                                      ? "Aberto"
+                                      : alert.status === "acknowledged"
+                                        ? "Reconhecido"
+                                        : alert.status === "resolved"
+                                          ? "Resolvido"
+                                          : "Falso positivo"}
+                                  </span>
+                                  {isDemoSample && <span className="demo-badge">Simulado</span>}
+                                  {alert.detector_type === "ml_anomaly" && (
+                                    <span className="demo-badge">Experimental</span>
+                                  )}
+                                </div>
+                                <p>{alert.reason}</p>
+                                <small>
+                                  {typeof observedRate === "number"
+                                    ? `${observedRate.toLocaleString("pt-BR")} L/min · `
+                                    : ""}
+                                  {typeof observedDuration === "number"
+                                    ? `${observedDuration} min · `
+                                    : ""}
+                                  {devices.find((device) => device.id === alert.device_id)?.name ??
+                                    "Medidor"}{" "}
+                                  ·{" "}
+                                  {new Intl.DateTimeFormat("pt-BR", {
+                                    dateStyle: "short",
+                                    timeStyle: "short",
+                                  }).format(new Date(alert.detected_at))}
+                                </small>
+                                <AlertEvidence alert={alert} />
+                              </div>
+                              <div className="alert-actions">
+                                {alert.status === "open" && (
+                                  <button
+                                    disabled={alertActionId === alert.id}
+                                    className="button button--outline"
+                                    onClick={() => void updateAlert(alert, "acknowledge")}
+                                  >
+                                    Reconhecer
+                                  </button>
+                                )}
+                                {(alert.status === "open" || alert.status === "acknowledged") && (
+                                  <>
+                                    <button
+                                      disabled={alertActionId === alert.id}
+                                      className="button button--quiet"
+                                      onClick={() => void updateAlert(alert, "resolve")}
+                                    >
+                                      Resolver
+                                    </button>
+                                    <button
+                                      disabled={alertActionId === alert.id}
+                                      className="button button--quiet"
+                                      onClick={() => void updateAlert(alert, "false-positive")}
+                                    >
+                                      Falso positivo
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      {(alertVisibleLimit < alerts.length || alertsHasMore) && (
+                        <button
+                          className="button button--outline alert-load-more"
+                          aria-controls="alerts-list"
+                          disabled={loadingMoreAlerts}
+                          onClick={() => void loadMoreAlerts()}
+                        >
+                          {loadingMoreAlerts ? "Carregando…" : "Carregar mais"}
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <div className="empty-meter alert-empty">
+                      Nenhum alerta registrado para esta propriedade.
+                    </div>
+                  )}
+                </section>
+              </>
             )}
             {view === "overview" && (
               <section className="overview-shortcuts" aria-label="Acessos rápidos">
@@ -1429,7 +1493,56 @@ function AlertEvidence({ alert }: { alert: Alert }) {
     "Período observado",
     `${formatDate(alert.window_start)} – ${formatDate(alert.window_end)}`,
   ]);
-  if (alert.detector_type === "continuous_flow") {
+  if (alert.detector_type === "ml_anomaly") {
+    if (typeof evidence.anomaly_probability === "number") {
+      rows.push([
+        "Probabilidade na leitura mais recente",
+        `${(evidence.anomaly_probability * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`,
+      ]);
+    }
+    if (typeof evidence.maximum_anomaly_probability === "number") {
+      rows.push([
+        "Maior probabilidade registrada",
+        `${(evidence.maximum_anomaly_probability * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`,
+      ]);
+    }
+    if (typeof evidence.classification_threshold === "number") {
+      rows.push([
+        "Limite usado pelo modelo",
+        `${(evidence.classification_threshold * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`,
+      ]);
+    }
+    addNumber("occurrence_count", "Previsões positivas agrupadas", "leituras");
+    addText("model_version", "Versão do modelo");
+    const latestSignals = evidence.latest_signals;
+    if (typeof latestSignals === "object" && latestSignals !== null) {
+      const signals = latestSignals as Record<string, unknown>;
+      for (const [key, label, unit] of [
+        ["flow_rate_liters_minute", "Vazão observada", "L/min"],
+        ["volume_delta_liters", "Variação do volume", "L"],
+        ["elapsed_minutes", "Intervalo entre leituras", "min"],
+      ]) {
+        const value = signals[key];
+        if (typeof value === "number" && Number.isFinite(value)) {
+          rows.push([
+            label,
+            `${value.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} ${unit}`,
+          ]);
+        }
+      }
+      const derivation = signals.input_derivation;
+      if (typeof derivation === "string") {
+        rows.push([
+          "Origem da vazão",
+          derivation === "flow_rate_from_cumulative_volume"
+            ? "Calculada pela variação do volume acumulado"
+            : derivation === "cumulative_volume"
+              ? "Informada pelo medidor"
+              : "Estimativa a partir da vazão informada",
+        ]);
+      }
+    }
+  } else if (alert.detector_type === "continuous_flow") {
     addNumber("minimum_flow_rate_liters_minute", "Limite de fluxo", "L/min");
     addNumber("observed_flow_rate_liters_minute", "Fluxo observado", "L/min");
     addNumber("required_duration_minutes", "Duração necessária", "min");

@@ -19,7 +19,9 @@
   color: var(--ink);
   text-align: left;
   cursor: pointer;
-  transition: border-color .16s, transform .16s;
+  transition:
+    border-color 0.16s,
+    transform 0.16s;
 }
 
 .shortcut-card:hover {
@@ -164,6 +166,11 @@
 
 .alert-empty {
   margin-top: 18px;
+}
+
+.alert-load-more {
+  width: 100%;
+  margin-top: 14px;
 }
 
 .form-help {
