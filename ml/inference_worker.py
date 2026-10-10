@@ -8,7 +8,9 @@ import logging
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Lock, Thread
 from typing import Any
 from uuid import uuid4
 
@@ -17,6 +19,39 @@ import numpy as np
 from feature_transforms import FEATURE_NAMES, transform_reading
 
 logger = logging.getLogger("aquaflow.ml.inference")
+_health_lock = Lock()
+_health: dict[str, Any] = {
+    "status": "starting",
+    "model_name": None,
+    "model_version": None,
+    "started_at": None,
+    "last_check_at": None,
+    "processed_records": 0,
+    "failed_batches": 0,
+}
+
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        if self.path != "/health":
+            self.send_error(404)
+            return
+        with _health_lock:
+            body = json.dumps(_health).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
+def _start_health_server() -> None:
+    port = int(os.getenv("ML_HEALTH_PORT", "8081"))
+    server = ThreadingHTTPServer(("0.0.0.0", port), _HealthHandler)
+    Thread(target=server.serve_forever, daemon=True).start()
 
 
 def _json_object(value: Any) -> dict[str, Any]:
@@ -441,7 +476,9 @@ async def run_batch(
                         model_version=model_version,
                         probability=probability,
                         threshold=float(
-                            explanation.get("classification_threshold", report.get("threshold", 0.5))
+                            explanation.get(
+                                "classification_threshold", report.get("threshold", 0.5)
+                            )
                         ),
                         features=item["features"],
                         explanation=explanation,
@@ -464,6 +501,16 @@ async def serve() -> None:
     poll_seconds = max(1, int(os.getenv("ML_POLL_SECONDS", "5")))
     model, report, version = load_model(model_path, report_path)
     pool = await asyncpg.create_pool(database_url, min_size=1, max_size=4)
+    now = datetime.now(UTC).isoformat()
+    with _health_lock:
+        _health.update(
+            status="healthy",
+            model_name=report["selected_model"],
+            model_version=version,
+            started_at=now,
+            last_check_at=now,
+        )
+    _start_health_server()
     logger.info(
         "Loaded experimental model %s version %s",
         report["selected_model"],
@@ -483,9 +530,17 @@ async def serve() -> None:
                     if count:
                         logger.info("Backfilled %d actionable ML alerts", count)
                 processed = await run_batch(pool, model=model, report=report, model_version=version)
+                with _health_lock:
+                    _health["status"] = "healthy"
+                    _health["last_check_at"] = datetime.now(UTC).isoformat()
+                    _health["processed_records"] = int(_health["processed_records"]) + processed
                 if processed:
                     logger.info("Persisted %d inference records", processed)
             except Exception:
+                with _health_lock:
+                    _health["status"] = "degraded"
+                    _health["last_check_at"] = datetime.now(UTC).isoformat()
+                    _health["failed_batches"] = int(_health["failed_batches"]) + 1
                 logger.exception("Inference batch failed; rule-based monitoring remains active")
             await asyncio.sleep(poll_seconds)
     finally:

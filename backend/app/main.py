@@ -12,7 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api import alerts, auth, consumption, ml_inferences, resources, telemetry
+from app.api import alerts, auth, consumption, dashboard_health, ml_inferences, resources, telemetry
 from app.core.config import Settings, settings
 from app.db.session import create_session_factory
 from app.services.device_monitor import run_offline_monitor
@@ -67,6 +67,7 @@ def create_app(
     app.include_router(resources.router)
     app.include_router(alerts.router)
     app.include_router(ml_inferences.router)
+    app.include_router(dashboard_health.router)
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:

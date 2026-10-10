@@ -26,6 +26,8 @@ services:
       DEMO_MODE: ${DEMO_MODE:-true}
       DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-demo@example.com}
       DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-AquaFlow-demo-123!}
+      MQTT_INGESTOR_HEALTH_URL: http://mqtt-ingestor:8081/health
+      ML_WORKER_HEALTH_URL: http://ml-inference:8081/health
     command: >-
       sh -c "alembic upgrade head && python -m app.demo_seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     ports:
@@ -67,6 +69,12 @@ services:
       MQTT_INGEST_USER: aquaflow-ingestor
       MQTT_INGEST_PASSWORD: ${MQTT_INGEST_PASSWORD:-aquaflow-local-ingestor}
       AQUAFLOW_API_URL: http://api:8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://localhost:8081/health', timeout=3)); raise SystemExit(0 if d['status']=='connected' else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     depends_on:
       mqtt:
         condition: service_healthy
@@ -168,6 +176,7 @@ services:
       ML_MODEL_PATH: /app/data/ml/training/best_model.joblib
       ML_TRAINING_REPORT_PATH: /app/data/ml/training/metrics.json
       ML_POLL_SECONDS: ${ML_POLL_SECONDS:-5}
+      ML_HEALTH_PORT: 8081
     volumes:
       - ./data/ml:/app/data/ml:ro
     depends_on:
@@ -177,6 +186,12 @@ services:
         condition: service_healthy
       ml-trainer:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://localhost:8081/health', timeout=3)); raise SystemExit(0 if d['status']=='healthy' else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
   ml-airflow:

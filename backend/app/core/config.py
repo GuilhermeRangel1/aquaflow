@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     demo_mode: bool = False
     demo_user_email: EmailStr | None = None
     demo_user_password: str = Field(default="AquaFlow-demo-123!", min_length=12, max_length=128)
+    mqtt_ingestor_health_url: str | None = None
+    ml_worker_health_url: str | None = None
 
     @model_validator(mode="after")
     def require_secure_production_secret(self) -> "Settings":
