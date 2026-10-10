@@ -11,7 +11,7 @@ Uma anomalia é um sinal para investigar. O AquaFlow não afirma localizar fisic
 - Permite cadastrar, editar e retirar medidores sem apagar o histórico de telemetria.
 - Recebe leituras individuais ou em lote. Reenvios com o mesmo identificador não duplicam consumo.
 - Calcula séries de consumo a partir de vazão instantânea ou volume acumulado, considerando o fuso da propriedade e sem transformar lacunas em consumo zero.
-- Apresenta resumo de consumo, histórico, saúde dos medidores e evidências das anomalias.
+- Apresenta resumo de consumo, histórico, saúde dos medidores, indicadores operacionais da ingestão e inferência, e evidências das anomalias.
 - Permite reconhecer, resolver ou marcar alertas como falso positivo; as transições ficam registradas.
 - Oferece configurações de propriedade, incluindo endereço, fuso horário e parâmetros de monitoramento.
 - Inclui dados sintéticos para explorar o dashboard sem hardware.
@@ -76,6 +76,8 @@ O guia [Integração de um ESP32](firmware/docs/integracao-esp32.md) explica com
 O Compose também oferece um broker MQTT interno e um consumidor que encaminha as mensagens para a ingestão HTTP existente. Cadastre um medidor em **Medidores**, copie a chave mostrada e siga o [contrato MQTT](docs/contrato-mqtt.md) para publicar leituras de teste e consultá-las na aplicação. O broker não publica uma porta no host.
 
 O [módulo de ML](ml/README.md) gera séries temporais reproduzíveis, prepara os dados e compara modelos offline. Na primeira inicialização sem artefato treinado, o Compose gera os dados, executa análise e preparação e treina os modelos; depois inicia o worker, que grava inferências experimentais para novas leituras. Para forçar outro treinamento, use `docker compose run --build --rm -e ML_RETRAIN_MODEL=true ml-trainer`. Uma previsão positiva cria um alerta experimental tratável, enquanto previsões normais permanecem registradas sem alerta. Os rótulos descrevem cenários simulados e não representam vazamentos confirmados. A interface local do Airflow é iniciada pelo comando padrão do Compose; habilite o DAG e execute-o manualmente para repetir o pipeline Airflow. O acesso sem login é apenas para desenvolvimento local e a porta fica vinculada ao próprio computador.
+
+O guia [Demonstração do AquaFlow](docs/demonstracao.md) percorre a inicialização, os indicadores operacionais do dashboard, a publicação MQTT, a inferência e as limitações dos dados simulados.
 
 ## Tecnologias e organização
 
