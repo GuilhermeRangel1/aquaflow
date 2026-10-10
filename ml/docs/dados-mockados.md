@@ -2,6 +2,8 @@
 
 O gerador em `ml/generate_mock_data.py` produz dados sintéticos reproduzíveis. Ele serve para desenvolver e verificar o pipeline, não para estimar desempenho em vazamentos reais.
 
+Esta série é diferente dos dados de demonstração criados pela API na conta demo. O treinamento atual e o notebook usam a série deste gerador; não leem o dataset externo Unitywater nem extraem telemetria do PostgreSQL. Veja [Estado atual do projeto](../../docs/estado-do-projeto.md) e [dados externos considerados](avaliacao-dataset.md).
+
 ## Gerar
 
 Na raiz do projeto:

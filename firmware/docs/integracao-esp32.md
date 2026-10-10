@@ -1,6 +1,8 @@
 # Integração de um ESP32
 
-Este guia usa a API atual do AquaFlow para enviar leituras por HTTP. O firmware ainda precisa ser adaptado ao sensor de vazão e à placa usados no protótipo; este documento não presume pinos, fator de calibração ou modelo de sensor.
+> **Estado atual:** este é um roteiro para testar a API com uma requisição manual. Ainda não há firmware ESP32/FreeRTOS no repositório, nem placa ou sensor conectados. A conta demo e as leituras são sintéticas; os exemplos abaixo não validam medição física.
+
+O roteiro usa a API atual do AquaFlow para enviar leituras por HTTP. Um firmware futuro deverá ser adaptado ao sensor de vazão e à placa escolhidos; este documento não presume pinos, fator de calibração ou modelo de sensor. Para iniciar a aplicação local completa, siga primeiro o [guia de execução](../../docs/demonstracao.md).
 
 ## Preparar um medidor
 

@@ -1,6 +1,8 @@
 # Dados e modelos
 
-Esta pasta concentra o trabalho de machine learning do AquaFlow. Ela contém dados mockados reproduzíveis, análise exploratória e preparação com Airflow, comparação offline de classificadores binários registrada no MLflow, uma CLI para novas séries e um worker que grava avaliações experimentais das leituras na API. No primeiro `docker compose up --build`, o Compose gera e prepara os dados e treina o modelo quando ainda não há artefato; em seguida inicia o worker. Previsões positivas criam alertas experimentais tratáveis. Os resultados usam cenários artificiais; o modelo ainda não foi validado com telemetria real.
+Esta pasta concentra o experimento de machine learning do AquaFlow: dados mockados reproduzíveis, análise e preparação, comparação offline de classificadores binários registrada no MLflow, uma CLI para novas séries e o worker integrado que avalia leituras persistidas pela aplicação. O treinamento usa somente cenários artificiais criados pelo gerador. Nenhum modelo atual foi treinado com telemetria física, e as métricas não demonstram desempenho em vazamentos reais nem ausência de overfitting.
+
+O Compose inicia o treinamento automaticamente quando não encontra os artefatos esperados; depois inicia o worker. Separadamente, o Airflow pode repetir manualmente geração, análise e preparação, mas seu DAG não treina o modelo. O notebook documenta a preparação e visualiza as avaliações sem substituir o pipeline automatizado. Para entender os caminhos e limites, veja [arquitetura](../docs/arquitetura.md), [estado atual do projeto](../docs/estado-do-projeto.md) e [pipeline detalhado](docs/pipeline.md).
 
 ## Gerar dados simulados
 
@@ -16,7 +18,7 @@ O arquivo é criado em `data/mock-ml/readings.csv`, fora do controle de versão.
 docker compose run --build --rm ml-data-generator python generate_mock_data.py --seed 7 --days 16 --interval-minutes 5
 ```
 
-O gerador usa apenas a biblioteca padrão do Python e também pode ser executado com `python ml/generate_mock_data.py` na raiz do projeto. Veja [schema, cenários e limitações](docs/dados-mockados.md) e [avaliação das fontes externas](docs/avaliacao-dataset.md).
+O gerador usa apenas a biblioteca padrão do Python e também pode ser executado com `python ml/generate_mock_data.py` na raiz do projeto. Veja [schema, cenários e limitações](docs/dados-mockados.md). O conjunto Unitywater pesquisado é apenas uma referência possível de schema: **o pipeline atual não usa esse dataset**. Veja [fontes externas consideradas](docs/avaliacao-dataset.md).
 
 ## Pipeline Airflow
 

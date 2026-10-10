@@ -1,137 +1,106 @@
 # AquaFlow
 
-O AquaFlow é uma aplicação para acompanhar o consumo de água de uma propriedade. Medidores conectados enviam leituras para a API; o sistema preserva os eventos recebidos, calcula o consumo entre leituras compatíveis e destaca comportamentos que merecem verificação.
+O AquaFlow é um **protótipo acadêmico** para acompanhar consumo de água. Ele integra uma interface web, uma API, PostgreSQL, ingestão de telemetria por HTTP ou MQTT, monitoramento por regras e um experimento de machine learning.
 
-Uma anomalia é um sinal para investigar. O AquaFlow não afirma localizar fisicamente um vazamento.
+A aplicação pode ser explorada sem hardware: a conta demo e os experimentos de ML usam dados mockados. Os rótulos do modelo indicam cenários artificiais definidos pelo gerador; não representam vazamentos confirmados. O projeto ainda não tem firmware ESP32 implementado nem foi validado com medidores físicos. Consulte [estado atual e limitações](docs/estado-do-projeto.md).
 
-## O que o MVP já faz
+## Navegação
 
-- Cria conta e autentica usuários com senha protegida, access token e renovação de sessão.
-- Organiza medidores e leituras por propriedade, com isolamento entre proprietários.
-- Permite cadastrar, editar e retirar medidores sem apagar o histórico de telemetria.
-- Recebe leituras individuais ou em lote. Reenvios com o mesmo identificador não duplicam consumo.
-- Calcula séries de consumo a partir de vazão instantânea ou volume acumulado, considerando o fuso da propriedade e sem transformar lacunas em consumo zero.
-- Apresenta resumo de consumo, histórico, saúde dos medidores, indicadores operacionais da ingestão e inferência, e evidências das anomalias.
-- Permite reconhecer, resolver ou marcar alertas como falso positivo; as transições ficam registradas.
-- Oferece configurações de propriedade, incluindo endereço, fuso horário e parâmetros de monitoramento.
-- Inclui dados sintéticos para explorar o dashboard sem hardware.
+| Guia | Conteúdo |
+| --- | --- |
+| [Como executar e demonstrar](docs/demonstracao.md) | Compose, conta demo, primeiro início, publicação MQTT e comandos de operação. |
+| [Arquitetura](docs/arquitetura.md) | Serviços, fluxos HTTP/MQTT, regras, treinamento e inferência. |
+| [Estado do projeto](docs/estado-do-projeto.md) | O que funciona no protótipo e o que ainda não foi validado ou implementado. |
+| [Dados e modelos](ml/README.md) | Dados simulados, Airflow, MLflow, notebook, treinamento e inferência. |
+| [Contrato MQTT](docs/contrato-mqtt.md) | Tópicos, autenticação e payload publicado no broker local. |
+| [Integração ESP32](firmware/README.md) | Limites atuais e direcionamento do futuro firmware. |
+| [Especificação](especificacao-monitoramento-consumo-agua.md) | Requisitos e contratos de referência do produto. |
+| [Glossário](docs/glossary.md) | Termos do domínio usados no repositório. |
 
-### Regras de monitoramento
+## O que o protótipo demonstra
 
-- **Fluxo contínuo:** vazão acima do limite configurado — por padrão, `0,1 L/min` — por pelo menos 360 minutos. Leituras inválidas ou lacunas longas interrompem a janela.
-- **Consumo noturno:** entre 22h e 6h no fuso da propriedade, fluxo pelo menos `0,1 L/min` acima da mediana diurna recente por 15 minutos consecutivos. Sem dados suficientes para a referência, não gera alerta.
-- **Medidor offline:** ausência de leitura por mais de dois intervalos esperados. O alerta é encerrado quando o medidor volta a enviar dados.
+- Cadastro e autenticação de uma conta, propriedade e medidores.
+- Ingestão de leituras, armazenamento das amostras brutas e cálculo de consumo sem transformar lacunas em consumo zero.
+- Monitoramento por regras explicáveis e tratamento de alertas: reconhecer, resolver ou marcar falso positivo.
+- Entrada MQTT encaminhada para a mesma API HTTP usada pela ingestão direta.
+- Dashboard com consumo, histórico, dispositivos, alertas, inferências experimentais e saúde dos serviços.
+- Pipeline reproduzível de análise e preparação de dados mockados, comparação de modelos, registro no MLflow e inferência.
 
-Os alertas guardam a regra aplicada, a explicação e as evidências usadas. Recorrências podem gerar novos alertas depois que o anterior é encerrado.
+Esses fluxos mostram a integração do protótipo. Não atestam medição física, desempenho de ML em residências ou prontidão para uso em produção. O modelo não substitui os detectores por regras; previsões positivas podem aparecer como alertas experimentais separados.
 
 ## Executar com Docker Compose
 
-Requisitos: Docker Desktop instalado e em execução. Reserve pelo menos 4 GB de memória para o Docker Desktop; o Airflow é mais pesado que os demais serviços.
+Requisitos: Docker Desktop com suporte a Docker Compose v2 e memória suficiente para os serviços da aplicação, do Airflow e do treinamento.
 
-Na raiz do projeto, execute:
+Na raiz do repositório:
 
 ```powershell
 docker compose up --build
 ```
 
-Quando os serviços estiverem prontos, acesse:
+Na primeira inicialização, o Compose inicia PostgreSQL, API, interface, broker MQTT, consumidor MQTT, Airflow e MLflow. A API aplica migrations e prepara os dados sintéticos da demo. Se ainda não houver um modelo treinado em `data/ml/training/`, o serviço de treinamento gera outra série mockada, analisa e prepara os registros, compara os modelos e registra os resultados no MLflow. Depois, o worker de inferência processa leituras compatíveis. O treinamento pode levar alguns minutos; o serviço `ml-trainer` termina normalmente depois de concluir. Se os artefatos já existirem, ele os reutiliza.
 
-- Aplicação: [http://localhost:3000](http://localhost:3000)
-- Documentação interativa da API: [http://localhost:8000/docs](http://localhost:8000/docs)
-- Verificação de prontidão da API: [http://localhost:8000/health/ready](http://localhost:8000/health/ready)
-- Interface de experimentos MLflow: [http://localhost:5000](http://localhost:5000)
+Acesse:
 
-O Compose inicia PostgreSQL, API, frontend, broker MQTT, consumidor de mensagens, Airflow e MLflow, aplica as migrations e prepara os dados demonstrativos. Se ainda não houver um modelo treinado em `data/ml/training/`, também gera e prepara os dados mockados, treina os modelos e inicia o worker de inferência ao terminar. Se o artefato já existir, o treinamento é ignorado. O Airflow fica em [http://localhost:8080](http://localhost:8080), sem tela de login, e o MLflow registra os experimentos em [http://localhost:5000](http://localhost:5000). As duas interfaces ficam disponíveis apenas no computador local. Para executar em segundo plano, use `docker compose up --build -d`; para acompanhar a saída depois, use `docker compose logs -f`.
+- **AquaFlow:** [http://localhost:3000](http://localhost:3000)
+- **API e OpenAPI:** [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Prontidão da API:** [http://localhost:8000/health/ready](http://localhost:8000/health/ready)
+- **Experimentos MLflow:** [http://localhost:5000](http://localhost:5000)
+- **Airflow:** [http://localhost:8080](http://localhost:8080)
 
-Para parar os serviços sem apagar o banco, pressione `Ctrl+C` no terminal ou execute `docker compose down`. O volume do PostgreSQL é preservado entre inicializações. Para apagar também o banco local e recriar a demonstração do zero, execute `docker compose down --volumes`.
+Airflow e MLflow ficam vinculados ao computador local; o broker MQTT não publica uma porta no host. Ainda assim, esta configuração inteira é para desenvolvimento local, com credenciais demonstrativas. Não a exponha à internet.
 
-### Acesso de demonstração
-
-- **E-mail:** `demo@example.com`
-- **Senha:** `AquaFlow-demo-123!`
-- **Propriedade:** Casa da demonstração
-
-Essas credenciais servem somente para desenvolvimento local. O seed sintético é habilitado por padrão no Compose e não pode ser usado em ambiente de produção. Para alterar o e-mail ou a senha da demonstração, defina `DEMO_USER_EMAIL` e `DEMO_USER_PASSWORD` no `.env` antes de iniciar os serviços. Consulte `.env.example`.
-
-## Explorar os dados demonstrativos
-
-A conta de demonstração é preparada automaticamente pelo serviço da API e contém:
-
-- Três medidores ativos: consumo doméstico, irrigação e uma demonstração dedicada à inferência de ML.
-- Histórico variável de aproximadamente 90 dias para consumo doméstico e sessões programadas de irrigação.
-- Uma sequência curta de leituras normais e picos simulados no medidor de ML; com o worker experimental e um modelo treinado disponíveis, as previsões positivas são agrupadas em um alerta com evidências.
-- Um alerta de fluxo contínuo produzido pelo detector por regras, além de poucos exemplos históricos para demonstrar os estados de tratamento.
-- Leituras de bateria, sinal e versão de firmware nos dispositivos simulados.
-
-O seed é aditivo e idempotente: ele acrescenta dados que ainda não existem e preserva a telemetria e o histórico. Os antigos medidores de reserva e lavanderia são desativados, sem apagar os registros. Para ver os alertas experimentais de ML, aguarde o treinamento automático terminar; o worker então avalia as leituras armazenadas e as novas leituras. Para experimentar ingestão de ponta a ponta, abra **Medidores**, cadastre um medidor com número de série exclusivo e use **Simular leituras**. O simulador envia eventos pela mesma API usada por um dispositivo.
-
-## Integração com ESP32
-
-A API já aceita telemetria autenticada por chave individual do dispositivo. O firmware e a calibração dependem da placa e do sensor escolhidos para o protótipo. O projeto não presume pinos, modelo de sensor ou fator de calibração.
-
-O guia [Integração de um ESP32](firmware/docs/integracao-esp32.md) explica como provisionar um medidor, enviar uma leitura para a API local e testar o contrato sem firmware. A pasta [firmware](firmware/README.md) reúne o direcionamento para o futuro código FreeRTOS. No computador, a API fica em `http://localhost:8000`; um ESP32 precisa usar o endereço IP local da máquina que executa o Docker.
-
-## Aquisição MQTT e dados para ML
-
-O Compose também oferece um broker MQTT interno e um consumidor que encaminha as mensagens para a ingestão HTTP existente. Cadastre um medidor em **Medidores**, copie a chave mostrada e siga o [contrato MQTT](docs/contrato-mqtt.md) para publicar leituras de teste e consultá-las na aplicação. O broker não publica uma porta no host.
-
-O [módulo de ML](ml/README.md) gera séries temporais reproduzíveis, prepara os dados e compara modelos offline. Na primeira inicialização sem artefato treinado, o Compose gera os dados, executa análise e preparação e treina os modelos; depois inicia o worker, que grava inferências experimentais para novas leituras. Para forçar outro treinamento, use `docker compose run --build --rm -e ML_RETRAIN_MODEL=true ml-trainer`. Uma previsão positiva cria um alerta experimental tratável, enquanto previsões normais permanecem registradas sem alerta. Os rótulos descrevem cenários simulados e não representam vazamentos confirmados. A interface local do Airflow é iniciada pelo comando padrão do Compose; habilite o DAG e execute-o manualmente para repetir o pipeline Airflow. O acesso sem login é apenas para desenvolvimento local e a porta fica vinculada ao próprio computador.
-
-O guia [Demonstração do AquaFlow](docs/demonstracao.md) percorre a inicialização, os indicadores operacionais do dashboard, a publicação MQTT, a inferência e as limitações dos dados simulados.
-
-## Tecnologias e organização
-
-- **Frontend:** Next.js, React, TypeScript e Recharts.
-- **API:** Python 3.12+, FastAPI, Pydantic e SQLAlchemy assíncrono.
-- **Banco:** PostgreSQL 16, com migrations Alembic.
-- **Aquisição MQTT local:** Mosquitto e cliente Paho Python.
-- **Execução local:** Docker Compose.
+### Conta demonstrativa
 
 ```text
-backend/    API, domínio, persistência, migrations e testes
-docs/       especificações, contrato MQTT e documentação transversal
-firmware/   integração ESP32 e futuro código FreeRTOS
-frontend/   aplicação web e dashboard
-infrastructure/  configuração do broker MQTT
-ml/         dados simulados, análise, preparação e comparação offline de modelos
+E-mail: demo@example.com
+Senha: AquaFlow-demo-123!
+Propriedade: Casa da demonstração
 ```
 
-O MVP é um monólito modular: a API reúne autenticação, propriedades, dispositivos, telemetria, consumo e alertas, mantendo os dados no PostgreSQL.
+Para trocar e-mail e senha, configure `DEMO_USER_EMAIL` e `DEMO_USER_PASSWORD` no arquivo `.env`; para alterar as demais credenciais locais, use também os valores de `.env.example`. Os padrões servem somente para desenvolvimento.
 
-## Desenvolvimento local sem Compose
+### Encerrar e reiniciar
 
-O fluxo recomendado para testar o produto é o Docker Compose. Para desenvolver os serviços separadamente, mantenha um PostgreSQL compatível com a configuração local disponível.
+- `Ctrl+C` ou `docker compose down`: encerra os serviços e preserva volumes e arquivos locais.
+- `docker compose logs -f ml-trainer ml-inference api mqtt-ingestor`: acompanha o treinamento e os processos centrais.
+- `docker compose down --volumes`: também apaga os volumes nomeados, inclusive o banco e o estado local do broker/Airflow. Use apenas para recriar esses dados locais; os arquivos em `data/` podem permanecer.
 
-### API
+O passo a passo e a demonstração MQTT estão em [docs/demonstracao.md](docs/demonstracao.md).
 
-No PowerShell:
+## Como interpretar os dados e resultados
 
-```powershell
-cd backend
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
-$env:DATABASE_URL = "postgresql+asyncpg://aquaflow:aquaflow-local@localhost:5432/aquaflow"
-$env:JWT_SECRET = "local-only-change-this-secret"
-alembic upgrade head
-python -m app.demo_seed
-uvicorn app.main:app --reload
+Existem dados sintéticos para a demonstração visual da aplicação e uma série separada para treinamento de ML. O gerador de ML cria rótulos para cenários conhecidos, separa treino/validação/teste em ordem temporal e produz perfis artificiais para examinar mudanças de rotina. O notebook de exploração e avaliação visualiza a preparação, comparação, matriz de confusão e curvas precisão-recall/ROC.
+
+As métricas medem apenas o reconhecimento dos cenários que o próprio simulador criou. Elas não informam a taxa real de vazamentos detectados, não comprovam generalização e não demonstram ausência de overfitting. Para mudar esse estado será necessário coletar telemetria física, definir rótulos ou uma avaliação sem rótulos apropriada e refazer a avaliação em dados independentes. Mais detalhes em [ml/README.md](ml/README.md) e [docs/estado-do-projeto.md](docs/estado-do-projeto.md).
+
+## Regras de monitoramento
+
+- **Fluxo contínuo:** vazão acima do limite configurado durante a janela sustentada.
+- **Consumo noturno:** elevação persistente em relação à referência diurna, no horário local da propriedade.
+- **Medidor offline:** ausência de leituras por mais de dois intervalos esperados.
+
+As regras guardam explicações e evidências. Os limites padrão, as condições de dados insuficientes e os contratos estão descritos na [especificação](especificacao-monitoramento-consumo-agua.md) e no [guia de demonstração](docs/demonstracao.md). Um alerta sinaliza algo a verificar; não localiza fisicamente um vazamento.
+
+## Organização do repositório
+
+```text
+backend/          API, domínio, persistência, migrations e testes
+frontend/         Interface web Next.js, React, TypeScript e Recharts
+ml/               Geração sintética, preparação, modelos e inferência
+firmware/         Contratos e guia para o futuro firmware ESP32/FreeRTOS
+docs/             Arquitetura, estado, demonstração e contratos
+infrastructure/   Configuração local do broker MQTT
+docker-compose.yml
 ```
 
-### Frontend
+A arquitetura detalhada e os limites entre componentes estão em [docs/arquitetura.md](docs/arquitetura.md).
 
-Em outro terminal:
+## Desenvolvimento e verificações
 
-```powershell
-cd frontend
-npm ci
-$env:AQUAFLOW_API_URL = "http://localhost:8000"
-npm run dev
-```
+O caminho mais simples para explorar o produto é Docker Compose. Para desenvolvimento local dos serviços, consulte as dependências em `backend/pyproject.toml` e `frontend/package.json` e mantenha PostgreSQL compatível disponível.
 
-## Verificações de desenvolvimento
-
-Os comandos abaixo executam as verificações disponíveis no repositório:
+Verificações da API e do frontend:
 
 ```powershell
 cd backend
@@ -139,28 +108,17 @@ python -m pytest -q
 ruff check app tests migrations
 mypy app
 cd ..\frontend
+npm ci
 npm run lint
 npm run typecheck
 npm test
 npm run build
 ```
 
-Por padrão, os testes da API usam SQLite em memória. Para executá-los contra o PostgreSQL do Compose, use na raiz do projeto:
+Para executar a suíte HTTP contra um PostgreSQL isolado pelo Compose:
 
 ```powershell
 docker compose -f docker-compose.yml -f docker-compose.test.yml --profile test run --build --rm tests
 ```
 
-O serviço de testes usa dependências de desenvolvimento e a mesma suíte HTTP, criando um schema temporário isolado por fixture e removendo-o ao terminar. O usuário PostgreSQL configurado precisa poder criar e remover schemas.
-
-## Estado e próximos passos
-
-O MVP cobre a jornada principal com API e dados sintéticos: autenticação, gestão de propriedade e medidores, ingestão, consumo, detecção baseada em regras e tratamento de alertas. O dashboard e o Compose permitem explorar essa jornada sem hardware.
-
-Ainda dependem de evolução do projeto:
-
-- Firmware do ESP32 e calibração com o sensor físico escolhido.
-- Validação de ponta a ponta com hardware e rede reais.
-- Ampliação da cobertura de integração com PostgreSQL.
-- Análise exploratória, preparação, comparação de modelos com registro no MLflow e inferência experimental integrada estão disponíveis para dados simulados. Previsões positivas geram alertas experimentais separados dos detectores por regras. O worker é opcional e ainda falta validação com telemetria real; as métricas atuais não representam desempenho em vazamentos reais.
-- Notificações externas e compartilhamento de propriedade, que estão fora do escopo atual.
+O notebook tem dependências locais próprias. Veja [instruções de ML](ml/README.md#notebook-de-exploração-e-avaliação-visual); elas não são incluídas na imagem usada pela aplicação.

@@ -1,6 +1,8 @@
 # Contrato MQTT de telemetria
 
-O MQTT é um transporte adicional de aquisição. O consumidor encaminha cada mensagem à ingestão HTTP existente, que continua responsável por validar a chave do medidor, a janela temporal, a idempotência e a persistência no PostgreSQL. O firmware atual ainda pode usar HTTP.
+O MQTT é um transporte adicional de aquisição. O consumidor encaminha cada mensagem à ingestão HTTP existente, que continua responsável por validar a chave do medidor, a janela temporal, a idempotência e a persistência no PostgreSQL. O futuro firmware poderá enviar diretamente à API HTTP ou usar o broker MQTT, conforme o transporte validado para o hardware.
+
+O contrato e o broker fazem parte do protótipo local e podem ser demonstrados com o publicador de teste do Compose. Ainda não há firmware ESP32 implementado nem uma conexão física validada; consulte [Estado atual do projeto](estado-do-projeto.md).
 
 ## Broker local
 

@@ -4,6 +4,8 @@
 **Data:** 22 de setembro de 2026  
 **Status:** base tecnica para MVP e evolucao do produto
 
+> Esta especificação registra requisitos e decisões de referência; não é, por si só, um relatório do que já foi implementado. O AquaFlow atual é um protótipo local e alguns itens descritos aqui continuam planejados ou foram ampliados experimentalmente. Para o inventário da implementação, os limites dos dados mockados e o que falta validar, consulte [Estado atual do projeto](docs/estado-do-projeto.md) e [Arquitetura](docs/arquitetura.md).
+
 ## 1. Visao geral
 
 Este projeto transforma dados de consumo de agua em informacoes claras e uteis, permitindo que o usuario acompanhe melhor seu consumo, compreenda alteracoes no comportamento habitual e perceba possiveis anomalias com maior antecedencia. A solucao apoia decisoes mais rapidas, reduz desperdicios e contribui para um uso mais consciente da agua.
