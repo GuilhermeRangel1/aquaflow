@@ -17,7 +17,7 @@ As regras deste arquivo valem para todo o repositório. Para trabalho no backend
 - Não apague telemetria bruta para corrigir agregações. Corrija o processamento e preserve a rastreabilidade.
 - Mudanças de schema devem incluir migration Alembic reversível quando possível.
 - Não exponha entidades ORM como respostas públicas. Valide limites, unidades, timezone e acesso ao recurso.
-- Regras de detecção devem explicar o resultado e preservar as evidências usadas. ML é opcional: mantenha fallback por regras e registre a versão do modelo quando aplicável.
+- Regras de detecção devem explicar o resultado e preservar as evidências usadas. Mantenha os detectores por regras como fallback; na entrega ampliada, versione os modelos e registre qual modelo produziu cada inferência.
 
 ## Skills do projeto
 

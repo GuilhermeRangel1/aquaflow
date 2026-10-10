@@ -41,6 +41,59 @@ services:
       db:
         condition: service_healthy
 
+  mqtt:
+    build:
+      context: ./infrastructure/mqtt
+    environment:
+      MQTT_PUBLISH_PASSWORD: ${MQTT_PUBLISH_PASSWORD:-aquaflow-local-publisher}
+      MQTT_INGEST_PASSWORD: ${MQTT_INGEST_PASSWORD:-aquaflow-local-ingestor}
+    volumes:
+      - aquaflow-mqtt:/mosquitto/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mosquitto_pub -h localhost -u aquaflow-publisher -P "$$MQTT_PUBLISH_PASSWORD" -t aquaflow/health -n
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  mqtt-ingestor:
+    build:
+      context: ./backend
+    command: python -m app.mqtt_ingestor
+    environment:
+      MQTT_HOST: mqtt
+      MQTT_INGEST_USER: aquaflow-ingestor
+      MQTT_INGEST_PASSWORD: ${MQTT_INGEST_PASSWORD:-aquaflow-local-ingestor}
+      AQUAFLOW_API_URL: http://api:8000
+    depends_on:
+      mqtt:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mqtt-publisher:
+    profiles: ["tools"]
+    build:
+      context: ./backend
+    command: python -m app.mqtt_publish
+    environment:
+      MQTT_HOST: mqtt
+      MQTT_PUBLISH_USER: aquaflow-publisher
+      MQTT_PUBLISH_PASSWORD: ${MQTT_PUBLISH_PASSWORD:-aquaflow-local-publisher}
+    depends_on:
+      mqtt:
+        condition: service_healthy
+
+  ml-data-generator:
+    profiles: ["tools"]
+    build:
+      context: ./ml
+    volumes:
+      - ./data:/app/data
+
   frontend:
     build:
       context: ./frontend
@@ -61,3 +114,4 @@ services:
 
 volumes:
   aquaflow-postgres:
+  aquaflow-mqtt:
