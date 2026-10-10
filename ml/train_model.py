@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import math
+import os
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
@@ -676,7 +677,10 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=Path("data/ml/training"))
     parser.add_argument(
         "--tracking-uri",
-        default=f"sqlite:///{(Path('data/ml/mlflow.db').resolve()).as_posix()}",
+        default=os.environ.get(
+            "MLFLOW_TRACKING_URI",
+            f"sqlite:///{(Path('data/ml/mlflow.db').resolve()).as_posix()}",
+        ),
     )
     parser.add_argument("--experiment-name", default="aquaflow-mock-anomaly-classification")
     parser.add_argument("--timezone", default=DEFAULT_TIMEZONE)

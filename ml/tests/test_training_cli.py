@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -17,7 +19,9 @@ def _run(*args: str) -> None:
         raise AssertionError(f"command failed: {' '.join(args)}\n{result.stdout}\n{result.stderr}")
 
 
-def test_cli_compares_models_on_chronological_holdout(tmp_path: Path) -> None:
+def test_cli_compares_models_on_chronological_holdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     raw = tmp_path / "raw.csv"
     prepared = tmp_path / "prepared"
     shifted_raw = tmp_path / "shifted_raw.csv"
@@ -26,6 +30,9 @@ def test_cli_compares_models_on_chronological_holdout(tmp_path: Path) -> None:
     stress_prepared = tmp_path / "stress_prepared"
     output = tmp_path / "training"
     tracking = f"sqlite:///{(tmp_path / 'mlflow.db').resolve().as_posix()}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", tracking)
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("TEMP", str(tmp_path))
 
     _run(
         "ml/generate_mock_data.py",
@@ -96,8 +103,6 @@ def test_cli_compares_models_on_chronological_holdout(tmp_path: Path) -> None:
         str(prepared / "metadata.csv"),
         "--output-dir",
         str(output),
-        "--tracking-uri",
-        tracking,
         "--experiment-name",
         "acceptance-test",
         "--search-iterations",

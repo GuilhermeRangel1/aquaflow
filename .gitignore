@@ -1,4 +1,6 @@
 .env
+.codex/
+.agents/skills/
 .venv/
 __pycache__/
 *.py[cod]

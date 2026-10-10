@@ -39,8 +39,9 @@ Quando os serviços estiverem prontos, acesse:
 - Aplicação: [http://localhost:3000](http://localhost:3000)
 - Documentação interativa da API: [http://localhost:8000/docs](http://localhost:8000/docs)
 - Verificação de prontidão da API: [http://localhost:8000/health/ready](http://localhost:8000/health/ready)
+- Interface de experimentos MLflow: [http://localhost:5000](http://localhost:5000)
 
-O Compose inicia PostgreSQL, API, frontend, broker MQTT, consumidor de mensagens e Airflow, aplica as migrations e prepara os dados demonstrativos. A interface local do Airflow fica em [http://localhost:8080](http://localhost:8080), sem tela de login. Para executar em segundo plano, use `docker compose up --build -d`; para acompanhar a saída depois, use `docker compose logs -f`.
+O Compose inicia PostgreSQL, API, frontend, broker MQTT, consumidor de mensagens, Airflow e MLflow, aplica as migrations e prepara os dados demonstrativos. O Airflow fica em [http://localhost:8080](http://localhost:8080), sem tela de login. O MLflow registra experimentos e mantém metadados e artefatos em `data/ml/`; as duas interfaces ficam disponíveis apenas no computador local. Para executar em segundo plano, use `docker compose up --build -d`; para acompanhar a saída depois, use `docker compose logs -f`.
 
 Para parar os serviços sem apagar o banco, pressione `Ctrl+C` no terminal ou execute `docker compose down`. O volume do PostgreSQL é preservado entre inicializações. Para apagar também o banco local e recriar a demonstração do zero, execute `docker compose down --volumes`.
 
@@ -74,7 +75,7 @@ O guia [Integração de um ESP32](firmware/docs/integracao-esp32.md) explica com
 
 O Compose também oferece um broker MQTT interno e um consumidor que encaminha as mensagens para a ingestão HTTP existente. Cadastre um medidor em **Medidores**, copie a chave mostrada e siga o [contrato MQTT](docs/contrato-mqtt.md) para publicar leituras de teste e consultá-las na aplicação. O broker não publica uma porta no host.
 
-O [módulo de ML](ml/README.md) gera séries temporais reproduzíveis, prepara os dados com um DAG Airflow e compara modelos offline. Depois de treinar um modelo localmente, inicie o worker com `docker compose --profile ml up --build -d ml-inference`; ele grava inferências experimentais para novas leituras. Uma previsão positiva cria um alerta experimental tratável, enquanto previsões normais permanecem registradas sem alerta. Os rótulos descrevem cenários simulados e não representam vazamentos confirmados. A interface local do Airflow é iniciada pelo comando padrão do Compose; habilite o DAG e execute-o manualmente. O acesso sem login é apenas para desenvolvimento local e a porta fica vinculada ao próprio computador.
+O [módulo de ML](ml/README.md) gera séries temporais reproduzíveis, prepara os dados com um DAG Airflow e compara modelos offline. O treinamento envia execuções para o MLflow iniciado pelo Compose. Depois de treinar um modelo, inicie o worker com `docker compose --profile ml up --build -d ml-inference`; ele grava inferências experimentais para novas leituras. Uma previsão positiva cria um alerta experimental tratável, enquanto previsões normais permanecem registradas sem alerta. Os rótulos descrevem cenários simulados e não representam vazamentos confirmados. A interface local do Airflow é iniciada pelo comando padrão do Compose; habilite o DAG e execute-o manualmente. O acesso sem login é apenas para desenvolvimento local e a porta fica vinculada ao próprio computador.
 
 ## Tecnologias e organização
 
