@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import {
   Area,
   AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   ResponsiveContainer,
   Tooltip,
@@ -86,6 +88,32 @@ type Alert = {
   window_start: string;
   window_end: string;
 };
+type DashboardHealth = {
+  checked_at: string;
+  ingestion: {
+    api_status: "healthy";
+    readings_last_24h: number;
+    last_reading_at: string | null;
+    mqtt_status: "connected" | "disconnected" | "unavailable";
+    mqtt_messages_received: number;
+    mqtt_messages_forwarded: number;
+    mqtt_messages_rejected: number;
+    mqtt_retries: number;
+    mqtt_last_message_at: string | null;
+  };
+  model_pipeline: {
+    status: "healthy" | "degraded" | "unavailable";
+    model_name: string | null;
+    model_version: string | null;
+    last_check_at: string | null;
+    processed_records: number;
+    failed_batches: number;
+    scored_inferences_last_24h: number;
+    skipped_inferences_last_24h: number;
+    positive_predictions_last_24h: number;
+  };
+  rules_fallback: { status: "active"; alerts_last_24h: number; explanation: string };
+};
 type ApiError = { code?: string; message?: string; detail?: { code?: string; message?: string } };
 
 function getTimezoneOptions(currentTimezone: string): string[] {
@@ -164,6 +192,11 @@ export default function Dashboard() {
   const [selectedId, setSelectedId] = useState("");
   const [periodDays, setPeriodDays] = useState<7 | 30 | 90>(7);
   const [consumption, setConsumption] = useState<Consumption | null>(null);
+  const [hourlyConsumption, setHourlyConsumption] = useState<Consumption | null>(null);
+  const [hourlyWindowEnd, setHourlyWindowEnd] = useState<number | null>(null);
+  const [hourlyConsumptionError, setHourlyConsumptionError] = useState("");
+  const [dashboardHealth, setDashboardHealth] = useState<DashboardHealth | null>(null);
+  const [dashboardHealthError, setDashboardHealthError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [newProperty, setNewProperty] = useState("");
@@ -180,6 +213,7 @@ export default function Dashboard() {
   const [editingDeviceName, setEditingDeviceName] = useState("");
   const [editingDeviceInterval, setEditingDeviceInterval] = useState("300");
   const [deviceActionId, setDeviceActionId] = useState("");
+  const [retiringDeviceId, setRetiringDeviceId] = useState("");
   const [alertActionId, setAlertActionId] = useState("");
   const [alertNotice, setAlertNotice] = useState("");
   const [simulating, setSimulating] = useState(false);
@@ -265,6 +299,64 @@ export default function Dashboard() {
       cancelled = true;
     };
   }, [selectedId, loading, periodDays]);
+  useEffect(() => {
+    if (!selectedId || loading || view !== "overview") return;
+    let cancelled = false;
+    const refreshHealth = () =>
+      api<DashboardHealth>(`properties/${selectedId}/dashboard-health`)
+        .then((result) => {
+          if (!cancelled) {
+            setDashboardHealth(result);
+            setDashboardHealthError("");
+          }
+        })
+        .catch((caught: unknown) => {
+          if (!cancelled)
+            setDashboardHealthError(
+              caught instanceof Error ? caught.message : "Falha ao consultar a saúde do sistema.",
+            );
+        });
+    void refreshHealth();
+    const timer = window.setInterval(refreshHealth, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedId, loading, view]);
+  useEffect(() => {
+    if (!selectedId || loading || view !== "overview") return;
+    let cancelled = false;
+    const refreshHourlyConsumption = () => {
+      const end = new Date();
+      const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+      const params = new URLSearchParams({
+        start: start.toISOString(),
+        end: end.toISOString(),
+        granularity: "hour",
+        limit: "48",
+      });
+      api<Consumption>(`properties/${selectedId}/consumption?${params}`)
+        .then((result) => {
+          if (!cancelled) {
+            setHourlyConsumption(result);
+            setHourlyWindowEnd(end.getTime());
+            setHourlyConsumptionError("");
+          }
+        })
+        .catch((caught: unknown) => {
+          if (!cancelled)
+            setHourlyConsumptionError(
+              caught instanceof Error ? caught.message : "Não foi possível carregar este gráfico.",
+            );
+        });
+    };
+    void refreshHourlyConsumption();
+    const timer = window.setInterval(refreshHourlyConsumption, 5 * 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedId, loading, view]);
   useEffect(() => {
     if (view !== "meters" || selectedDevices.length === 0) return;
     let cancelled = false;
@@ -359,6 +451,7 @@ export default function Dashboard() {
   }
 
   function beginDeviceEdit(device: Device) {
+    setRetiringDeviceId("");
     setEditingDeviceId(device.id);
     setEditingDeviceName(device.name);
     setEditingDeviceInterval(String(device.expected_interval_seconds));
@@ -404,13 +497,8 @@ export default function Dashboard() {
   }
 
   async function retireDevice(device: Device) {
-    if (
-      !window.confirm(
-        `Retirar o medidor “${device.name}”? As leituras e alertas históricos serão preservados.`,
-      )
-    )
-      return;
     setDeviceActionId(device.id);
+    setRetiringDeviceId("");
     setDeviceNotice(null);
     try {
       await api<void>(`devices/${device.id}`, { method: "DELETE" });
@@ -553,6 +641,7 @@ export default function Dashboard() {
 
   function navigateView(destination: "overview" | "meters" | "alerts" | "settings") {
     setView(destination);
+    window.scrollTo({ top: 0, behavior: "instant" });
     window.history.pushState(
       {},
       "",
@@ -566,6 +655,47 @@ export default function Dashboard() {
       new Date(item.bucket_start),
     ),
   }));
+  const hourlyChartData = useMemo(() => {
+    if (hourlyWindowEnd === null) return [];
+    const hourMs = 60 * 60 * 1000;
+    const end = hourlyWindowEnd;
+    const firstHour = Math.floor((end - 24 * hourMs) / hourMs) * hourMs;
+    const volumeByHour = new Map(
+      (hourlyConsumption?.items ?? []).map((item) => [
+        Math.floor(new Date(item.bucket_start).getTime() / hourMs) * hourMs,
+        item.volume_liters,
+      ]),
+    );
+    const hourLabel = new Intl.DateTimeFormat("pt-BR", {
+      hour: "2-digit",
+      timeZone: selected?.timezone ?? "UTC",
+      hourCycle: "h23",
+    });
+    return Array.from({ length: 24 }, (_, index) => {
+      const timestamp = firstHour + index * hourMs;
+      return {
+        hour: hourLabel.format(timestamp),
+        volume_liters: volumeByHour.get(timestamp) ?? null,
+      };
+    });
+  }, [hourlyConsumption, hourlyWindowEnd, selected?.timezone]);
+  const recentAlertChartData = useMemo(() => {
+    if (!dashboardHealth) return [];
+    const since = new Date(dashboardHealth.checked_at).getTime() - 24 * 60 * 60 * 1000;
+    const labels: Record<string, string> = {
+      continuous_flow: "Fluxo contínuo",
+      night_consumption: "Consumo à noite",
+      device_offline: "Medidor sem comunicação",
+      ml_anomaly: "Mudança no consumo",
+    };
+    const totals = new Map<string, number>();
+    for (const alert of alerts) {
+      if (new Date(alert.detected_at).getTime() < since) continue;
+      const label = labels[alert.detector_type] ?? "Outros avisos";
+      totals.set(label, (totals.get(label) ?? 0) + 1);
+    }
+    return [...totals].map(([reason, count]) => ({ reason, count }));
+  }, [alerts, dashboardHealth]);
 
   return (
     <main className="dashboard-page">
@@ -611,7 +741,7 @@ export default function Dashboard() {
             {view === "overview" && (
               <span className="eyebrow">
                 <span className="eyebrow-dot" />
-                Painel de consumo
+                Sua casa, em perspectiva
               </span>
             )}
             <h1>
@@ -621,16 +751,16 @@ export default function Dashboard() {
                   ? "Acompanhamento"
                   : view === "settings"
                     ? "Configurações"
-                    : "Água em movimento"}
+                    : "Sua água, de perto"}
             </h1>
             <p>
               {view === "meters"
-                ? "Veja a comunicação dos dispositivos e envie leituras de teste."
+                ? "Acompanhe cada ponto de consumo da sua propriedade."
                 : view === "alerts"
-                  ? "Revise os comportamentos observados e atualize o tratamento dos alertas."
+                  ? "Veja o que mudou e acompanhe o que precisa da sua atenção."
                   : view === "settings"
-                    ? "Ajuste os dados da propriedade e os parâmetros de monitoramento."
-                    : "Uma visão clara das leituras e do consumo registrado na sua propriedade."}
+                    ? "Deixe o acompanhamento do seu jeito."
+                    : "Entenda seus hábitos. Perceba mudanças. Cuide do que importa."}
             </p>
           </div>
           {properties.length > 0 && (
@@ -696,13 +826,13 @@ export default function Dashboard() {
               <section className="metrics-grid" aria-label="Resumo de consumo">
                 <Metric
                   featured
-                  label="Consumo registrado"
+                  label="Seu consumo"
                   value={`${(consumption?.summary.total_volume_liters ?? 0).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}`}
                   unit="L"
                   note={`nos últimos ${periodDays} dias`}
                 />
                 <Metric
-                  label="Variação no período"
+                  label="Em relação ao período anterior"
                   value={
                     consumption?.summary.change_percent === null ||
                     consumption?.summary.change_percent === undefined
@@ -725,7 +855,7 @@ export default function Dashboard() {
                   }
                 />
                 <Metric
-                  label="Alertas em acompanhamento"
+                  label="Para acompanhar"
                   value={`${activeAlertCount}`}
                   note={`${openAlertCount} ${openAlertCount === 1 ? "aberto" : "abertos"} · ${acknowledgedAlertCount} ${acknowledgedAlertCount === 1 ? "reconhecido" : "reconhecidos"}`}
                 />
@@ -739,7 +869,7 @@ export default function Dashboard() {
                   <article className="surface chart-card">
                     <div className="section-heading">
                       <div>
-                        <span className="eyebrow">Histórico recente</span>
+                        <span className="eyebrow">Ao longo dos dias</span>
                         <h2>Consumo diário</h2>
                       </div>
                       <label className="sr-only" htmlFor="consumption-period">
@@ -758,9 +888,7 @@ export default function Dashboard() {
                         <option value={90}>90 dias</option>
                       </select>
                     </div>
-                    <p className="section-subtitle">
-                      Volume estimado entre leituras recebidas · litros
-                    </p>
+                    <p className="section-subtitle">Quanto você consumiu a cada dia, em litros</p>
                     <div
                       className="chart-wrap"
                       role="img"
@@ -781,8 +909,8 @@ export default function Dashboard() {
                           >
                             <defs>
                               <linearGradient id="consumptionFill" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#32bad0" stopOpacity={0.34} />
-                                <stop offset="95%" stopColor="#32bad0" stopOpacity={0.015} />
+                                <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.34} />
+                                <stop offset="95%" stopColor="var(--accent)" stopOpacity={0.015} />
                               </linearGradient>
                             </defs>
                             <CartesianGrid
@@ -817,12 +945,12 @@ export default function Dashboard() {
                             <Area
                               type="monotone"
                               dataKey="volume_liters"
-                              stroke="#159bb7"
+                              stroke="var(--accent)"
                               strokeWidth={3}
                               fill="url(#consumptionFill)"
                               activeDot={{
                                 r: 5,
-                                fill: "#087d9b",
+                                fill: "var(--accent-strong)",
                                 stroke: "var(--surface)",
                                 strokeWidth: 2,
                               }}
@@ -946,7 +1074,7 @@ export default function Dashboard() {
                                 </form>
                               ) : (
                                 <>
-                                  <span className="meter-info">
+                                  <div className="meter-info">
                                     <strong>{device.name}</strong>
                                     <small>
                                       {device.serial_number} ·{" "}
@@ -960,24 +1088,26 @@ export default function Dashboard() {
                                         {new Intl.DateTimeFormat("pt-BR", {
                                           dateStyle: "short",
                                           timeStyle: "short",
-                                        }).format(new Date(reading.recorded_at))}{" "}
-                                        · qualidade {reading.quality}
+                                        }).format(new Date(reading.recorded_at))}
                                       </small>
                                     )}
                                     {reading && (
-                                      <small>
-                                        {reading.firmware_version
-                                          ? `Firmware ${reading.firmware_version} · `
-                                          : ""}
-                                        {reading.battery_percent !== null
-                                          ? `Bateria ${reading.battery_percent}% · `
-                                          : ""}
-                                        {reading.signal_dbm !== null
-                                          ? `Sinal ${reading.signal_dbm} dBm`
-                                          : ""}
-                                      </small>
+                                      <details className="device-details">
+                                        <summary>Informações do medidor</summary>
+                                        <small>
+                                          {reading.battery_percent !== null
+                                            ? `Bateria ${reading.battery_percent}% · `
+                                            : ""}
+                                          {reading.signal_dbm !== null
+                                            ? `Sinal ${reading.signal_dbm} dBm · `
+                                            : ""}
+                                          {reading.firmware_version
+                                            ? `Firmware ${reading.firmware_version}`
+                                            : ""}
+                                        </small>
+                                      </details>
                                     )}
-                                  </span>
+                                  </div>
                                   <span
                                     className={`meter-status${connected ? " meter-status--online" : " meter-status--offline"}`}
                                   >
@@ -987,24 +1117,56 @@ export default function Dashboard() {
                                         ? "Nunca conectado"
                                         : "Sem comunicação"}
                                   </span>
-                                  <div className="meter-actions">
-                                    <button
-                                      type="button"
-                                      className="button button--quiet"
-                                      disabled={deviceActionId === device.id}
-                                      onClick={() => beginDeviceEdit(device)}
+                                  {retiringDeviceId === device.id ? (
+                                    <div
+                                      className="meter-retire-confirm"
+                                      role="group"
+                                      aria-label={`Confirmar retirada de ${device.name}`}
                                     >
-                                      Editar
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="button button--quiet meter-retire"
-                                      disabled={deviceActionId === device.id}
-                                      onClick={() => void retireDevice(device)}
-                                    >
-                                      {deviceActionId === device.id ? "Aguarde…" : "Retirar"}
-                                    </button>
-                                  </div>
+                                      <p>
+                                        Retirar <strong>{device.name}</strong>? O histórico será
+                                        preservado.
+                                      </p>
+                                      <div className="meter-actions">
+                                        <button
+                                          type="button"
+                                          className="button button--quiet"
+                                          onClick={() => setRetiringDeviceId("")}
+                                        >
+                                          Cancelar
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="button button--quiet meter-retire"
+                                          disabled={deviceActionId === device.id}
+                                          onClick={() => void retireDevice(device)}
+                                        >
+                                          {deviceActionId === device.id
+                                            ? "Retirando…"
+                                            : "Confirmar retirada"}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="meter-actions">
+                                      <button
+                                        type="button"
+                                        className="button button--quiet"
+                                        disabled={deviceActionId === device.id}
+                                        onClick={() => beginDeviceEdit(device)}
+                                      >
+                                        Editar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="button button--quiet meter-retire"
+                                        disabled={deviceActionId === device.id}
+                                        onClick={() => setRetiringDeviceId(device.id)}
+                                      >
+                                        Retirar
+                                      </button>
+                                    </div>
+                                  )}
                                 </>
                               )}
                             </li>
@@ -1017,7 +1179,7 @@ export default function Dashboard() {
                     <form onSubmit={createDevice} className="device-form">
                       <h3>Adicionar medidor de teste</h3>
                       <p className="form-help">
-                        Cadastre um medidor simulado e envie leituras sem precisar de um ESP32.
+                        Experimente o acompanhamento com leituras simuladas.
                       </p>
                       <label className="field">
                         <span className="sr-only">Nome do medidor</span>
@@ -1082,7 +1244,7 @@ export default function Dashboard() {
                     </span>
                   </div>
                   <p className="section-subtitle">
-                    Regras de monitoramento e previsões experimentais de ML, com dados e período
+                    Avisos de consumo, conexão e análises experimentais, com os detalhes do período
                     observados.
                   </p>
                   {alertNotice && (
@@ -1105,7 +1267,7 @@ export default function Dashboard() {
                                 : alert.detector_type === "device_offline"
                                   ? "Medidor sem comunicação"
                                   : alert.detector_type === "ml_anomaly"
-                                    ? "Anomalia prevista pelo modelo"
+                                    ? "Possível mudança de consumo"
                                     : alert.detector_type === "demo_sample"
                                       ? "Alerta demonstrativo"
                                       : alert.detector_type;
@@ -1137,7 +1299,11 @@ export default function Dashboard() {
                                     <span className="demo-badge">Experimental</span>
                                   )}
                                 </div>
-                                <p>{alert.reason}</p>
+                                <p>
+                                  {alert.detector_type === "ml_anomaly"
+                                    ? "A análise experimental encontrou uma possível mudança no padrão de consumo. Confira as leituras para entender o que aconteceu."
+                                    : alert.reason}
+                                </p>
                                 <small>
                                   {typeof observedRate === "number"
                                     ? `${observedRate.toLocaleString("pt-BR")} L/min · `
@@ -1162,7 +1328,7 @@ export default function Dashboard() {
                                     className="button button--outline"
                                     onClick={() => void updateAlert(alert, "acknowledge")}
                                   >
-                                    Reconhecer
+                                    Estou ciente
                                   </button>
                                 )}
                                 {(alert.status === "open" || alert.status === "acknowledged") && (
@@ -1172,14 +1338,14 @@ export default function Dashboard() {
                                       className="button button--quiet"
                                       onClick={() => void updateAlert(alert, "resolve")}
                                     >
-                                      Resolver
+                                      Marcar resolvido
                                     </button>
                                     <button
                                       disabled={alertActionId === alert.id}
                                       className="button button--quiet"
                                       onClick={() => void updateAlert(alert, "false-positive")}
                                     >
-                                      Falso positivo
+                                      Não é um problema
                                     </button>
                                   </>
                                 )}
@@ -1208,17 +1374,48 @@ export default function Dashboard() {
               </>
             )}
             {view === "overview" && (
+              <section className="surface system-health-card" aria-labelledby="system-health-title">
+                <div className="section-heading">
+                  <div>
+                    <span className="eyebrow">Resumo</span>
+                    <h2 id="system-health-title">Acompanhamento da sua água</h2>
+                  </div>
+                  <span className="health-updated">
+                    {dashboardHealth
+                      ? `Atualizado ${formatDate(dashboardHealth.checked_at)}`
+                      : "Atualizando…"}
+                  </span>
+                </div>
+                {dashboardHealthError ? (
+                  <p className="notice notice--error" role="alert">
+                    {dashboardHealthError}
+                  </p>
+                ) : dashboardHealth ? (
+                  <OperationalHealth
+                    health={dashboardHealth}
+                    hourlyData={hourlyChartData}
+                    hourlyLoading={!hourlyConsumption && !hourlyConsumptionError}
+                    hourlyError={hourlyConsumptionError}
+                    alertData={recentAlertChartData}
+                    alertDataMayBePartial={alertsHasMore}
+                  />
+                ) : (
+                  <p className="section-subtitle">Buscando as últimas atualizações…</p>
+                )}
+              </section>
+            )}
+            {view === "overview" && (
               <section className="overview-shortcuts" aria-label="Acessos rápidos">
                 <button className="surface shortcut-card" onClick={() => navigateView("meters")}>
                   <span className="eyebrow">Dispositivos</span>
                   <strong>{selectedDevices.length} medidores</strong>
-                  <span>Consultar comunicação ou enviar leituras de teste</span>
+                  <span>Veja as últimas leituras de cada medidor</span>
                   <b aria-hidden="true">→</b>
                 </button>
                 <button className="surface shortcut-card" onClick={() => navigateView("alerts")}>
                   <span className="eyebrow">Acompanhamento</span>
                   <strong>{activeAlertCount} alertas em acompanhamento</strong>
-                  <span>Revisar evidências e atualizar o estado dos alertas</span>
+                  <span>Entenda os avisos e acompanhe a resolução</span>
                   <b aria-hidden="true">→</b>
                 </button>
               </section>
@@ -1231,6 +1428,347 @@ export default function Dashboard() {
         )}
       </div>
     </main>
+  );
+}
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function mqttStatusLabel(status: DashboardHealth["ingestion"]["mqtt_status"]): string {
+  if (status === "connected") return "Conectado";
+  if (status === "disconnected") return "Desconectado";
+  return "Sem resposta do serviço";
+}
+
+function modelStatusLabel(status: DashboardHealth["model_pipeline"]["status"]): string {
+  if (status === "healthy") return "Operando";
+  if (status === "degraded") return "Com falhas recentes";
+  return "Indisponível";
+}
+
+function ServiceStatus({
+  label,
+  status,
+  tone,
+}: {
+  label: string;
+  status: string;
+  tone: "ok" | "warning" | "offline";
+}) {
+  return (
+    <li className={`health-service health-service--${tone}`}>
+      <span className="health-service__dot" aria-hidden="true" />
+      <span>{label}</span>
+      <strong>{status}</strong>
+    </li>
+  );
+}
+
+function HealthBar({ label, value, maximum }: { label: string; value: number; maximum: number }) {
+  return (
+    <div className="health-bar">
+      <div className="health-bar__label">
+        <span>{label}</span>
+        <strong>{value.toLocaleString("pt-BR")}</strong>
+      </div>
+      <div className="health-bar__track" aria-hidden="true">
+        <span style={{ width: `${maximum > 0 ? (value / maximum) * 100 : 0}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function OperationalHealth({
+  health,
+  hourlyData,
+  hourlyLoading,
+  hourlyError,
+  alertData,
+  alertDataMayBePartial,
+}: {
+  health: DashboardHealth;
+  hourlyData: Array<{ hour: string; volume_liters: number | null }>;
+  hourlyLoading: boolean;
+  hourlyError: string;
+  alertData: Array<{ reason: string; count: number }>;
+  alertDataMayBePartial: boolean;
+}) {
+  const mqtt = health.ingestion;
+  const model = health.model_pipeline;
+  const mqttMaximum = Math.max(
+    mqtt.mqtt_messages_received,
+    mqtt.mqtt_messages_forwarded,
+    mqtt.mqtt_messages_rejected,
+  );
+  const scored = model.scored_inferences_last_24h;
+  const positive = Math.min(scored, model.positive_predictions_last_24h);
+  const positiveShare = scored > 0 ? (positive / scored) * 100 : 0;
+
+  return (
+    <div className="health-content">
+      <div className="health-grid">
+        <article className="health-panel health-panel--readings">
+          <span className="health-panel__eyebrow">Últimas 24 horas</span>
+          <div className="health-panel__metric">
+            <strong>{mqtt.readings_last_24h.toLocaleString("pt-BR")}</strong>
+            <span>leituras recebidas</span>
+          </div>
+          <p className="health-panel__foot">
+            {mqtt.last_reading_at
+              ? `Última leitura: ${formatDate(mqtt.last_reading_at)}`
+              : "Nenhuma leitura registrada ainda"}
+          </p>
+        </article>
+        <article className="health-panel health-panel--model">
+          <div className="health-panel__heading">
+            <h3>Mudanças no consumo</h3>
+            <span>Últimas 24 horas</span>
+          </div>
+          <div className="health-model-chart">
+            <div
+              className="health-donut"
+              style={{
+                background:
+                  scored > 0
+                    ? `conic-gradient(var(--warm) 0 ${positiveShare}%, var(--accent) ${positiveShare}% 100%)`
+                    : "var(--line)",
+              }}
+            >
+              <div className="health-donut__center">
+                <strong>{scored.toLocaleString("pt-BR")}</strong>
+                <span>análises</span>
+              </div>
+            </div>
+            <div className="health-model-legend">
+              <p>
+                <i
+                  className="health-model-legend__dot health-model-legend__dot--positive"
+                  aria-hidden="true"
+                />
+                <span>Com sinal de mudança</span>
+                <strong>{positive.toLocaleString("pt-BR")}</strong>
+              </p>
+              <p>
+                <i className="health-model-legend__dot" aria-hidden="true" />
+                <span>Sem sinal identificado</span>
+                <strong>{(scored - positive).toLocaleString("pt-BR")}</strong>
+              </p>
+            </div>
+          </div>
+          <p className="health-panel__foot">
+            {model.status !== "healthy"
+              ? "A análise precisa de atenção. Os avisos de consumo e conexão continuam ativos; estes são os últimos resultados disponíveis."
+              : scored === 0
+                ? "As primeiras análises aparecerão quando houver leituras suficientes."
+                : "Um sinal merece verificação e não confirma, sozinho, que há um problema."}
+          </p>
+        </article>
+        <article className="health-panel health-panel--rules">
+          <div className="health-panel__heading">
+            <h3>Avisos automáticos</h3>
+            <span>Últimas 24 h</span>
+          </div>
+          <div className="health-panel__metric">
+            <strong>{health.rules_fallback.alerts_last_24h.toLocaleString("pt-BR")}</strong>
+            <span>avisos criados</span>
+          </div>
+          <p className="health-panel__foot">
+            Os avisos continuam ativos mesmo quando a análise de consumo está indisponível.
+          </p>
+        </article>
+      </div>
+      <div className="health-charts">
+        <article className="health-chart-card">
+          <div className="health-panel__heading">
+            <h3>Consumo por horário</h3>
+            <span>Últimas 24 horas · litros</span>
+          </div>
+          {hourlyLoading ? (
+            <p className="health-chart-message" role="status">
+              Carregando o histórico por horário…
+            </p>
+          ) : hourlyError ? (
+            <p className="health-chart-message" role="alert">
+              Não foi possível carregar o histórico por horário.
+            </p>
+          ) : hourlyData.every((point) => point.volume_liters === null) ? (
+            <p className="health-chart-message">
+              Ainda não há leituras suficientes para mostrar o consumo por horário.
+            </p>
+          ) : (
+            <div
+              className="health-chart-wrap"
+              role="img"
+              aria-label="Consumo em litros por hora nas últimas 24 horas. Horários sem barra não têm leituras suficientes."
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={hourlyData} margin={{ top: 8, right: 4, left: -20, bottom: 0 }}>
+                  <CartesianGrid
+                    vertical={false}
+                    stroke="var(--chart-grid)"
+                    strokeDasharray="3 6"
+                  />
+                  <XAxis
+                    dataKey="hour"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: "var(--muted)", fontSize: 11 }}
+                    interval={3}
+                  />
+                  <YAxis
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: "var(--muted)", fontSize: 11 }}
+                  />
+                  <Tooltip
+                    formatter={(value) => [
+                      value === undefined || value === null
+                        ? "Sem dados suficientes"
+                        : `${Number(value).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} L`,
+                      "Consumo",
+                    ]}
+                    labelFormatter={(hour) => `${hour}h`}
+                    contentStyle={{
+                      borderRadius: 12,
+                      borderColor: "var(--line)",
+                      background: "var(--surface)",
+                      color: "var(--ink)",
+                    }}
+                  />
+                  <Bar dataKey="volume_liters" fill="var(--accent)" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          <p className="health-chart-foot">
+            Horários sem leitura suficiente ficam sem barra; não significam consumo zero.
+          </p>
+        </article>
+        <article className="health-chart-card">
+          <div className="health-panel__heading">
+            <h3>Avisos por motivo</h3>
+            <span>Últimas 24 horas</span>
+          </div>
+          {alertData.length === 0 ? (
+            <p className="health-chart-message">Nenhum aviso foi criado nas últimas 24 horas.</p>
+          ) : (
+            <div
+              className="health-chart-wrap health-chart-wrap--alerts"
+              role="img"
+              aria-label={`Avisos criados nas últimas 24 horas: ${alertData.map((item) => `${item.reason}, ${item.count}`).join("; ")}`}
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={alertData}
+                  layout="vertical"
+                  margin={{ top: 4, right: 12, left: 8, bottom: 0 }}
+                >
+                  <CartesianGrid
+                    horizontal={false}
+                    stroke="var(--chart-grid)"
+                    strokeDasharray="3 6"
+                  />
+                  <XAxis type="number" allowDecimals={false} axisLine={false} tickLine={false} />
+                  <YAxis
+                    type="category"
+                    dataKey="reason"
+                    width={155}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: "var(--muted)", fontSize: 11 }}
+                  />
+                  <Tooltip
+                    formatter={(value) => [
+                      `${Number(value)} ${Number(value) === 1 ? "aviso" : "avisos"}`,
+                      "Total",
+                    ]}
+                    contentStyle={{
+                      borderRadius: 12,
+                      borderColor: "var(--line)",
+                      background: "var(--surface)",
+                      color: "var(--ink)",
+                    }}
+                  />
+                  <Bar dataKey="count" fill="var(--warm)" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          <p className="health-chart-foot">
+            {alertDataMayBePartial
+              ? "Contagem dos avisos mais recentes carregados."
+              : "Inclui avisos experimentais e avisos das regras de acompanhamento."}
+          </p>
+        </article>
+      </div>
+      <details className="health-details">
+        <summary>Detalhes técnicos</summary>
+        <ul className="health-services" aria-label="Estado dos serviços">
+          <ServiceStatus label="Aplicação" status="Pronta" tone="ok" />
+          <ServiceStatus
+            label="Medidores"
+            status={mqttStatusLabel(mqtt.mqtt_status)}
+            tone={mqtt.mqtt_status === "connected" ? "ok" : "offline"}
+          />
+          <ServiceStatus
+            label="Análise de consumo"
+            status={modelStatusLabel(model.status)}
+            tone={
+              model.status === "healthy"
+                ? "ok"
+                : model.status === "degraded"
+                  ? "warning"
+                  : "offline"
+            }
+          />
+          <ServiceStatus label="Avisos automáticos" status="Ativos" tone="ok" />
+        </ul>
+        <article className="health-panel health-panel--mqtt">
+          <div className="health-panel__heading">
+            <h3>Mensagens dos medidores</h3>
+            <span>Desde que a conexão iniciou</span>
+          </div>
+          <div className="health-bars">
+            <HealthBar
+              label="Recebidas"
+              value={mqtt.mqtt_messages_received}
+              maximum={mqttMaximum}
+            />
+            <HealthBar
+              label="Encaminhadas"
+              value={mqtt.mqtt_messages_forwarded}
+              maximum={mqttMaximum}
+            />
+            <HealthBar
+              label="Rejeitadas"
+              value={mqtt.mqtt_messages_rejected}
+              maximum={mqttMaximum}
+            />
+          </div>
+          <p className="health-panel__foot">
+            {mqttMaximum === 0
+              ? "Nenhuma mensagem MQTT recebida nesta sessão."
+              : "Contadores globais do ingestor, separados das leituras da propriedade."}
+          </p>
+        </article>
+
+        <p>
+          Mensagens reenviadas: {mqtt.mqtt_retries.toLocaleString("pt-BR")} · Leituras avaliadas:{" "}
+          {model.processed_records.toLocaleString("pt-BR")} · Falhas recentes:{" "}
+          {model.failed_batches.toLocaleString("pt-BR")}.
+        </p>
+        {model.model_version && (
+          <p>
+            Versão da análise {model.model_name ?? "experimental"} ·{" "}
+            <code>{model.model_version.slice(0, 12)}</code>
+          </p>
+        )}
+      </details>
+    </div>
   );
 }
 
@@ -1340,12 +1878,10 @@ function PropertySettingsForm({
       <div className="section-heading">
         <div>
           <span className="eyebrow">Propriedade</span>
-          <h2 id="settings-title">Dados e monitoramento</h2>
+          <h2 id="settings-title">Sobre a propriedade</h2>
         </div>
       </div>
-      <p className="section-subtitle">
-        Os parâmetros abaixo orientam os alertas gerados para {property.name}.
-      </p>
+      <p className="section-subtitle">Personalize como você acompanha {property.name}.</p>
       {feedback && (
         <p
           role={feedback.kind === "error" ? "alert" : "status"}
@@ -1394,16 +1930,16 @@ function PropertySettingsForm({
               ))}
             </select>
             <span className="field-hint">
-              A API valida este fuso e o usa nos horários do consumo e na regra noturna.
+              Define o horário local dos gráficos e do acompanhamento noturno.
             </span>
           </label>
           <label className="field">
             Unidade de volume
             <input value="Litros (L)" readOnly aria-readonly="true" />
-            <span className="field-hint">A API do AquaFlow registra o volume em litros.</span>
+            <span className="field-hint">O consumo é apresentado em litros.</span>
           </label>
           <label className="field">
-            Limite de fluxo contínuo (L/min)
+            Fluxo mínimo para acompanhar (L/min)
             <input
               className="settings-number"
               type="number"
@@ -1419,7 +1955,7 @@ function PropertySettingsForm({
             </span>
           </label>
           <label className="field">
-            Duração para alerta (minutos)
+            Avisar após quantos minutos?
             <input
               className="settings-number"
               type="number"
@@ -1432,7 +1968,7 @@ function PropertySettingsForm({
             />
           </label>
           <label className="field">
-            Janela para leitura atrasada (dias)
+            Aceitar leituras anteriores (dias)
             <input
               className="settings-number"
               type="number"
@@ -1444,7 +1980,7 @@ function PropertySettingsForm({
               required
             />
             <span className="field-hint">
-              Período máximo aceito para processar uma leitura retroativa.
+              Por quanto tempo uma leitura enviada com atraso ainda pode ser considerada.
             </span>
           </label>
         </div>
@@ -1570,7 +2106,7 @@ function AlertEvidence({ alert }: { alert: Alert }) {
 
   return (
     <details className="alert-evidence">
-      <summary>Ver evidências</summary>
+      <summary>Entender este aviso</summary>
       <dl>
         {rows.map(([label, value]) => (
           <div key={label}>

@@ -33,7 +33,9 @@ export default function Home() {
         throw new Error(result.message ?? result.detail?.message ?? "Não foi possível entrar.");
       router.replace("/dashboard");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Falha de conexão com a API.");
+      setError(
+        caught instanceof Error ? caught.message : "Não foi possível conectar. Tente novamente.",
+      );
     } finally {
       setBusy(false);
     }
@@ -52,9 +54,9 @@ export default function Home() {
           <div className="story-copy">
             <span className="eyebrow">
               <span className="eyebrow-dot" />
-              Água, em perspectiva
+              Bem-vindo ao AquaFlow
             </span>
-            <h1 id="story-title">Cada gota conta uma história.</h1>
+            <h1 id="story-title">Mais clareza. Menos desperdício.</h1>
             <p>
               Leituras organizadas, consumo visível e contexto para entender o que acontece na sua
               casa.
@@ -124,11 +126,11 @@ export default function Home() {
             <span className="eyebrow auth-eyebrow">
               {registering ? "Um novo começo" : "Seu consumo, com clareza"}
             </span>
-            <h2 id="auth-title">{registering ? "Crie sua conta" : "Acompanhe sua água."}</h2>
+            <h2 id="auth-title">{registering ? "Crie sua conta" : "Bom ter você aqui"}</h2>
             <p className="auth-description">
               {registering
                 ? "Configure seu espaço e conecte seu primeiro medidor."
-                : "Entre para visualizar as leituras da sua propriedade."}
+                : "Entre na sua conta para acompanhar seu consumo."}
             </p>
             <form onSubmit={submit} className="auth-form">
               {registering && <Field label="Seu nome" name="name" autoComplete="name" required />}
@@ -163,9 +165,7 @@ export default function Home() {
                 {registering ? "Entrar" : "Criar conta"}
               </button>
             </p>
-            <p className="auth-legal">
-              Ao continuar, você concorda em usar o aquaflow para monitorar o consumo de água.
-            </p>
+            <p className="auth-legal">Seu consumo, seus espaços, tudo em um só lugar.</p>
           </div>
         </section>
       </div>

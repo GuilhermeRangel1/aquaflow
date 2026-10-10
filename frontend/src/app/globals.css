@@ -735,17 +735,20 @@ select:focus-visible {
   list-style: none;
 }
 .meter-row {
-  display: flex;
-  align-items: center;
-  gap: 11px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px 14px;
   padding: 12px 0;
   border-bottom: 1px solid var(--line);
 }
 .meter-icon {
   display: grid;
-  width: 37px;
-  height: 37px;
-  flex: 0 0 auto;
+  grid-column: 1;
+  grid-row: 1;
+  width: 44px;
+  height: 44px;
+  align-self: start;
   place-items: center;
   border: 1px solid var(--accent-soft);
   border-radius: 12px;
@@ -757,8 +760,9 @@ select:focus-visible {
 }
 .meter-info {
   display: grid;
+  grid-column: 2;
+  grid-row: 1 / span 2;
   min-width: 0;
-  flex: 1;
   gap: 4px;
 }
 .meter-info strong {
@@ -771,7 +775,25 @@ select:focus-visible {
   color: var(--muted);
   font-size: 9px;
 }
+.device-details {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  margin-top: 2px;
+}
+.device-details summary {
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.device-details > small {
+  display: block;
+}
 .meter-status {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
   padding: 5px 7px;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -1237,25 +1259,26 @@ select {
   outline-offset: 2px;
 }
 .meter-row--editing {
-  align-items: flex-start;
+  align-items: start;
 }
 .meter-edit-form {
   display: grid;
-  flex: 1;
+  grid-column: 2 / 4;
+  grid-row: 1;
   gap: 8px;
   min-width: 0;
 }
 .meter-edit-form label {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 650;
 }
 .meter-edit-form input {
   width: 100%;
-  height: 36px;
-  padding: 0 10px;
+  min-height: 44px;
+  padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 9px;
   background: var(--surface);
@@ -1265,29 +1288,78 @@ select {
 .meter-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: flex-end;
+  gap: 8px;
   flex-shrink: 0;
 }
+.meter-row > .meter-actions {
+  grid-column: 3;
+  grid-row: 2;
+  justify-self: end;
+}
+.meter-retire-confirm {
+  grid-column: 2 / 4;
+  grid-row: 3;
+  display: grid;
+  gap: 8px;
+  justify-self: stretch;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+.meter-retire-confirm p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.meter-retire-confirm p strong {
+  color: var(--ink);
+}
 .meter-actions .button {
-  min-height: 32px;
-  padding: 0 9px;
-  font-size: 10px;
+  min-height: 40px;
+  padding: 0 12px;
+  font-size: 12px;
 }
 .meter-retire {
   color: var(--danger, #db7777);
 }
-@media (max-width: 680px) {
+@media (max-width: 760px) {
   .meter-row {
-    flex-wrap: wrap;
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: 9px 11px;
+    padding: 15px 0;
   }
-  .meter-info {
-    flex-basis: calc(100% - 55px);
+  .meter-icon {
+    width: 40px;
+    height: 40px;
   }
-  .meter-actions {
-    margin-left: auto;
-  }
+  .meter-info,
   .meter-edit-form {
-    flex-basis: calc(100% - 55px);
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .meter-status {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+  }
+  .meter-row > .meter-actions,
+  .meter-retire-confirm {
+    grid-column: 2;
+    grid-row: 3;
+    justify-self: stretch;
+  }
+  .meter-row--editing .meter-edit-form {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+  .meter-row--editing .meter-actions {
+    justify-content: flex-start;
+  }
+  .meter-retire-confirm .meter-actions {
+    flex-wrap: wrap;
   }
 }
 .settings-card {
@@ -1459,12 +1531,12 @@ select {
   margin: -2px 0 0;
   line-height: 1.5;
 }
-.settings-form input[type="number"] {
+input[type="number"] {
   appearance: textfield;
   -moz-appearance: textfield;
 }
-.settings-form input[type="number"]::-webkit-inner-spin-button,
-.settings-form input[type="number"]::-webkit-outer-spin-button {
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
@@ -1565,14 +1637,9 @@ select {
   font-size: 13px;
   line-height: 1.45;
 }
-@media (max-width: 680px) {
+@media (max-width: 760px) {
   .meter-row {
-    gap: 10px;
-    padding: 15px 0;
-  }
-  .meter-icon {
-    width: 40px;
-    height: 40px;
+    gap: 9px 11px;
   }
   .meter-info strong {
     font-size: 14px;
@@ -1580,12 +1647,9 @@ select {
   .meter-info small {
     font-size: 12px;
   }
-  .meter-status {
-    margin-left: 50px;
-  }
   .meter-actions {
     width: 100%;
-    margin-left: 50px;
+    justify-content: flex-start;
   }
   .meter-actions .button {
     min-height: 40px;
