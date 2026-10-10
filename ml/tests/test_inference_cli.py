@@ -7,7 +7,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -107,6 +106,9 @@ def test_cli_reuses_preparation_and_predicts_with_a_versioned_model(tmp_path: Pa
     )
     expected_hash = hashlib.sha256((model_dir / "best_model.joblib").read_bytes()).hexdigest()
     assert training_report["model_sha256"] == expected_hash
+    assert training_report["generalization_validation"]["profile"] == "shifted"
+    assert training_report["stress_test_evaluation"]["profile"] == "stress"
+    assert (model_dir / "training_report.md").is_file()
     assert prediction_manifest["model_version"] == expected_hash
     assert prediction_manifest["timezone"] == "America/Sao_Paulo"
     assert prediction_manifest["prediction_count"] == 1127
@@ -120,8 +122,10 @@ def test_cli_reuses_preparation_and_predicts_with_a_versioned_model(tmp_path: Pa
         "predicted_anomaly",
         "anomaly_probability",
         "model_version",
+        "feature_effects_json",
     ]
     assert len(rows) == 1127
     assert {row["predicted_anomaly"] for row in rows} <= {"0", "1"}
     assert {row["model_version"] for row in rows} == {expected_hash}
     assert all(0 <= float(row["anomaly_probability"]) <= 1 for row in rows)
+    assert all(len(json.loads(row["feature_effects_json"])) == 7 for row in rows)

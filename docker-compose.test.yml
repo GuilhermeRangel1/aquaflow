@@ -102,5 +102,47 @@ services:
     profiles:
       - test
 
+  ml-test-inference:
+    build:
+      context: ./ml
+      dockerfile: Dockerfile.training
+    command: python inference_worker.py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aquaflow:${POSTGRES_PASSWORD:-aquaflow-local}@mqtt-test-db:5432/aquaflow_test
+      ML_MODEL_PATH: /app/data/ml/training/best_model.joblib
+      ML_TRAINING_REPORT_PATH: /app/data/ml/training/metrics.json
+      ML_POLL_SECONDS: "2"
+    volumes:
+      - ./data/ml:/app/data/ml:ro
+    depends_on:
+      mqtt-test-api:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["ml-test"]
+
+  mqtt-ml-e2e:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.test
+    command: python -m pytest -q tests/test_mqtt_compose_flow.py -k actionable_alerts
+    environment:
+      AQUAFLOW_ML_MQTT_E2E: "1"
+      AQUAFLOW_API_URL: http://mqtt-test-api:8000
+      MQTT_HOST: mqtt-test-broker
+      MQTT_PUBLISH_USER: aquaflow-publisher
+      MQTT_PUBLISH_PASSWORD: ${MQTT_PUBLISH_PASSWORD:-aquaflow-local-publisher}
+      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-demo@example.com}
+      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-AquaFlow-demo-123!}
+    depends_on:
+      mqtt-test-api:
+        condition: service_healthy
+      mqtt-test-broker:
+        condition: service_healthy
+      mqtt-test-ingestor:
+        condition: service_started
+      ml-test-inference:
+        condition: service_started
+    profiles: ["ml-test"]
+
 volumes:
   aquaflow-postgres-mqtt-test:

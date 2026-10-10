@@ -8,5 +8,7 @@ COPY train_model.py ./train_model.py
 COPY predict_model.py ./predict_model.py
 COPY prepare_dataset.py ./prepare_dataset.py
 COPY generate_mock_data.py ./generate_mock_data.py
+COPY feature_transforms.py ./feature_transforms.py
+COPY inference_worker.py ./inference_worker.py
 
 CMD ["python", "train_model.py"]

@@ -102,6 +102,26 @@ services:
     volumes:
       - ./data/ml:/app/data/ml
 
+  ml-inference:
+    profiles: ["ml"]
+    build:
+      context: ./ml
+      dockerfile: Dockerfile.training
+    command: python inference_worker.py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aquaflow:${POSTGRES_PASSWORD:-aquaflow-local}@db:5432/aquaflow
+      ML_MODEL_PATH: /app/data/ml/training/best_model.joblib
+      ML_TRAINING_REPORT_PATH: /app/data/ml/training/metrics.json
+      ML_POLL_SECONDS: ${ML_POLL_SECONDS:-5}
+    volumes:
+      - ./data/ml:/app/data/ml:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
   ml-airflow:
     image: apache/airflow:3.3.2-python3.12
     command: standalone

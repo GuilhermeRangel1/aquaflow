@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from feature_transforms import FEATURE_NAMES, transform_reading
+
 REQUIRED_FIELDS = {
     "device_serial",
     "event_id",
@@ -31,15 +33,7 @@ MEASUREMENTS = (
     "battery_percent",
     "signal_dbm",
 )
-FEATURE_FIELDS = (
-    "flow_rate_liters_minute",
-    "volume_delta_liters",
-    "elapsed_minutes",
-    "local_hour_sin",
-    "local_hour_cos",
-    "local_weekday_sin",
-    "local_weekday_cos",
-)
+FEATURE_FIELDS = FEATURE_NAMES
 LABEL_FIELDS = ("event_id", "scenario_label", "anomaly_label")
 METADATA_FIELDS = ("event_id", "recorded_at", "device_serial")
 
@@ -230,7 +224,7 @@ def prepare(input_path: Path, output_dir: Path, timezone: str) -> dict[str, Any]
                 records.append(record)
 
     try:
-        local_timezone = ZoneInfo(timezone)
+        ZoneInfo(timezone)
     except ZoneInfoNotFoundError as error:
         raise ValueError(f"unknown IANA timezone: {timezone}") from error
     records.sort(key=lambda record: record["recorded_at"])
@@ -259,20 +253,14 @@ def prepare(input_path: Path, output_dir: Path, timezone: str) -> dict[str, Any]
         writer = csv.DictWriter(features_file, fieldnames=FEATURE_FIELDS)
         writer.writeheader()
         for record in prepared_records:
-            timestamp: datetime = record["recorded_at"]
-            local_timestamp = timestamp.astimezone(local_timezone)
-            hour = local_timestamp.hour + local_timestamp.minute / 60
-            weekday = local_timestamp.weekday()
             writer.writerow(
-                {
-                    "flow_rate_liters_minute": record["flow_rate_liters_minute"],
-                    "volume_delta_liters": record["volume_delta_liters"],
-                    "elapsed_minutes": record["elapsed_minutes"],
-                    "local_hour_sin": round(math.sin(2 * math.pi * hour / 24), 8),
-                    "local_hour_cos": round(math.cos(2 * math.pi * hour / 24), 8),
-                    "local_weekday_sin": round(math.sin(2 * math.pi * weekday / 7), 8),
-                    "local_weekday_cos": round(math.cos(2 * math.pi * weekday / 7), 8),
-                }
+                transform_reading(
+                    flow_rate_liters_minute=record["flow_rate_liters_minute"],
+                    volume_delta_liters=record["volume_delta_liters"],
+                    elapsed_minutes=record["elapsed_minutes"],
+                    recorded_at=record["recorded_at"],
+                    timezone=timezone,
+                )
             )
     with labels_path.open("w", newline="", encoding="utf-8") as labels_file:
         writer = csv.DictWriter(labels_file, fieldnames=LABEL_FIELDS)
@@ -302,10 +290,14 @@ def prepare(input_path: Path, output_dir: Path, timezone: str) -> dict[str, Any]
         "source_file": input_path.name,
         "prepared_readings": len(prepared_records),
         "missing_rows_policy": "missing slots are excluded from feature/label tables, not imputed",
-        "first_reading_policy": "excluded because no preceding reading exists to calculate volume delta",
+        "first_reading_policy": (
+            "excluded because no preceding reading exists to calculate volume delta"
+        ),
         "label_policy": "scenario and anomaly labels are written separately from model features",
         "time_features": f"hour and weekday encoded with sine/cosine cycles in {timezone}",
-        "scaling_policy": "values retain their units; fit scaling inside each training pipeline only",
+        "scaling_policy": (
+            "values retain their units; fit scaling inside each training pipeline only"
+        ),
         "feature_file": features_path.name,
         "label_file": labels_path.name,
         "metadata_file": metadata_path.name,
