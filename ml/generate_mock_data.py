@@ -6,6 +6,7 @@ import random
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 FIELDS = (
     "device_serial",
@@ -41,20 +42,34 @@ def _flow(hour: int, rng: random.Random) -> float:
     return round(max(0, base + rng.uniform(-0.02, 0.02)), 3)
 
 
-def generate(output: Path, *, seed: int, start: datetime, days: int, interval_minutes: int) -> None:
+def generate(
+    output: Path,
+    *,
+    seed: int,
+    start: datetime,
+    days: int,
+    interval_minutes: int,
+    timezone: str,
+) -> None:
     if days < 4 or interval_minutes < 1 or 1440 % interval_minutes:
         raise ValueError("days must be >= 4 and interval_minutes must divide one day")
+    try:
+        local_timezone = ZoneInfo(timezone)
+    except ZoneInfoNotFoundError as error:
+        raise ValueError(f"unknown IANA timezone: {timezone}") from error
     rng = random.Random(seed)
     serial = "AF-ML-MOCK-001"
     cumulative = 1000.0
+    local_start_date = start.astimezone(local_timezone).date()
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=FIELDS)
         writer.writeheader()
         for slot in range(days * 1440 // interval_minutes):
             recorded_at = start + timedelta(minutes=slot * interval_minutes)
-            day = slot * interval_minutes // 1440
-            hour = recorded_at.hour
+            recorded_local = recorded_at.astimezone(local_timezone)
+            day = (recorded_local.date() - local_start_date).days
+            hour = recorded_local.hour
             scenario = "normal"
             present = True
             if day % 4 == 1 and 9 <= hour < 15:
@@ -94,7 +109,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("data/mock-ml/readings.csv"))
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--start", type=_start, default=_start("2026-09-01T00:00:00Z"))
+    parser.add_argument("--start", type=_start, default=_start("2026-09-01T00:00:00-03:00"))
+    parser.add_argument("--timezone", default="America/Sao_Paulo")
     parser.add_argument("--days", type=int, default=16)
     parser.add_argument("--interval-minutes", type=int, default=5)
     args = parser.parse_args()
@@ -104,6 +120,7 @@ def main() -> None:
         start=args.start,
         days=args.days,
         interval_minutes=args.interval_minutes,
+        timezone=args.timezone,
     )
     print(f"Dados simulados gerados em {args.output}")
 
