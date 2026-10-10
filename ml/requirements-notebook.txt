@@ -1,3 +1,6 @@
--r requirements-training.txt
 ipykernel>=6.29,<8
 matplotlib>=3.8,<4
+numpy
+pandas
+joblib
+scikit-learn==1.8.0
