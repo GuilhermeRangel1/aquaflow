@@ -274,7 +274,9 @@ def train(
     selected_test = _metrics(
         targets[test_indices], selected_final.predict_proba(values[test_indices])[:, 1]
     )
-    joblib.dump(selected_final, output_dir / "best_model.joblib")
+    model_path = output_dir / "best_model.joblib"
+    joblib.dump(selected_final, model_path)
+    model_hash = hashlib.sha256(model_path.read_bytes()).hexdigest()
     split_counts = {name: int(len(indices)) for name, indices in splits.items()}
     first_local = timestamps[0].astimezone(ZoneInfo(timezone))
     origin = datetime.combine(first_local.date(), time.min, tzinfo=ZoneInfo(timezone))
@@ -297,6 +299,8 @@ def train(
         "threshold": 0.5,
         "selection_metric": "validation_average_precision",
         "selected_model": selected_model,
+        "model_sha256": model_hash,
+        "training_data_sha256": data_hash,
         "search": {
             "strategy": "random_parameter_sampling_with_time_series_cross_validation",
             "iterations_per_model": search_iterations,
@@ -331,6 +335,7 @@ def train(
                     "search_iterations": search_iterations,
                     "seed": seed,
                     "data_sha256": data_hash,
+                    "model_sha256": model_hash,
                     **{f"best_{key}": str(value) for key, value in result["best_parameters"].items()},
                 }
             )

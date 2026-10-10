@@ -1,6 +1,6 @@
 # Dados e modelos
 
-Esta pasta concentra o trabalho de machine learning do AquaFlow. Ela contém dados mockados reproduzíveis, análise exploratória e preparação com Airflow e uma comparação offline de classificadores binários registrada no MLflow. O experimento inicial usa rótulos de cenários artificiais; ainda não há inferência integrada à API nem modelo validado com telemetria real.
+Esta pasta concentra o trabalho de machine learning do AquaFlow. Ela contém dados mockados reproduzíveis, análise exploratória e preparação com Airflow, comparação offline de classificadores binários registrada no MLflow e uma CLI para inferir sobre uma nova série simulada. O experimento inicial usa rótulos de cenários artificiais; ainda não há inferência integrada à API nem modelo validado com telemetria real.
 
 ## Gerar dados simulados
 
@@ -45,3 +45,15 @@ docker compose --profile tools run --build --rm ml-trainer
 A CLI usa divisão cronológica local de 8/4/4 dias, faz busca aleatória reproduzível com validação cruzada temporal no bloco de treino e seleciona por average precision no bloco de validação. Compara baseline de prevalência, regressão logística, floresta aleatória e HistGradientBoosting. O teste final avalia somente o modelo selecionado e o baseline. Métricas, matrizes de confusão, manifesto temporal, modelo serializado e execuções do MLflow ficam em `data/ml/training/` e `data/ml/mlflow.db`.
 
 Para rodar sem Docker, instale `ml/requirements-training.txt` e execute `python ml/train_model.py` depois da preparação. Os arquivos preparados mantêm as transformações determinísticas e as unidades; o scaler da regressão logística é ajustado dentro do pipeline em cada treino. Os rótulos não entram nas features. Resultados descrevem somente o reconhecimento dos cenários simulados e não comprovam detecção no mundo real.
+
+## Inferir em uma nova série simulada
+
+Depois de treinar e preparar o modelo pelo fluxo acima, gere uma série com outro período e outra seed. Em seguida, use o mesmo preparador (`prepare_dataset.py`) utilizado no treinamento e rode a inferência offline:
+
+```powershell
+docker compose --profile tools run --rm ml-trainer python generate_mock_data.py --output data/ml/inference/raw/mock_readings.csv --seed 99 --start 2026-09-17T00:00:00-03:00 --timezone America/Sao_Paulo --days 4
+docker compose --profile tools run --rm ml-trainer python prepare_dataset.py prepare --input data/ml/inference/raw/mock_readings.csv --output-dir data/ml/inference/prepared --timezone America/Sao_Paulo
+docker compose --profile tools run --rm ml-trainer python predict_model.py
+```
+
+A CLI verifica o fuso, o conjunto de features e o hash do modelo contra o relatório de treinamento. Ela grava `data/ml/predictions/predictions.csv` com classificação, probabilidade e versão do artefato por leitura, além de `prediction_manifest.json` com hashes, contagens e limitações. A inferência não recebe os rótulos da série nova, não altera a API nem os alertas e não confirma anomalias reais. Os arquivos permanecem locais em `data/ml/`.
