@@ -94,6 +94,14 @@ services:
     volumes:
       - ./data:/app/data
 
+  ml-trainer:
+    profiles: ["tools"]
+    build:
+      context: ./ml
+      dockerfile: Dockerfile.training
+    volumes:
+      - ./data/ml:/app/data/ml
+
   ml-airflow:
     image: apache/airflow:3.3.2-python3.12
     command: standalone
