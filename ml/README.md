@@ -1,6 +1,6 @@
 # Dados e modelos
 
-Esta pasta concentra o trabalho de machine learning do AquaFlow. Ela contém um gerador reproduzível de telemetria simulada, avaliação de fontes de dados e um pipeline Airflow para análise exploratória e preparação. Ainda não há pipeline de treinamento, modelo validado ou inferência em produção.
+Esta pasta concentra o trabalho de machine learning do AquaFlow. Ela contém dados mockados reproduzíveis, análise exploratória e preparação com Airflow e uma comparação offline de classificadores binários registrada no MLflow. O experimento inicial usa rótulos de cenários artificiais; ainda não há inferência integrada à API nem modelo validado com telemetria real.
 
 ## Gerar dados simulados
 
@@ -34,4 +34,14 @@ Veja [schema, cenários e limitações](docs/dados-mockados.md) e [avaliação d
 
 O [contrato do pipeline](docs/pipeline.md) detalha as verificações, os arquivos de saída e as decisões para evitar imputação indevida e vazamento de rótulos.
 
-As lacunas previstas para o fluxo estão documentadas no manifesto e nos relatórios: leituras ausentes não são imputadas, rótulos ficam fora da tabela de features e transformações dependentes dos dados (como escala) aguardam a definição da tarefa e uma divisão temporal para evitar vazamento. O mesmo módulo de preparação deve ser usado quando treinamento e inferência forem implementados. Os detectores por regras da API permanecem disponíveis.
+## Comparar modelos
+
+Depois de habilitar e executar o DAG, rode na raiz do projeto:
+
+```powershell
+docker compose --profile tools run --build --rm ml-trainer
+```
+
+A CLI usa divisão cronológica local de 8/4/4 dias, faz busca aleatória reproduzível com validação cruzada temporal no bloco de treino e seleciona por average precision no bloco de validação. Compara baseline de prevalência, regressão logística, floresta aleatória e HistGradientBoosting. O teste final avalia somente o modelo selecionado e o baseline. Métricas, matrizes de confusão, manifesto temporal, modelo serializado e execuções do MLflow ficam em `data/ml/training/` e `data/ml/mlflow.db`.
+
+Para rodar sem Docker, instale `ml/requirements-training.txt` e execute `python ml/train_model.py` depois da preparação. Os arquivos preparados mantêm as transformações determinísticas e as unidades; o scaler da regressão logística é ajustado dentro do pipeline em cada treino. Os rótulos não entram nas features. Resultados descrevem somente o reconhecimento dos cenários simulados e não comprovam detecção no mundo real.

@@ -89,7 +89,7 @@ docs/       especificações, contrato MQTT e documentação transversal
 firmware/   integração ESP32 e futuro código FreeRTOS
 frontend/   aplicação web e dashboard
 infrastructure/  configuração do broker MQTT
-ml/         dados simulados, análise e preparação; treinamento e modelos futuros
+ml/         dados simulados, análise, preparação e comparação offline de modelos
 ```
 
 O MVP é um monólito modular: a API reúne autenticação, propriedades, dispositivos, telemetria, consumo e alertas, mantendo os dados no PostgreSQL.
@@ -158,5 +158,5 @@ Ainda dependem de evolução do projeto:
 - Firmware do ESP32 e calibração com o sensor físico escolhido.
 - Validação de ponta a ponta com hardware e rede reais.
 - Ampliação da cobertura de integração com PostgreSQL.
-- Análise exploratória e preparação inicial de dados simulados estão disponíveis pelo Airflow. Treinamento, comparação e registro de modelos, inferência integrada e validação com telemetria real ainda fazem parte da evolução acadêmica.
+- Análise exploratória, preparação e comparação offline de modelos com registro no MLflow estão disponíveis para dados simulados. Inferência integrada e validação com telemetria real ainda fazem parte da evolução acadêmica; as métricas atuais não representam desempenho em vazamentos reais.
 - Notificações externas e compartilhamento de propriedade, que estão fora do escopo atual.
