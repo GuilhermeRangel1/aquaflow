@@ -94,6 +94,32 @@ services:
     volumes:
       - ./data:/app/data
 
+  ml-airflow:
+    image: apache/airflow:3.3.2-python3.12
+    command: standalone
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      # Local-only convenience: the UI is bound to localhost below.
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - aquaflow-airflow:/opt/airflow
+      - ./ml/airflow/dags:/opt/airflow/dags:ro
+      - ./ml:/opt/airflow/ml:ro
+      - ./data/ml:/opt/airflow/data/ml
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5)"
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+
   frontend:
     build:
       context: ./frontend
@@ -115,3 +141,4 @@ services:
 volumes:
   aquaflow-postgres:
   aquaflow-mqtt:
+  aquaflow-airflow:

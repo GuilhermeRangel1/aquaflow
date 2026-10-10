@@ -26,7 +26,7 @@ Os alertas guardam a regra aplicada, a explicação e as evidências usadas. Rec
 
 ## Executar com Docker Compose
 
-Requisitos: Docker Desktop instalado e em execução.
+Requisitos: Docker Desktop instalado e em execução. Reserve pelo menos 4 GB de memória para o Docker Desktop; o Airflow é mais pesado que os demais serviços.
 
 Na raiz do projeto, execute:
 
@@ -40,7 +40,7 @@ Quando os serviços estiverem prontos, acesse:
 - Documentação interativa da API: [http://localhost:8000/docs](http://localhost:8000/docs)
 - Verificação de prontidão da API: [http://localhost:8000/health/ready](http://localhost:8000/health/ready)
 
-O Compose inicia PostgreSQL, API, frontend, broker MQTT e consumidor de mensagens, aplica as migrations e prepara os dados demonstrativos. Para executar em segundo plano, use `docker compose up --build -d`; para acompanhar a saída depois, use `docker compose logs -f`.
+O Compose inicia PostgreSQL, API, frontend, broker MQTT, consumidor de mensagens e Airflow, aplica as migrations e prepara os dados demonstrativos. A interface local do Airflow fica em [http://localhost:8080](http://localhost:8080), sem tela de login. Para executar em segundo plano, use `docker compose up --build -d`; para acompanhar a saída depois, use `docker compose logs -f`.
 
 Para parar os serviços sem apagar o banco, pressione `Ctrl+C` no terminal ou execute `docker compose down`. O volume do PostgreSQL é preservado entre inicializações. Para apagar também o banco local e recriar a demonstração do zero, execute `docker compose down --volumes`.
 
@@ -73,7 +73,7 @@ O guia [Integração de um ESP32](firmware/docs/integracao-esp32.md) explica com
 
 O Compose também oferece um broker MQTT interno e um consumidor que encaminha as mensagens para a ingestão HTTP existente. Cadastre um medidor em **Medidores**, copie a chave mostrada e siga o [contrato MQTT](docs/contrato-mqtt.md) para publicar leituras de teste e consultá-las na aplicação. O broker não publica uma porta no host.
 
-O [gerador de dados mockados](ml/README.md) cria uma série temporal reproduzível com cenários normais, fluxo contínuo, consumo noturno e lacunas. Os rótulos descrevem os cenários simulados e servem para desenvolver o pipeline; eles não representam vazamentos confirmados.
+O [módulo de ML](ml/README.md) gera uma série temporal reproduzível e contém um DAG Airflow para análise exploratória e preparação dos dados. Os rótulos descrevem cenários simulados e não representam vazamentos confirmados. A interface local do Airflow é iniciada pelo comando padrão do Compose; habilite o DAG e execute-o manualmente. O acesso sem login é apenas para desenvolvimento local e a porta fica vinculada ao próprio computador.
 
 ## Tecnologias e organização
 
@@ -89,7 +89,7 @@ docs/       especificações, contrato MQTT e documentação transversal
 firmware/   integração ESP32 e futuro código FreeRTOS
 frontend/   aplicação web e dashboard
 infrastructure/  configuração do broker MQTT
-ml/         gerador de dados e futuro pipeline/modelos
+ml/         dados simulados, análise e preparação; treinamento e modelos futuros
 ```
 
 O MVP é um monólito modular: a API reúne autenticação, propriedades, dispositivos, telemetria, consumo e alertas, mantendo os dados no PostgreSQL.
@@ -158,5 +158,5 @@ Ainda dependem de evolução do projeto:
 - Firmware do ESP32 e calibração com o sensor físico escolhido.
 - Validação de ponta a ponta com hardware e rede reais.
 - Ampliação da cobertura de integração com PostgreSQL.
-- Pipeline de dados, experimentos reproduzíveis e integração de modelos fazem parte da entrega acadêmica ampliada; ainda não estão implementados.
+- Análise exploratória e preparação inicial de dados simulados estão disponíveis pelo Airflow. Treinamento, comparação e registro de modelos, inferência integrada e validação com telemetria real ainda fazem parte da evolução acadêmica.
 - Notificações externas e compartilhamento de propriedade, que estão fora do escopo atual.
