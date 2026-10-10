@@ -80,6 +80,24 @@ class TelemetryReading(Base):
     firmware_version: Mapped[str | None] = mapped_column(String(40))
 
 
+class MLInference(Base):
+    __tablename__ = "ml_inferences"
+    __table_args__ = (
+        UniqueConstraint("reading_id", "model_version", name="uq_ml_inference_reading_model"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    reading_id: Mapped[UUID] = mapped_column(ForeignKey("telemetry_readings.id"))
+    model_version: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(32))
+    predicted_anomaly: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    anomaly_probability: Mapped[Decimal | None] = mapped_column(Numeric(8, 7), nullable=True)
+    feature_values: Mapped[dict[str, object]] = mapped_column(JSON)
+    explanation: Mapped[dict[str, object]] = mapped_column(JSON)
+    reason: Mapped[str] = mapped_column(String(500))
+    inferred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class AnomalyEvent(Base):
     __tablename__ = "anomaly_events"
 
