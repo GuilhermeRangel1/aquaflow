@@ -1,6 +1,6 @@
 # Dados e modelos
 
-Esta pasta concentra o trabalho de machine learning do AquaFlow. Ela contém dados mockados reproduzíveis, análise exploratória e preparação com Airflow, comparação offline de classificadores binários registrada no MLflow, uma CLI para novas séries e um worker opcional que grava avaliações experimentais das leituras na API. Previsões positivas do worker criam alertas experimentais tratáveis. Os resultados usam cenários artificiais; o modelo ainda não foi validado com telemetria real.
+Esta pasta concentra o trabalho de machine learning do AquaFlow. Ela contém dados mockados reproduzíveis, análise exploratória e preparação com Airflow, comparação offline de classificadores binários registrada no MLflow, uma CLI para novas séries e um worker que grava avaliações experimentais das leituras na API. No primeiro `docker compose up --build`, o Compose gera e prepara os dados e treina o modelo quando ainda não há artefato; em seguida inicia o worker. Previsões positivas criam alertas experimentais tratáveis. Os resultados usam cenários artificiais; o modelo ainda não foi validado com telemetria real.
 
 ## Gerar dados simulados
 
@@ -26,7 +26,7 @@ O DAG `aquaflow_mock_telemetry_pipeline` gera a série com seed fixa, valida o s
 docker compose up --build -d
 ```
 
-Acesse [http://localhost:8080](http://localhost:8080), habilite o DAG e execute-o manualmente. A interface local não pede login. O DAG salva a origem em `data/ml/raw/`, o relatório em `data/ml/analysis/` e as tabelas preparadas em `data/ml/prepared/`. Os arquivos não são versionados.
+Acesse [http://localhost:8080](http://localhost:8080), habilite o DAG e execute-o manualmente para repetir o pipeline Airflow. A interface local não pede login. O DAG salva a origem em `data/ml/raw/`, o relatório em `data/ml/analysis/` e as tabelas preparadas em `data/ml/prepared/`. Os arquivos não são versionados. O treinamento automático do Compose usa os mesmos scripts de geração, análise e preparação, com saídas próprias em `data/ml/compose/`, sem depender de uma execução manual do DAG.
 
 O contêiner usa o modo `standalone` do Airflow e SQLite persistido em volume, apropriado para a demonstração local. A autenticação é desativada apenas para esta interface local, cuja porta é vinculada ao loopback. Não use essa configuração como ambiente de produção. A inicialização do Airflow pode consumir vários GB de memória.
 
@@ -36,15 +36,15 @@ O [contrato do pipeline](docs/pipeline.md) detalha as verificações, os arquivo
 
 ## Comparar modelos
 
-Depois de habilitar e executar o DAG, rode na raiz do projeto:
+O Compose faz esse fluxo automaticamente quando não encontra `data/ml/training/best_model.joblib` e `metrics.json`: gera uma série sintética reproduzível, analisa e prepara os dados e compara os modelos. Enquanto o treinamento está em andamento, o worker aguarda; depois da conclusão bem-sucedida, ele inicia e processa as leituras pendentes. Se o artefato já existir, o treinamento é ignorado. Para forçar um novo treinamento, rode na raiz do projeto:
 
 ```powershell
-docker compose --profile tools run --build --rm ml-trainer
+docker compose run --build --rm -e ML_RETRAIN_MODEL=true ml-trainer
 ```
 
 A CLI usa divisão cronológica local de 8/4/4 dias, faz busca aleatória reproduzível com validação cruzada temporal no bloco de treino e compara baseline de prevalência, regressão logística, floresta aleatória e HistGradientBoosting. Por padrão, também gera um perfil deslocado e outro de estresse, com rotinas, ruído e intensidades diferentes. A seleção considera a average precision média da validação temporal e do perfil deslocado; esse segundo conjunto também entra no ajuste final. O perfil de estresse fica separado até o fim e mede a resposta do modelo a mudanças não usadas na seleção. A busca usa modelos mais regularizados, como árvores rasas e folhas maiores.
 
-O serviço MLflow já é iniciado por `docker compose up --build` em [http://localhost:5000](http://localhost:5000). Ao executar `ml-trainer` pelo Compose, a CLI usa `http://mlflow:5000` automaticamente para registrar parâmetros, métricas e artefatos. O servidor persiste seu banco e os artefatos em `data/ml/mlflow-server/`, separado do banco usado pelo modo local sem Compose para preservar os experimentos existentes.
+O serviço MLflow é iniciado por `docker compose up --build` em [http://localhost:5000](http://localhost:5000). O treinamento automático e a execução manual de `ml-trainer` pelo Compose usam `http://mlflow:5000` para registrar parâmetros, métricas e artefatos. O servidor persiste seu banco e os artefatos em `data/ml/mlflow-server/`, separado do banco usado pelo modo local sem Compose para preservar os experimentos existentes.
 
 O treinamento grava `metrics.json`, `split_manifest.json`, `best_model.joblib` e `training_report.md` em `data/ml/training/`, além das execuções e artefatos do MLflow em `data/ml/mlflow-server/`. O relatório compara os modelos, mostra o gap treino/CV, a variação entre folds, os resultados por perfil, matrizes de confusão e os hiperparâmetros escolhidos. O campo `overfitting_diagnostics.domain_shift_assessment` sinaliza quando o desempenho cai entre perfis. Esses sinais são diagnósticos; não existe garantia de ausência de overfitting com dados sintéticos.
 
@@ -64,12 +64,13 @@ A CLI verifica o fuso, o conjunto de features e o hash do modelo contra o relat�
 
 ## Acompanhar inferências da aplicação
 
-O worker opcional processa leituras novas persistidas no PostgreSQL. Ele fica separado da imagem da API e só é iniciado depois de treinar um modelo com o relatório e o hash esperados:
+O worker processa leituras novas persistidas no PostgreSQL. Ele fica separado da imagem da API e é iniciado pelo Compose depois que o treinamento termina com sucesso. Para iniciar a solução completa, use:
 
 ```powershell
-docker compose --profile tools run --build --rm ml-trainer
-docker compose --profile ml up --build ml-inference
+docker compose up --build
 ```
+
+Quando o modelo já existe, o Compose reutiliza o artefato. Para treinar novamente e depois carregar o novo modelo no worker, execute o comando de retreinamento acima e reinicie o serviço com `docker compose restart ml-inference`.
 
 Com o worker ativo, leituras válidas ainda sem avaliação são processadas uma vez por versão do modelo. Previsões positivas criam alertas experimentais de severidade média e podem ser reconhecidas, resolvidas ou marcadas como falso positivo pelo mesmo fluxo dos alertas por regras. Previsões positivas do mesmo medidor são agrupadas enquanto o alerta estiver aberto ou reconhecido. Previsões normais continuam registradas como inferências, sem criar alertas. O endpoint autenticado `GET /api/v1/properties/{property_id}/ml-inferences` lista os resultados, a versão, os dados avaliados e uma estimativa de sensibilidade dos sinais. Quando existe volume acumulado anterior, o worker deriva a vazão média do intervalo se a leitura não trouxer vazão instantânea. Se houver apenas vazão, estima a variação do volume somente quando o intervalo respeita a frequência esperada do medidor. Lacunas longas, dados insuficientes ou fuso incompatível são registrados como não avaliados. Se o worker estiver parado ou falhar, as regras do MVP continuam processando as leituras e gerando alertas.
 

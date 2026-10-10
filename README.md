@@ -41,7 +41,7 @@ Quando os serviços estiverem prontos, acesse:
 - Verificação de prontidão da API: [http://localhost:8000/health/ready](http://localhost:8000/health/ready)
 - Interface de experimentos MLflow: [http://localhost:5000](http://localhost:5000)
 
-O Compose inicia PostgreSQL, API, frontend, broker MQTT, consumidor de mensagens, Airflow e MLflow, aplica as migrations e prepara os dados demonstrativos. O Airflow fica em [http://localhost:8080](http://localhost:8080), sem tela de login. O MLflow registra experimentos e mantém metadados e artefatos em `data/ml/`; as duas interfaces ficam disponíveis apenas no computador local. Para executar em segundo plano, use `docker compose up --build -d`; para acompanhar a saída depois, use `docker compose logs -f`.
+O Compose inicia PostgreSQL, API, frontend, broker MQTT, consumidor de mensagens, Airflow e MLflow, aplica as migrations e prepara os dados demonstrativos. Se ainda não houver um modelo treinado em `data/ml/training/`, também gera e prepara os dados mockados, treina os modelos e inicia o worker de inferência ao terminar. Se o artefato já existir, o treinamento é ignorado. O Airflow fica em [http://localhost:8080](http://localhost:8080), sem tela de login, e o MLflow registra os experimentos em [http://localhost:5000](http://localhost:5000). As duas interfaces ficam disponíveis apenas no computador local. Para executar em segundo plano, use `docker compose up --build -d`; para acompanhar a saída depois, use `docker compose logs -f`.
 
 Para parar os serviços sem apagar o banco, pressione `Ctrl+C` no terminal ou execute `docker compose down`. O volume do PostgreSQL é preservado entre inicializações. Para apagar também o banco local e recriar a demonstração do zero, execute `docker compose down --volumes`.
 
@@ -63,7 +63,7 @@ A conta de demonstração é preparada automaticamente pelo serviço da API e co
 - Um alerta de fluxo contínuo produzido pelo detector por regras, além de poucos exemplos históricos para demonstrar os estados de tratamento.
 - Leituras de bateria, sinal e versão de firmware nos dispositivos simulados.
 
-O seed é aditivo e idempotente: ele acrescenta dados que ainda não existem e preserva a telemetria e o histórico. Os antigos medidores de reserva e lavanderia são desativados, sem apagar os registros. Para ver os alertas experimentais de ML, treine o modelo e inicie o perfil `ml` conforme a seção de aquisição MQTT e ML. Para experimentar ingestão de ponta a ponta, abra **Medidores**, cadastre um medidor com número de série exclusivo e use **Simular leituras**. O simulador envia eventos pela mesma API usada por um dispositivo.
+O seed é aditivo e idempotente: ele acrescenta dados que ainda não existem e preserva a telemetria e o histórico. Os antigos medidores de reserva e lavanderia são desativados, sem apagar os registros. Para ver os alertas experimentais de ML, aguarde o treinamento automático terminar; o worker então avalia as leituras armazenadas e as novas leituras. Para experimentar ingestão de ponta a ponta, abra **Medidores**, cadastre um medidor com número de série exclusivo e use **Simular leituras**. O simulador envia eventos pela mesma API usada por um dispositivo.
 
 ## Integração com ESP32
 
@@ -75,7 +75,7 @@ O guia [Integração de um ESP32](firmware/docs/integracao-esp32.md) explica com
 
 O Compose também oferece um broker MQTT interno e um consumidor que encaminha as mensagens para a ingestão HTTP existente. Cadastre um medidor em **Medidores**, copie a chave mostrada e siga o [contrato MQTT](docs/contrato-mqtt.md) para publicar leituras de teste e consultá-las na aplicação. O broker não publica uma porta no host.
 
-O [módulo de ML](ml/README.md) gera séries temporais reproduzíveis, prepara os dados com um DAG Airflow e compara modelos offline. O treinamento envia execuções para o MLflow iniciado pelo Compose. Depois de treinar um modelo, inicie o worker com `docker compose --profile ml up --build -d ml-inference`; ele grava inferências experimentais para novas leituras. Uma previsão positiva cria um alerta experimental tratável, enquanto previsões normais permanecem registradas sem alerta. Os rótulos descrevem cenários simulados e não representam vazamentos confirmados. A interface local do Airflow é iniciada pelo comando padrão do Compose; habilite o DAG e execute-o manualmente. O acesso sem login é apenas para desenvolvimento local e a porta fica vinculada ao próprio computador.
+O [módulo de ML](ml/README.md) gera séries temporais reproduzíveis, prepara os dados e compara modelos offline. Na primeira inicialização sem artefato treinado, o Compose gera os dados, executa análise e preparação e treina os modelos; depois inicia o worker, que grava inferências experimentais para novas leituras. Para forçar outro treinamento, use `docker compose run --build --rm -e ML_RETRAIN_MODEL=true ml-trainer`. Uma previsão positiva cria um alerta experimental tratável, enquanto previsões normais permanecem registradas sem alerta. Os rótulos descrevem cenários simulados e não representam vazamentos confirmados. A interface local do Airflow é iniciada pelo comando padrão do Compose; habilite o DAG e execute-o manualmente para repetir o pipeline Airflow. O acesso sem login é apenas para desenvolvimento local e a porta fica vinculada ao próprio computador.
 
 ## Tecnologias e organização
 

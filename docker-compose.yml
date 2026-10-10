@@ -127,20 +127,34 @@ services:
     restart: unless-stopped
 
   ml-trainer:
-    profiles: ["tools"]
     build:
       context: ./ml
       dockerfile: Dockerfile.training
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
+      ML_RETRAIN_MODEL: ${ML_RETRAIN_MODEL:-false}
+    command:
+      - sh
+      - -c
+      - >-
+        if [ "$$ML_RETRAIN_MODEL" != "true" ] &&
+        [ -s /app/data/ml/training/best_model.joblib ] &&
+        [ -s /app/data/ml/training/metrics.json ]; then
+          echo "Modelo existente encontrado; treinamento automático ignorado. Defina ML_RETRAIN_MODEL=true para treinar novamente.";
+        else
+          python generate_mock_data.py --output data/ml/compose/raw/mock_readings.csv --seed 42 --start 2026-09-01T00:00:00-03:00 --timezone America/Sao_Paulo --days 16 --interval-minutes 5 &&
+          python prepare_dataset.py analyze --input data/ml/compose/raw/mock_readings.csv --output-dir data/ml/compose/analysis --timezone America/Sao_Paulo &&
+          python prepare_dataset.py prepare --input data/ml/compose/raw/mock_readings.csv --output-dir data/ml/compose/prepared --timezone America/Sao_Paulo &&
+          python train_model.py --features data/ml/compose/prepared/features.csv --labels data/ml/compose/prepared/labels.csv --metadata data/ml/compose/prepared/metadata.csv --output-dir data/ml/training --timezone America/Sao_Paulo;
+        fi
     volumes:
       - ./data/ml:/app/data/ml
     depends_on:
       mlflow:
         condition: service_healthy
+    restart: "no"
 
   ml-inference:
-    profiles: ["ml"]
     build:
       context: ./ml
       dockerfile: Dockerfile.training
@@ -157,6 +171,8 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+      ml-trainer:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   ml-airflow:
