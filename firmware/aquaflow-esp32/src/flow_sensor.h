@@ -11,6 +11,10 @@ public:
     // Le o contador acumulado desde o boot, em litros.
     float cumulativeLiters() const;
 
+    // Contagem crua de pulsos acumulados desde o boot. Usada na calibracao:
+    // passe um volume conhecido e divida os pulsos lidos pelos litros reais.
+    unsigned long cumulativePulses() const;
+
     // Calcula a vazao media (L/min) desde a ultima chamada a resetInterval().
     float instantaneousFlowLitersPerMinute(unsigned long elapsedMs) const;
 

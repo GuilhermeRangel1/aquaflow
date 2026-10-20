@@ -1,8 +1,8 @@
 # Integração de um ESP32
 
-> **Estado atual:** este é um roteiro para testar a API com uma requisição manual. Ainda não há firmware ESP32/FreeRTOS no repositório, nem placa ou sensor conectados. A conta demo e as leituras são sintéticas; os exemplos abaixo não validam medição física.
+> **Estado atual:** já existe um firmware PlatformIO em [`firmware/aquaflow-esp32/`](../aquaflow-esp32/) para ESP32-WROOM-32, mas ele ainda **não foi validado em hardware real** (placa e sensor não conectados). Este documento serve tanto como roteiro para testar a API com uma requisição manual quanto como contrato de referência para o firmware. A conta demo e as leituras de exemplo são sintéticas; os exemplos manuais abaixo não validam medição física.
 
-O roteiro usa a API atual do AquaFlow para enviar leituras por HTTP. Um firmware futuro deverá ser adaptado ao sensor de vazão e à placa escolhidos; este documento não presume pinos, fator de calibração ou modelo de sensor. Para iniciar a aplicação local completa, siga primeiro o [guia de execução](../../docs/demonstracao.md).
+O roteiro usa a API atual do AquaFlow para enviar leituras por HTTP — o mesmo caminho que o firmware em `firmware/aquaflow-esp32/` percorre. O firmware já define placa (ESP32-WROOM-32), sensor de vazão por pulso e pino em `include/config.h`; o fator de calibração começa no valor nominal e deve ser confirmado por medição física (ver a seção "Calibracao" do README do firmware). Para iniciar a aplicação local completa, siga primeiro o [guia de execução](../../docs/demonstracao.md).
 
 ## Preparar um medidor
 
@@ -97,6 +97,6 @@ Se precisar invalidar uma chave, use a rota de rotação descrita acima. Ao reti
 
 Use HTTPS quando a API estiver fora da rede local de desenvolvimento. HTTP no Compose serve apenas para teste local.
 
-## O que falta definir para o firmware da placa
+## O que falta validar no firmware da placa
 
-Antes de escrever e validar um sketch específico, precisamos saber o modelo do sensor de vazão, a placa ESP32 e como o protótipo contabiliza pulsos/volume. O fator de calibração deve vir da documentação do sensor ou de uma medição física; não deve ser inventado no firmware.
+O firmware em `firmware/aquaflow-esp32/` já implementa placa, pino, contagem de pulsos por interrupção e envio HTTP. O que falta é a **validação física**: gravar na placa, confirmar a telemetria chegando (`202`) e **calibrar** o fator pulsos/litro contra um volume conhecido — o valor em `FLOW_PULSES_PER_LITER` ainda é o nominal do sensor e não deve ser tratado como definitivo. O procedimento de calibração está no README do firmware.
