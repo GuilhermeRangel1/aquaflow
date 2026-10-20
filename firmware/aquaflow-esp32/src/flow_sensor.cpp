@@ -21,6 +21,13 @@ float FlowSensor::cumulativeLiters() const {
     return pulses / m_pulsesPerLiter;
 }
 
+unsigned long FlowSensor::cumulativePulses() const {
+    noInterrupts();
+    unsigned long pulses = s_totalPulses;
+    interrupts();
+    return pulses;
+}
+
 float FlowSensor::instantaneousFlowLitersPerMinute(unsigned long elapsedMs) const {
     noInterrupts();
     unsigned long pulses = s_intervalPulses;

@@ -90,9 +90,12 @@ void loop() {
         } else if (result == SendResult::Rejected) {
             Serial.println("API rejeitou a leitura (contrato ou credencial invalida).");
         } else {
-            Serial.printf("Leitura enviada: %s L acumulados, %s L/min\n",
+            // Pulsos crus no log para calibracao: passe um volume conhecido e
+            // divida estes pulsos acumulados pelos litros reais (ver README).
+            Serial.printf("Leitura enviada: %s L acumulados, %s L/min, %lu pulsos acumulados\n",
                            String(reading.cumulativeVolumeLiters, 3).c_str(),
-                           String(reading.flowRateLitersMinute, 3).c_str());
+                           String(reading.flowRateLitersMinute, 3).c_str(),
+                           flowSensor.cumulativePulses());
         }
     }
 }
