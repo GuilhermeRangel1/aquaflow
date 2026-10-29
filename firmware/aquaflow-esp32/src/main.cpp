@@ -59,7 +59,8 @@ void setup() {
     connectWiFi();
     syncTime();
     flowSensor.begin(FLOW_SENSOR_PIN, FLOW_PULSES_PER_LITER);
-    telemetryClient.begin(AQUAFLOW_API_BASE_URL, DEVICE_SERIAL, DEVICE_KEY);
+    telemetryClient.begin(MQTT_BROKER_HOST, MQTT_BROKER_PORT, MQTT_PUBLISH_USER,
+                          MQTT_PUBLISH_PASSWORD, DEVICE_SERIAL, DEVICE_KEY);
     lastSampleAt = millis();
 }
 
@@ -85,14 +86,14 @@ void loop() {
 
         SendResult result = telemetryClient.send(reading);
         if (result == SendResult::NetworkError) {
-            Serial.println("Falha de rede ao enviar leitura; adicionando a fila local.");
+            Serial.println("Sem conexao/PUBACK do broker ao publicar; adicionando a fila local.");
             telemetryClient.enqueuePending(reading);
-        } else if (result == SendResult::Rejected) {
-            Serial.println("API rejeitou a leitura (contrato ou credencial invalida).");
         } else {
+            // Publicado com PUBACK do broker. A validacao de contrato e de credencial
+            // (device-key) acontece no servidor (ingestor + API); nao e observavel aqui.
             // Pulsos crus no log para calibracao: passe um volume conhecido e
             // divida estes pulsos acumulados pelos litros reais (ver README).
-            Serial.printf("Leitura enviada: %s L acumulados, %s L/min, %lu pulsos acumulados\n",
+            Serial.printf("Leitura publicada: %s L acumulados, %s L/min, %lu pulsos acumulados\n",
                            String(reading.cumulativeVolumeLiters, 3).c_str(),
                            String(reading.flowRateLitersMinute, 3).c_str(),
                            flowSensor.cumulativePulses());
