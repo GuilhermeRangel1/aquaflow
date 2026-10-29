@@ -49,6 +49,11 @@ services:
     environment:
       MQTT_PUBLISH_PASSWORD: ${MQTT_PUBLISH_PASSWORD:-aquaflow-local-publisher}
       MQTT_INGEST_PASSWORD: ${MQTT_INGEST_PASSWORD:-aquaflow-local-ingestor}
+    # Expoe o broker na LAN apenas para desenvolvimento, permitindo que uma placa
+    # ESP32 real publique no prototipo. Producao exige TLS e credencial por
+    # dispositivo, com ACL por topico (ver docs/contrato-mqtt.md).
+    ports:
+      - "1883:1883"
     volumes:
       - aquaflow-mqtt:/mosquitto/data
     healthcheck:
