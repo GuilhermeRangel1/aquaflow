@@ -1,0 +1,49 @@
+name: Firmware ESP32 build
+
+on:
+  push:
+    paths:
+      - 'firmware/aquaflow-esp32/**'
+      - '.github/workflows/firmware-build.yml'
+  pull_request:
+    paths:
+      - 'firmware/aquaflow-esp32/**'
+      - '.github/workflows/firmware-build.yml'
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Cache do PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('firmware/aquaflow-esp32/platformio.ini', 'firmware/aquaflow-esp32/sdkconfig.defaults') }}
+          restore-keys: |
+            pio-${{ runner.os }}-
+      - name: Instala o PlatformIO Core
+        run: pip install platformio
+      - name: Gera secrets.h (placeholder, so para compilar)
+        working-directory: firmware/aquaflow-esp32
+        run: cp include/secrets.example.h include/secrets.h
+      - name: Compila (pio run)
+        working-directory: firmware/aquaflow-esp32
+        run: pio run
+      - name: Publica os binarios compilados
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-esp32dev
+          path: |
+            firmware/aquaflow-esp32/.pio/build/esp32dev/firmware.bin
+            firmware/aquaflow-esp32/.pio/build/esp32dev/bootloader.bin
+            firmware/aquaflow-esp32/.pio/build/esp32dev/partitions.bin
+          if-no-files-found: error
