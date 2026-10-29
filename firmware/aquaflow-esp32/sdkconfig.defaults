@@ -16,3 +16,10 @@ CONFIG_AUTOSTART_ARDUINO=y
 # O core Arduino assume tick de 1000 Hz (millis()/delay()/SAMPLE_INTERVAL_MS); o IDF usa
 # 100 Hz por padrao. Alinhar evita granularidade/temporizacao incorretas.
 CONFIG_FREERTOS_HZ=1000
+
+# O binario com MQTT 5 (~1,07 MB) nao cabe na particao de app padrao de 1 MB. Usa uma
+# tabela customizada (factory ~3 MB, sem OTA; ver partitions.csv), adequada a
+# ESP32-WROOM-32 de 4 MB. O mesmo CSV e apontado por board_build.partitions no
+# platformio.ini, cobrindo tanto o build do IDF quanto o checkprogsize do PlatformIO.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
