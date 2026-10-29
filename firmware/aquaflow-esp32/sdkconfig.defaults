@@ -1,0 +1,18 @@
+# Defaults do ESP-IDF para o build Arduino-como-componente.
+# O PlatformIO gera sdkconfig.<env> a partir daqui (esses gerados sao ignorados pelo git).
+
+# Correcao central desta entrega: habilita o MQTT 5 no esp-mqtt. O CMakeLists do esp-mqtt
+# so compila mqtt5_client.c quando CONFIG_MQTT_PROTOCOL_5 esta ligado; e esse arquivo que
+# define esp_mqtt5_client_set_user_property e as demais funcoes da user property "device-key".
+CONFIG_MQTT_PROTOCOL_5=y
+
+# Mantem tambem o MQTT 3.1.1 (inofensivo; o firmware usa v5).
+CONFIG_MQTT_PROTOCOL_311=y
+
+# CRITICO no modo arduino-as-component: compila cores/esp32/main.cpp do core e faz o
+# setup()/loop() do Arduino rodarem automaticamente. Sem isso o firmware nao executa.
+CONFIG_AUTOSTART_ARDUINO=y
+
+# O core Arduino assume tick de 1000 Hz (millis()/delay()/SAMPLE_INTERVAL_MS); o IDF usa
+# 100 Hz por padrao. Alinhar evita granularidade/temporizacao incorretas.
+CONFIG_FREERTOS_HZ=1000

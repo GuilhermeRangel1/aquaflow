@@ -1,3 +1,13 @@
 .pio/
 .vscode/
 include/secrets.h
+
+# sdkconfig gerados pelo PlatformIO/ESP-IDF (ex.: sdkconfig.esp32dev); nao versionar.
+# Mantem o sdkconfig.defaults, que E versionado (habilita CONFIG_MQTT_PROTOCOL_5 etc.).
+sdkconfig
+sdkconfig.*
+!sdkconfig.defaults
+
+# Saidas do gerenciador de componentes do ESP-IDF (baixadas no build); nao versionar.
+managed_components/
+dependencies.lock
