@@ -2,7 +2,7 @@
 
 Esta pasta concentra o experimento de machine learning do AquaFlow: séries híbridas reproduzíveis, análise e preparação, comparação offline de classificadores binários registrada no MLflow, uma CLI para novas séries e o worker integrado que avalia leituras persistidas pela aplicação. O treinamento padrão usa cenários simulados com vazão calibrada por medições físicas de bancada. As métricas não demonstram desempenho em campo.
 
-O Compose inicia o treinamento automaticamente quando não encontra os artefatos esperados; depois inicia o worker. Separadamente, o Airflow pode repetir manualmente geração, análise e preparação, mas seu DAG não treina o modelo. O notebook documenta a preparação e visualiza as avaliações sem substituir o pipeline automatizado. Para entender os caminhos e limites, veja [arquitetura](../docs/arquitetura.md), [estado atual do projeto](../docs/estado-do-projeto.md) e [pipeline detalhado](docs/pipeline.md).
+O Compose inicia o treinamento automaticamente quando não encontra os artefatos esperados e depois inicia o worker. Cada execução manual do DAG do Airflow gera, analisa e prepara os dados, treina um candidato e registra a avaliação no MLflow. O notebook documenta a preparação e visualiza as avaliações. Veja [arquitetura](../docs/arquitetura.md), [estado atual do projeto](../docs/estado-do-projeto.md) e [pipeline detalhado](docs/pipeline.md).
 
 O [relatório de resultado do experimento](docs/resultado-experimento.md) registra uma execução reproduzível do código atual, com comparação de candidatos, avaliação em perfis distintos, hashes e limitações. Os [parâmetros e métricas do projeto](../docs/metricas-e-parametros.md) explicam os padrões usados no experimento e no restante da aplicação.
 
@@ -30,9 +30,9 @@ O DAG `aquaflow_hybrid_telemetry_pipeline` gera a série com seed fixa, valida o
 docker compose up --build -d
 ```
 
-Acesse [http://localhost:8080](http://localhost:8080), habilite o DAG e execute-o manualmente para repetir o pipeline Airflow. A interface local não pede login. O DAG salva a origem em `data/ml/raw/`, o relatório em `data/ml/analysis/` e as tabelas preparadas em `data/ml/prepared/`. Os arquivos não são versionados. O treinamento automático do Compose usa os mesmos scripts de geração, análise e preparação, com saídas próprias em `data/ml/compose/`, sem depender de uma execução manual do DAG.
+Acesse [http://localhost:8080](http://localhost:8080), habilite o DAG e acione uma execução. A tarefa `train_candidate` lê as tabelas produzidas por essa execução e publica as métricas e artefatos no experimento `aquaflow-hybrid-airflow` do MLflow. Os arquivos ficam em `data/ml/airflow/<execução>/`, nas pastas `raw`, `analysis`, `prepared` e `training`. O log da tarefa indica o caminho da execução. O worker continua lendo o modelo de inicialização em `data/ml/training-bench-v2/`. O treinamento automático do Compose usa os mesmos scripts e roda independentemente do DAG.
 
-O contêiner usa o modo `standalone` do Airflow e SQLite persistido em volume, apropriado para a demonstração local. A autenticação é desativada apenas para esta interface local, cuja porta é vinculada ao loopback. Não use essa configuração como ambiente de produção. A inicialização do Airflow pode consumir vários GB de memória.
+As execuções por modelo recebem a tag `airflow_run_id` no MLflow para localizar o treino a partir do identificador exibido no Airflow. O contêiner usa o modo `standalone` com SQLite persistido em volume e um ambiente Python separado para as dependências do treino. A interface local tem autenticação desativada e porta vinculada ao loopback. A inicialização pode consumir vários GB de memória.
 
 Veja [schema, cenários e limitações](docs/dados-mockados.md) e [avaliação das fontes externas](docs/avaliacao-dataset.md).
 

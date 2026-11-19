@@ -13,7 +13,7 @@
 | Monitoramento por regras | Implementado | Detectores determinísticos criam alertas com explicação e evidências. Eles seguem operando sem depender de ML. |
 | Pipeline e modelos de ML | Implementados como experimento | O pipeline compara classificadores e registra resultados, mas treina com cenários e rótulos simulados. |
 | Inferência na aplicação | Experimental | O worker persiste previsões associadas à versão do modelo. Previsões positivas podem criar alertas experimentais separados dos alertas por regras. |
-| Airflow e MLflow | Disponíveis localmente | Airflow permite executar manualmente geração, análise e preparação; MLflow apresenta os experimentos do treinamento. Ambos usam configuração local de demonstração. |
+| Airflow e MLflow | Disponíveis localmente | Um acionamento do DAG executa geração, análise, preparação e treino de um candidato. O MLflow apresenta os experimentos e a aplicação mantém seu modelo ativo até uma ativação explícita. |
 | Firmware e hardware | Ainda não implementados | Há guias e contratos, mas não há código FreeRTOS para compilar, placa/sensor selecionados ou calibração física. |
 | Uso real e produção | Ainda não validados | Faltam coleta de telemetria física, validação do modelo com dados reais, hardening operacional e infraestrutura de produção. |
 

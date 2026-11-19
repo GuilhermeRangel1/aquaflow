@@ -68,8 +68,8 @@ O dashboard pode indicar que a análise do modelo ainda está indisponível dura
 
 ### Roteiro para a apresentação
 
-1. Mostre no Airflow a execução do DAG híbrido e as saídas de análise e preparação.
-2. Abra o MLflow e expanda uma execução por modelo para mostrar as tentativas de busca, as métricas por divisão temporal e a combinação escolhida.
+1. Acione o DAG híbrido no Airflow e mostre as etapas de geração, análise, preparação e treino do candidato.
+2. Abra o experimento `aquaflow-hybrid-airflow` no MLflow e expanda uma execução por modelo para mostrar as tentativas de busca, as métricas por divisão temporal e a combinação escolhida.
 3. Selecione no dashboard a propriedade do ESP32. Passe água pelo sensor e confirme a chegada da leitura via MQTT e sua persistência pela API.
 4. Mantenha a coleta até fechar uma janela válida de cinco minutos com uma leitura anterior disponível como referência. Compare a última leitura na API com a seção **Inferências recentes**, que atualiza a cada 30 segundos.
 5. Apresente a diferença entre o desempenho no teste padrão e no perfil de estresse. Se usar um publicador de teste, identifique essa etapa como simulação e registre o ensaio físico como pendente.
@@ -84,9 +84,7 @@ Cadastre o ESP32 em **Medidores**, copie a chave do dispositivo e configure o fi
 
 ## 6. Executar o DAG do Airflow
 
-O Airflow é iniciado pelo Compose, mas o DAG é manual. Abra [http://localhost:8080](http://localhost:8080), habilite `aquaflow_hybrid_telemetry_pipeline` e dispare uma execução. As tarefas encadeadas geram a entrada híbrida, verificam sua qualidade e preparam features, rótulos e metadados em `data/ml/`.
-
-O DAG termina na preparação. O treinamento automatizado da aplicação é executado separadamente por `ml-trainer` e não espera uma execução do DAG. Ambos usam os mesmos scripts de geração e preparação; suas pastas de saída são distintas.
+Abra [http://localhost:8080](http://localhost:8080), habilite `aquaflow_hybrid_telemetry_pipeline` e dispare uma execução. A última tarefa treina com as features, rótulos e metadados gerados pelas tarefas anteriores. O candidato e o relatório ficam em `data/ml/airflow/<execução>/training/` e o MLflow registra o experimento. A aplicação segue usando o artefato inicial até uma ativação explícita.
 
 ## 7. Retreinar os modelos
 

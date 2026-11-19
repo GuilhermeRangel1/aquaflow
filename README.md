@@ -19,6 +19,8 @@ O protótipo pode ser demonstrado com o histórico carregado pelo Compose ou com
 
 [Google Sites do projeto](https://sites.google.com/cesar.school/projetos6-gp14/in%C3%ADcio)
 
+[Ideação e definição do problema](https://sites.google.com/cesar.school/projetos6-gp14/sr1/defini%C3%A7%C3%A3o-do-problema)
+
 | Guia | O que você encontra |
 | --- | --- |
 | [Como executar](docs/demonstracao.md) | Inicialização com Docker Compose, conta de demonstração e comandos do fluxo principal. |
@@ -147,7 +149,7 @@ O relatório mostra a diferença entre treino e validação e a variação da AP
 
 ### Airflow, treinamento e notebook
 
-- **Airflow:** iniciado pelo Compose. Acione o DAG manualmente para gerar, analisar e preparar a série híbrida. O serviço `ml-trainer` executa o treinamento.
+- **Airflow:** acione o DAG manualmente para gerar, analisar e preparar a série híbrida, treinar um modelo candidato com esses arquivos e registrar as execuções no MLflow. As saídas ficam em `data/ml/airflow/<execução>/`, separadas do modelo em uso.
 - **Treinamento do Compose:** executa automaticamente quando o artefato não existe ou pode ser forçado com o comando descrito em [Dados e modelos](ml/README.md).
 - **Notebook:** documenta a exploração e o preparo e gera gráficos de avaliação a partir do modelo treinado. Não substitui o pipeline nem envia seus gráficos ao dashboard.
 - **Inferência na aplicação:** o worker avalia leituras persistidas com dados suficientes e registra a versão do modelo. As regras permanecem ativas se o worker falhar.

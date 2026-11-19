@@ -24,7 +24,7 @@ flowchart LR
     Worker -->|inferências e alertas experimentais| DB
     DB --> API
     API --> Web
-    Airflow[Airflow manual] -.->|orquestra as mesmas etapas de preparação| Pipeline
+    Airflow[Airflow manual] -.->|orquestra preparo e treino de candidato| Pipeline
 ```
 
 O backend é um monólito modular: autenticação, propriedades, medidores, ingestão, consumo e alertas ficam na mesma API e no mesmo banco. MQTT, treinamento, inferência e interface são processos separados no Compose, mas não formam uma arquitetura de microsserviços de produção.
@@ -35,7 +35,7 @@ O backend é um monólito modular: autenticação, propriedades, medidores, inge
 - **PostgreSQL como fonte persistente:** leituras brutas, estados dos alertas e inferências ficam no banco relacional, permitindo rastrear de onde vieram agregações e resultados.
 - **Regras independentes do ML:** as regras determinísticas continuam ativas quando o artefato ou o worker de ML está indisponível. O classificador continua experimental e suas previsões não apagam nem substituem alertas de regras.
 - **Dados gerados para o primeiro ciclo:** geradores reproduzíveis permitem exercitar preparação, treinamento e interface sem aguardar hardware; em contrapartida, não sustentam alegações de desempenho no mundo real.
-- **Airflow manual e treinamento no Compose:** o DAG demonstra orquestração de geração, análise e preparação; o serviço de treinamento do Compose mantém o caminho de inicialização completa reproduzível sem depender de disparar o DAG pela interface.
+- **Airflow manual e treinamento no Compose:** o DAG encadeia geração, análise, preparação e treino de um candidato no MLflow. O serviço de treinamento do Compose fornece o artefato de inicialização do worker.
 
 Os valores usados por essas decisões e os resultados de referência do classificador estão em [Métricas e parâmetros](metricas-e-parametros.md) e [Resultado do experimento](../ml/docs/resultado-experimento.md).
 
@@ -87,7 +87,7 @@ No primeiro `docker compose up --build`, se não houver `best_model.joblib` e `m
 
 O modelo usa vazão, variação do volume acumulado, duração do intervalo e hora/dia da semana codificados ciclicamente no fuso da propriedade. Identificadores, serial, timestamp bruto, bateria, sinal, firmware e rótulos não entram como features. As transformações compartilhadas ficam em `ml/feature_transforms.py`.
 
-O notebook [`ml/notebooks/01_exploracao_e_avaliacao.ipynb`](../ml/notebooks/01_exploracao_e_avaliacao.ipynb) documenta a exploração e a preparação e cria gráficos de avaliação. Ele não substitui o treinamento automatizado. O DAG do Airflow também é acionado manualmente e cobre geração, análise e preparação; o treinamento automático do Compose executa os mesmos scripts diretamente, sem depender de uma execução do DAG.
+O notebook [`ml/notebooks/01_exploracao_e_avaliacao.ipynb`](../ml/notebooks/01_exploracao_e_avaliacao.ipynb) documenta a exploração e a preparação e cria gráficos de avaliação. O DAG manual do Airflow usa os mesmos scripts do treinamento automático e guarda o candidato e as tabelas em um diretório próprio da execução.
 
 ## Serviços locais
 

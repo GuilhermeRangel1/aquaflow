@@ -9,9 +9,9 @@ O Compose e o DAG do Airflow usam os mesmos scripts, mas são execuções indepe
 | Caminho | Como inicia | Pastas de saída |
 | --- | --- | --- |
 | Treinamento integrado | `docker compose up --build`, quando o artefato não existe; também pode ser forçado manualmente | Origem, relatório e preparados em `data/ml/compose/`; modelo e métricas em `data/ml/training-bench-v2/` |
-| DAG Airflow | Habilitar e acionar `aquaflow_hybrid_telemetry_pipeline` em `http://localhost:8080` | Origem em `data/ml/raw/`, análise em `data/ml/analysis/` e tabelas preparadas em `data/ml/prepared/` |
+| DAG Airflow | Habilitar e acionar `aquaflow_hybrid_telemetry_pipeline` em `http://localhost:8080` | Arquivos e modelo candidato em `data/ml/airflow/<execução>/`. Métricas e artefatos no experimento `aquaflow-hybrid-airflow` |
 
-O Compose não depende de o DAG ter sido acionado. O DAG termina na geração, análise e preparação; não treina o modelo. Esses arquivos e modelos locais ficam sob `data/`, ignorada pelo Git.
+O Compose inicia o worker com seu próprio artefato. O DAG treina com as tabelas da execução corrente e guarda o candidato no diretório individual da execução. Esses arquivos ficam sob `data/`, ignorada pelo Git.
 
 ## Etapas do pipeline
 
