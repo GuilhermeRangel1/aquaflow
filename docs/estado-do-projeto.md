@@ -17,18 +17,18 @@
 | Firmware e hardware | Ainda não implementados | Há guias e contratos, mas não há código FreeRTOS para compilar, placa/sensor selecionados ou calibração física. |
 | Uso real e produção | Ainda não validados | Faltam coleta de telemetria física, validação do modelo com dados reais, hardening operacional e infraestrutura de produção. |
 
-## Dados mockados: onde são usados
+## Série híbrida e telemetria física
 
-Há dois usos diferentes de dados simulados:
+A mesma série híbrida tem dois usos:
 
-1. **Demonstração da aplicação:** o seed do backend prepara uma conta, uma propriedade, três medidores ativos, histórico de consumo, exemplos de alertas e algumas leituras para demonstrar a inferência. O seed é idempotente e preserva o histórico; não é um fluxo de coleta de um sensor.
-2. **Experimentos de ML:** `ml/generate_mock_data.py` cria uma série temporal separada, com seed fixa, cenários e rótulos artificiais. Ela é usada na análise, na preparação, na comparação e na avaliação dos modelos.
+1. **Demonstração da aplicação:** no Compose, o seed carrega a série híbrida em uma propriedade com um medidor dedicado. Os horários são deslocados para o período da instalação. O seed é idempotente e preserva o histórico existente em outras propriedades.
+2. **Experimentos de ML:** `ml/build_real_dataset.py` cria a série temporal híbrida, com seed fixa, vazões calibradas em bancada e cenários e rótulos simulados. Ela é usada na análise, na preparação, na comparação e na avaliação dos modelos.
 
 Os arquivos gerados e os modelos ficam em `data/`, que não é versionada. Os valores exibidos no demo, os alertas de exemplo e o desempenho dos modelos não devem ser apresentados como medições ou confirmações de vazamento em campo.
 
 ## O que os resultados de ML permitem concluir
 
-Os experimentos mostram que a infraestrutura de preparação, validação temporal, busca de hiperparâmetros, comparação e inferência funciona sobre os cenários programados. Na execução de referência, o Random Forest atingiu AP 1,000 no teste temporal padrão, mas AP 0,438 no perfil `shifted` e 0,569 no perfil `stress`. Esse contraste evidencia sensibilidade a mudanças de rotina simuladas. Consulte [Resultado do experimento](../ml/docs/resultado-experimento.md) para métricas completas, hashes e ambiente reproduzível; os parâmetros usados estão em [Métricas e parâmetros](metricas-e-parametros.md).
+Os experimentos mostram que a infraestrutura de preparação, validação temporal, busca de hiperparâmetros, comparação e inferência funciona sobre os cenários programados. Na execução histórica com dados inteiramente simulados, o Random Forest atingiu AP 1,000 no teste temporal padrão, mas AP 0,438 no perfil `shifted` e 0,569 no perfil `stress`. Esse contraste evidencia sensibilidade a mudanças de rotina simuladas. Consulte [Resultado do experimento](../ml/docs/resultado-experimento.md) para métricas completas, hashes e ambiente reproduzível; os parâmetros usados estão em [Métricas e parâmetros](metricas-e-parametros.md).
 
 Eles **não** demonstram que o modelo detecta vazamentos reais, que generaliza para diferentes casas ou medidores, ou que deixou de sofrer overfitting. Os testes com perfis deslocado e de estresse são verificações artificiais de sensibilidade, não substitutos de uma coleta independente de telemetria real e de rótulos confiáveis.
 

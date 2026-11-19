@@ -33,13 +33,18 @@ services:
       DATABASE_URL: postgresql+asyncpg://aquaflow:${POSTGRES_PASSWORD:-aquaflow-local}@mqtt-test-db:5432/aquaflow_test
       JWT_SECRET: local-only-mqtt-test-secret-with-enough-length
       DEMO_MODE: "true"
-      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-demo@example.com}
-      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-AquaFlow-demo-123!}
+      DEMO_DATASET_PATH: /app/demo-data/readings.csv
+      DEMO_USER_EMAIL: ${TEST_DEMO_USER_EMAIL:-demo@example.com}
+      DEMO_USER_PASSWORD: ${TEST_DEMO_USER_PASSWORD:-AquaFlow-demo-123!}
     command: >-
       sh -c "alembic upgrade head && python -m app.demo_seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    volumes:
+      - aquaflow-demo-data:/app/demo-data:ro
     depends_on:
       mqtt-test-db:
         condition: service_healthy
+      demo-data:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=3)"]
       interval: 5s
@@ -90,8 +95,8 @@ services:
       MQTT_HOST: mqtt-test-broker
       MQTT_PUBLISH_USER: aquaflow-publisher
       MQTT_PUBLISH_PASSWORD: ${MQTT_PUBLISH_PASSWORD:-aquaflow-local-publisher}
-      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-demo@example.com}
-      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-AquaFlow-demo-123!}
+      DEMO_USER_EMAIL: ${TEST_DEMO_USER_EMAIL:-demo@example.com}
+      DEMO_USER_PASSWORD: ${TEST_DEMO_USER_PASSWORD:-AquaFlow-demo-123!}
     depends_on:
       mqtt-test-api:
         condition: service_healthy
@@ -109,8 +114,8 @@ services:
     command: python inference_worker.py
     environment:
       DATABASE_URL: postgresql+asyncpg://aquaflow:${POSTGRES_PASSWORD:-aquaflow-local}@mqtt-test-db:5432/aquaflow_test
-      ML_MODEL_PATH: /app/data/ml/training/best_model.joblib
-      ML_TRAINING_REPORT_PATH: /app/data/ml/training/metrics.json
+      ML_MODEL_PATH: /app/data/ml/training-bench-v2/best_model.joblib
+      ML_TRAINING_REPORT_PATH: /app/data/ml/training-bench-v2/metrics.json
       ML_POLL_SECONDS: "2"
     volumes:
       - ./data/ml:/app/data/ml:ro
@@ -131,8 +136,8 @@ services:
       MQTT_HOST: mqtt-test-broker
       MQTT_PUBLISH_USER: aquaflow-publisher
       MQTT_PUBLISH_PASSWORD: ${MQTT_PUBLISH_PASSWORD:-aquaflow-local-publisher}
-      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-demo@example.com}
-      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-AquaFlow-demo-123!}
+      DEMO_USER_EMAIL: ${TEST_DEMO_USER_EMAIL:-demo@example.com}
+      DEMO_USER_PASSWORD: ${TEST_DEMO_USER_PASSWORD:-AquaFlow-demo-123!}
     depends_on:
       mqtt-test-api:
         condition: service_healthy

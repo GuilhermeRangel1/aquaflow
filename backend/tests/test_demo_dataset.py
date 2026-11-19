@@ -1,21 +1,22 @@
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import Settings
 from app.core.security import hash_password
 from app.db.base import Base
-from app.db.models import Alert, Device, Property, TelemetryReading, User
-from app.demo_seed import DEMO_EMAIL, LEGACY_DEMO_EMAIL, seed_demo_data
+from app.db.models import Device, Property, TelemetryReading, User
+from app.demo_seed import ADMIN_EMAIL, LEGACY_DEMO_EMAIL, seed_demo_data
 from app.main import create_app
 
 
 @pytest.mark.asyncio
-async def test_demo_dataset_is_idempotent_and_visible_through_public_api() -> None:
+async def test_demo_dataset_is_idempotent_and_visible_through_public_api(tmp_path: Path) -> None:
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -36,136 +37,65 @@ async def test_demo_dataset_is_idempotent_and_visible_through_public_api() -> No
             )
         )
         await session.commit()
-    demo_email = f"custom-{DEMO_EMAIL}"
-    assert await seed_demo_data(sessions, password=password, email=demo_email) is True
-    assert await seed_demo_data(sessions, password=password, email=demo_email) is False
 
-    async with sessions() as session:
-        assert await session.scalar(select(func.count()).select_from(User)) == 1
-        assert await session.scalar(select(func.count()).select_from(Property)) == 1
-        assert await session.scalar(select(func.count()).select_from(Device)) == 3
-        assert await session.scalar(select(func.count()).select_from(TelemetryReading)) >= 900
-        assert await session.scalar(select(func.count()).select_from(Alert)) == 4
-        assert (
-            await session.scalar(
-                select(func.count())
-                .select_from(TelemetryReading)
-                .where(TelemetryReading.event_id.like("demo-ml-showcase-%"))
-            )
-            == 4
-        )
-
-    settings = Settings(
-        database_url="sqlite+aiosqlite:///:memory:",
-        jwt_secret="test-only-secret-with-enough-entropy-for-tests",
+    now = datetime.now(UTC)
+    dataset = tmp_path / "hybrid.csv"
+    dataset.write_text(
+        "recorded_at,reading_present,event_id,cumulative_volume_liters,"
+        "flow_rate_liters_minute,battery_percent,signal_dbm,firmware_version\n"
+        f"{(now - timedelta(minutes=5)).isoformat()},1,first,100,0,88,-55,hybrid\n"
+        f"{(now - timedelta(minutes=2)).isoformat()},1,next,101,0.2,88,-55,hybrid\n",
+        encoding="utf-8",
     )
-    app = create_app(settings=settings, session_factory=sessions)
+    async with sessions() as session:
+        user = (await session.scalars(select(User))).one()
+        legacy = Property(owner_id=user.id, name="Casa da demonstração", created_at=now)
+        session.add(legacy)
+        await session.flush()
+        for serial, event_id in (
+            ("AF-DEMO-001", "demo-history-20260901-test-1"),
+            ("ESP32-BANCADA", "physical-reading"),
+        ):
+            device = Device(
+                property_id=legacy.id,
+                serial_number=serial,
+                name=serial,
+                device_key_hash="0" * 64,
+            )
+            session.add(device)
+            await session.flush()
+            session.add(
+                TelemetryReading(
+                    device_id=device.id,
+                    event_id=event_id,
+                    recorded_at=now,
+                    received_at=now,
+                )
+            )
+        await session.commit()
+    assert await seed_demo_data(sessions, password=password, dataset_path=dataset)
+    assert not await seed_demo_data(sessions, password=password, dataset_path=dataset)
+    async with sessions() as session:
+        assert set(await session.scalars(select(TelemetryReading.event_id))) == {
+            "demo-hybrid-v1-first",
+            "demo-hybrid-v1-next",
+            "physical-reading",
+        }
+    app = create_app(settings=Settings(), session_factory=sessions)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         login = await client.post(
             "/api/v1/auth/login",
-            json={"email": demo_email, "password": password},
+            json={"email": ADMIN_EMAIL, "password": password},
         )
         assert login.status_code == 200
         headers = {"Authorization": f"Bearer {login.json()['tokens']['access_token']}"}
-        properties = await client.get("/api/v1/properties", headers=headers)
-        devices = await client.get("/api/v1/devices", headers=headers)
-        property_id = properties.json()["items"][0]["id"]
-        alerts = await client.get(
-            f"/api/v1/properties/{property_id}/alerts",
-            params={"limit": 2},
-            headers=headers,
-        )
-        alert_pages = list(alerts.json()["items"])
-        next_alert_cursor = alerts.json()["cursor"]
-        assert alerts.json()["has_more"] is True
-        assert next_alert_cursor
-        while next_alert_cursor:
-            next_page = await client.get(
-                f"/api/v1/properties/{property_id}/alerts",
-                params={"limit": 2, "cursor": next_alert_cursor},
-                headers=headers,
-            )
-            assert next_page.status_code == 200
-            alert_pages.extend(next_page.json()["items"])
-            next_alert_cursor = next_page.json()["cursor"]
-
-        anomalies = await client.get(
-            f"/api/v1/properties/{property_id}/anomalies",
-            params={"limit": 2},
-            headers=headers,
-        )
-        anomaly_pages = list(anomalies.json()["items"])
-        next_anomaly_cursor = anomalies.json()["cursor"]
-        assert anomalies.json()["has_more"] is True
-        while next_anomaly_cursor:
-            next_page = await client.get(
-                f"/api/v1/properties/{property_id}/anomalies",
-                params={"limit": 2, "cursor": next_anomaly_cursor},
-                headers=headers,
-            )
-            assert next_page.status_code == 200
-            anomaly_pages.extend(next_page.json()["items"])
-            next_anomaly_cursor = next_page.json()["cursor"]
-        end = datetime.now(UTC)
-        start = end - timedelta(days=7)
-        consumption = await client.get(
-            f"/api/v1/properties/{property_id}/consumption",
-            params={
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-                "granularity": "day",
-                "limit": 2,
-            },
-            headers=headers,
-        )
-        second_consumption_page = await client.get(
-            f"/api/v1/properties/{property_id}/consumption",
-            params={
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-                "granularity": "day",
-                "limit": 2,
-                "cursor": consumption.json()["cursor"],
-            },
-            headers=headers,
-        )
-        metrics = await client.get("/metrics")
-
-    assert properties.status_code == devices.status_code == alerts.status_code == 200
-    assert len(properties.json()["items"]) == 1
-    assert len(devices.json()["items"]) == 3
-    assert len(alert_pages) == 4
-    assert len({alert["id"] for alert in alert_pages}) == 4
-    assert len(anomaly_pages) >= 4
-    assert len({anomaly["id"] for anomaly in anomaly_pages}) == len(anomaly_pages)
-    assert {device["serial_number"] for device in devices.json()["items"]} == {
-        "AF-DEMO-001",
-        "AF-DEMO-002",
-        "AF-DEMO-ML-001",
-    }
-    assert {alert["status"] for alert in alert_pages} == {
-        "open",
-        "acknowledged",
-        "resolved",
-        "false_positive",
-    }
-    sample_alerts = [alert for alert in alert_pages if alert["evidence"].get("is_demo_sample")]
-    assert any(
-        alert["detector_type"] == "night_consumption"
-        and alert["evidence"].get("timezone") == "America/Sao_Paulo"
-        for alert in sample_alerts
-    )
-    assert not any(alert["detector_type"] == "device_offline" for alert in sample_alerts)
-    assert consumption.status_code == 200
-    assert consumption.json()["summary"]["total_volume_liters"] > 0
-    assert consumption.json()["has_more"] is True
-    assert consumption.json()["cursor"]
-    assert second_consumption_page.status_code == 200
-    assert (
-        second_consumption_page.json()["items"][0]["bucket_start"]
-        != consumption.json()["items"][0]["bucket_start"]
-    )
-    assert second_consumption_page.json()["summary"] == consumption.json()["summary"]
-    assert metrics.status_code == 200
-    assert "aquaflow_http_requests_total" in metrics.text
+        devices = (await client.get("/api/v1/devices", headers=headers)).json()["items"]
+        assert {d["serial_number"] for d in devices} == {"AF-DEMO-HIBRIDO-001", "ESP32-BANCADA"}
+        hybrid = next(d for d in devices if d["serial_number"] == "AF-DEMO-HIBRIDO-001")
+        result = await client.get(f"/api/v1/devices/{hybrid['id']}/readings", headers=headers)
+        assert result.status_code == 200
+        assert {r["event_id"] for r in result.json()["items"]} == {
+            "demo-hybrid-v1-first",
+            "demo-hybrid-v1-next",
+        }
     await engine.dispose()

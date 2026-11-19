@@ -216,7 +216,6 @@ export default function Dashboard() {
   const [retiringDeviceId, setRetiringDeviceId] = useState("");
   const [alertActionId, setAlertActionId] = useState("");
   const [alertNotice, setAlertNotice] = useState("");
-  const [simulating, setSimulating] = useState(false);
   const selected = properties.find((item) => item.id === selectedId);
   const selectedDevices = useMemo(
     () => devices.filter((item) => item.property_id === selectedId),
@@ -564,45 +563,6 @@ export default function Dashboard() {
       );
     } finally {
       setLoadingMoreAlerts(false);
-    }
-  }
-
-  async function simulateReadings() {
-    if (!provisioned) return;
-    setSimulating(true);
-    setError("");
-    setDeviceNotice(null);
-    try {
-      const now = Date.now();
-      const points = [
-        { minutesAgo: 10, liters: 1000 },
-        { minutesAgo: 5, liters: 1002 },
-        { minutesAgo: 0, liters: 1006 },
-      ];
-      for (const point of points) {
-        await api("ingestion/telemetry", {
-          method: "POST",
-          headers: { "X-Device-Key": provisioned.key },
-          body: JSON.stringify({
-            device_serial: provisioned.serial,
-            event_id: `demo-${now}-${point.minutesAgo}`,
-            recorded_at: new Date(now - point.minutesAgo * 60_000).toISOString(),
-            cumulative_volume_liters: point.liters,
-          }),
-        });
-      }
-      await load(selectedId);
-      setDeviceNotice({
-        kind: "success",
-        message: "Leituras de demonstração enviadas; o painel foi atualizado.",
-      });
-    } catch (caught) {
-      setDeviceNotice({
-        kind: "error",
-        message: caught instanceof Error ? caught.message : "Não foi possível enviar as leituras.",
-      });
-    } finally {
-      setSimulating(false);
     }
   }
 
@@ -1078,8 +1038,8 @@ export default function Dashboard() {
                                     <strong>{device.name}</strong>
                                     <small>
                                       {device.serial_number} ·{" "}
-                                      {device.serial_number.startsWith("AF-DEMO-")
-                                        ? "Demonstração"
+                                      {device.serial_number === "AF-DEMO-HIBRIDO-001"
+                                        ? "Histórico híbrido"
                                         : "Dispositivo cadastrado"}
                                     </small>
                                     {reading && (
@@ -1177,9 +1137,9 @@ export default function Dashboard() {
                       <div className="empty-meter">Nenhum medidor conectado ainda.</div>
                     )}
                     <form onSubmit={createDevice} className="device-form">
-                      <h3>Adicionar medidor de teste</h3>
+                      <h3>Adicionar medidor</h3>
                       <p className="form-help">
-                        Experimente o acompanhamento com leituras simuladas.
+                        Cadastre o número de série do dispositivo que vai enviar as leituras.
                       </p>
                       <label className="field">
                         <span className="sr-only">Nome do medidor</span>
@@ -1222,13 +1182,6 @@ export default function Dashboard() {
                     {copiedKey ? "Chave copiada" : "Copiar chave"}
                   </button>
                 </div>
-                <button
-                  disabled={simulating}
-                  onClick={() => void simulateReadings()}
-                  className="button button--primary"
-                >
-                  {simulating ? "Enviando leituras…" : "Simular leituras"}
-                </button>
               </section>
             )}
             {view === "alerts" && (
@@ -1258,7 +1211,6 @@ export default function Dashboard() {
                         {alerts.slice(0, alertVisibleLimit).map((alert) => {
                           const observedRate = alert.evidence.observed_flow_rate_liters_minute;
                           const observedDuration = alert.evidence.observed_duration_minutes;
-                          const isDemoSample = alert.evidence.is_demo_sample === true;
                           const detectorLabel =
                             alert.detector_type === "continuous_flow"
                               ? "Fluxo contínuo"
@@ -1268,9 +1220,7 @@ export default function Dashboard() {
                                   ? "Medidor sem comunicação"
                                   : alert.detector_type === "ml_anomaly"
                                     ? "Possível mudança de consumo"
-                                    : alert.detector_type === "demo_sample"
-                                      ? "Alerta demonstrativo"
-                                      : alert.detector_type;
+                                    : alert.detector_type;
                           return (
                             <li className="alert-row" key={alert.id}>
                               <div className="alert-main">
@@ -1294,7 +1244,6 @@ export default function Dashboard() {
                                           ? "Resolvido"
                                           : "Falso positivo"}
                                   </span>
-                                  {isDemoSample && <span className="demo-badge">Simulado</span>}
                                   {alert.detector_type === "ml_anomaly" && (
                                     <span className="demo-badge">Experimental</span>
                                   )}
@@ -2070,11 +2019,13 @@ function AlertEvidence({ alert }: { alert: Alert }) {
       if (typeof derivation === "string") {
         rows.push([
           "Origem da vazão",
-          derivation === "flow_rate_from_cumulative_volume"
-            ? "Calculada pela variação do volume acumulado"
-            : derivation === "cumulative_volume"
-              ? "Informada pelo medidor"
-              : "Estimativa a partir da vazão informada",
+          derivation === "cumulative_volume_5min_window"
+            ? "Vazão média na janela de cinco minutos"
+            : derivation === "flow_rate_from_cumulative_volume"
+              ? "Calculada pela variação do volume acumulado"
+              : derivation === "cumulative_volume"
+                ? "Informada pelo medidor"
+                : "Estimativa a partir da vazão informada",
         ]);
       }
     }
