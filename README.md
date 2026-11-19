@@ -4,7 +4,20 @@
 
 O protótipo pode ser demonstrado sem medidores físicos. A conta de demonstração e o treinamento usam dados mockados gerados separadamente pelo projeto. Os rótulos do modelo representam cenários artificiais — não vazamentos observados. Ainda não há firmware ESP32/FreeRTOS implementado nem validação em uma instalação real.
 
+## Integrantes
+
+| Nome | GitHub |
+| --- | --- |
+| Caio Almeida Amaral | [@Caio-Almeida-A](https://github.com/Caio-Almeida-A) |
+| Celio Pereira Dias Junior | [@CelioJr12](https://github.com/CelioJr12) |
+| Ester de Araujo Carvalho Menezes | [@ester-acm](https://github.com/ester-acm) |
+| Guilherme Vinícius Rangel Silva | [@GuilhermeRangel1](https://github.com/GuilhermeRangel1) |
+| João Pedro Moraes Barbosa | [@Joao-Vitor-Moraes](https://github.com/Joao-Vitor-Moraes) |
+| Luana Lima Maynard de Arruda Falcão | [@lua-mf](https://github.com/lua-mf) |
+
 ## Navegação rápida
+
+[Google Sites do projeto](https://sites.google.com/cesar.school/projetos6-gp14/in%C3%ADcio)
 
 | Guia | O que você encontra |
 | --- | --- |
