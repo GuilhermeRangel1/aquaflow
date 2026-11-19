@@ -14,13 +14,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import joblib
 import mlflow
 import numpy as np
-from generate_mock_data import generate as generate_mock_data
+from build_real_dataset import DEFAULT_CALIBRATION, build as build_hybrid_dataset
 from mlflow import MlflowClient
 from prepare_dataset import prepare as prepare_dataset
 from sklearn.base import ClassifierMixin, clone
 from sklearn.dummy import DummyClassifier
-from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -31,8 +30,10 @@ from sklearn.metrics import (
     recall_score,
 )
 from sklearn.model_selection import ParameterSampler, TimeSeriesSplit
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.tree import DecisionTreeClassifier
 
 FEATURE_NAMES = (
     "flow_rate_liters_minute",
@@ -131,7 +132,7 @@ def _split_indices(timestamps: list[datetime], timezone: str) -> dict[str, np.nd
 
 
 def _generate_evaluation_profiles(
-    timezone: str, seed: int, output_root: Path
+    timezone: str, seed: int, output_root: Path, calibration: Path
 ) -> tuple[tuple[Path, Path, Path], tuple[Path, Path, Path]]:
     profile_inputs: dict[str, tuple[Path, Path, Path]] = {}
     for profile, profile_seed, start in (
@@ -141,15 +142,15 @@ def _generate_evaluation_profiles(
         profile_dir = output_root / "generalization" / profile
         raw_path = profile_dir / "raw_readings.csv"
         prepared_dir = profile_dir / "prepared"
-        generate_mock_data(
-            raw_path,
-            seed=profile_seed,
-            start=datetime.fromisoformat(start),
-            days=16,
-            interval_minutes=5,
-            timezone=timezone,
-            profile=profile,
-        )
+        parameters = {
+            "seed": profile_seed,
+            "start": datetime.fromisoformat(start),
+            "days": 16,
+            "interval_minutes": 5,
+            "timezone": timezone,
+            "profile": profile,
+        }
+        build_hybrid_dataset(None, raw_path, calibration=calibration, **parameters)
         prepare_dataset(raw_path, prepared_dir, timezone)
         profile_inputs[profile] = (
             prepared_dir / "features.csv",
@@ -161,14 +162,14 @@ def _generate_evaluation_profiles(
 
 def _models(seed: int) -> dict[str, tuple[ClassifierMixin, dict[str, list[Any]]]]:
     return {
-        "logistic_regression": (
+        "knn": (
             Pipeline(
                 [
                     ("scale", StandardScaler()),
-                    ("model", LogisticRegression(max_iter=1000, class_weight="balanced")),
+                    ("model", KNeighborsClassifier()),
                 ]
             ),
-            {"model__C": [0.01, 0.1, 1.0], "model__class_weight": ["balanced", None]},
+            {"model__n_neighbors": [5, 11, 21], "model__weights": ["uniform", "distance"]},
         ),
         "random_forest": (
             RandomForestClassifier(class_weight="balanced", random_state=seed, n_jobs=1),
@@ -179,14 +180,11 @@ def _models(seed: int) -> dict[str, tuple[ClassifierMixin, dict[str, list[Any]]]
                 "max_features": ["sqrt", 0.7],
             },
         ),
-        "hist_gradient_boosting": (
-            HistGradientBoostingClassifier(random_state=seed),
+        "decision_tree": (
+            DecisionTreeClassifier(class_weight="balanced", random_state=seed),
             {
-                "learning_rate": [0.03, 0.05],
-                "max_iter": [30, 60],
-                "max_leaf_nodes": [3, 5],
-                "min_samples_leaf": [20, 40],
-                "l2_regularization": [1.0, 10.0],
+                "max_depth": [2, 4, 6],
+                "min_samples_leaf": [10, 20, 50],
             },
         ),
     }
@@ -600,6 +598,15 @@ def _training_report_markdown(report: dict[str, Any]) -> str:
         "## Como foi avaliado",
         "",
         (
+            "A busca usa três divisões do TimeSeriesSplit dentro do bloco de treino. "
+            "Cada divisão ajusta o modelo com leituras mais antigas e valida em leituras posteriores. "
+            "K-fold convencional, k-fold estratificado e Leave-One-Out podem colocar leituras futuras "
+            "ou vizinhas no treino ao avaliar uma leitura anterior. Isso causa vazamento temporal e "
+            "pode superestimar o desempenho numa série em que leituras próximas são correlacionadas. "
+            "A escala do KNN é ajustada apenas com o treino de cada divisão."
+        ),
+        "",
+        (
             "A seleção usa average precision média entre a validação temporal e a validação com perfil deslocado. "
             "O perfil de estresse só é avaliado depois da seleção e não participa do ajuste dos hiperparâmetros."
         ),
@@ -674,7 +681,7 @@ def main() -> None:
     parser.add_argument("--features", type=Path, default=Path("data/ml/prepared/features.csv"))
     parser.add_argument("--labels", type=Path, default=Path("data/ml/prepared/labels.csv"))
     parser.add_argument("--metadata", type=Path, default=Path("data/ml/prepared/metadata.csv"))
-    parser.add_argument("--output-dir", type=Path, default=Path("data/ml/training"))
+    parser.add_argument("--output-dir", type=Path, default=Path("data/ml/training-bench-v2"))
     parser.add_argument(
         "--tracking-uri",
         default=os.environ.get(
@@ -686,6 +693,7 @@ def main() -> None:
     parser.add_argument("--timezone", default=DEFAULT_TIMEZONE)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--search-iterations", type=int, default=4)
+    parser.add_argument("--bench-calibration", type=Path, default=DEFAULT_CALIBRATION)
     parser.add_argument("--generalization-validation-features", type=Path)
     parser.add_argument("--generalization-validation-labels", type=Path)
     parser.add_argument("--generalization-validation-metadata", type=Path)
@@ -715,7 +723,7 @@ def main() -> None:
     stress_input = tuple(stress_paths) if all(path is not None for path in stress_paths) else None
     if shifted_input is None and stress_input is None:
         shifted_input, stress_input = _generate_evaluation_profiles(
-            args.timezone, args.seed, args.output_dir.parent
+            args.timezone, args.seed, args.output_dir.parent, args.bench_calibration
         )
     train(
         args.features,

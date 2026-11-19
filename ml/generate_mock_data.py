@@ -21,6 +21,7 @@ FIELDS = (
     "scenario_label",
     "anomaly_label",
 )
+ANOMALY_INCREMENT = {"standard": 0.2, "shifted": 0.1, "stress": 0.16}
 
 
 def _start(value: str) -> datetime:
@@ -114,12 +115,7 @@ def generate(
                 present = False
             flow = _flow(hour, rng, profile)
             if scenario in {"continuous_flow", "night_consumption"}:
-                anomaly_increment = {
-                    "standard": 0.2,
-                    "shifted": 0.1,
-                    "stress": 0.16,
-                }[profile]
-                flow = round(flow + anomaly_increment, 3)
+                flow = round(flow + ANOMALY_INCREMENT[profile], 3)
             cumulative = round(cumulative + flow * interval_minutes, 3)
             timestamp = recorded_at.isoformat().replace("+00:00", "Z")
             writer.writerow(

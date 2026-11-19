@@ -1,4 +1,4 @@
-"""Reproducible mock telemetry pipeline for the AquaFlow academic demo."""
+"""Reproducible hybrid telemetry pipeline for the AquaFlow academic demo."""
 
 import subprocess
 import sys
@@ -9,26 +9,27 @@ from airflow.sdk import dag, task
 
 ML_ROOT = Path("/opt/airflow/ml")
 DATA_ROOT = Path("/opt/airflow/data/ml")
-RAW_DATA = DATA_ROOT / "raw" / "mock_readings.csv"
+RAW_DATA = DATA_ROOT / "raw" / "household_readings.csv"
 ANALYSIS_DATA = DATA_ROOT / "analysis"
 PREPARED_DATA = DATA_ROOT / "prepared"
 
 
 @dag(
-    dag_id="aquaflow_mock_telemetry_pipeline",
-    description="Gera, analisa e prepara telemetria sintética do AquaFlow.",
+    dag_id="aquaflow_hybrid_telemetry_pipeline",
+    description="Gera, analisa e prepara telemetria híbrida do AquaFlow.",
     start_date=datetime(2026, 1, 1, tzinfo=UTC),
     schedule=None,
     catchup=False,
-    tags=["aquaflow", "dados-mockados", "ml"],
+    tags=["aquaflow", "dados-hibridos", "ml"],
 )
-def mock_telemetry_pipeline():
+def hybrid_telemetry_pipeline():
     @task
     def generate_data() -> str:
         subprocess.run(
             [
                 sys.executable,
-                str(ML_ROOT / "generate_mock_data.py"),
+                str(ML_ROOT / "build_real_dataset.py"),
+                "--calibration",
                 "--output",
                 str(RAW_DATA),
                 "--seed",
@@ -87,4 +88,4 @@ def mock_telemetry_pipeline():
     prepare_data(raw_file, report_file)
 
 
-mock_telemetry_pipeline()
+hybrid_telemetry_pipeline()

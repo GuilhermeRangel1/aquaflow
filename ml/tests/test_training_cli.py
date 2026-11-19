@@ -126,8 +126,8 @@ def test_cli_compares_models_on_chronological_holdout(
     assert report["target"] == "anomaly_label"
     assert report["timezone"] == "America/Sao_Paulo"
     assert report["split_counts"] == {"train": 2255, "validation": 1128, "test": 1128}
-    assert len(report["candidates"]) == 4  # baseline plus three model families
-    assert report["selected_model"] in {"logistic_regression", "random_forest", "hist_gradient_boosting"}
+    assert set(report["candidates"]) == {"dummy_prior", "knn", "decision_tree", "random_forest"}
+    assert report["selected_model"] in {"knn", "decision_tree", "random_forest"}
     for candidate in report["candidates"].values():
         metrics = candidate["validation"]
         assert 0.0 <= metrics["average_precision"] <= 1.0

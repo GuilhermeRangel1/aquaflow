@@ -1,39 +1,45 @@
-# Dados mockados para desenvolvimento de ML
+# Série híbrida e cenários simulados
 
-O gerador em `ml/generate_mock_data.py` produz dados sintéticos reproduzíveis. Ele serve para desenvolver e verificar o pipeline, não para estimar desempenho em vazamentos reais.
+O fluxo atual de demonstração e treinamento usa uma série híbrida: as vazões ativas são calibradas pelas medianas positivas das quatro coletas de bancada e a rotina doméstica, o calendário, as lacunas e os rótulos são simulados. Portanto, não é telemetria contínua de uma residência nem uma validação de detecção em campo.
 
-Esta série é diferente dos dados de demonstração criados pela API na conta demo. O treinamento atual e o notebook usam a série deste gerador; não leem o dataset externo Unitywater nem extraem telemetria do PostgreSQL. Veja [Estado atual do projeto](../../docs/estado-do-projeto.md) e [dados externos considerados](avaliacao-dataset.md).
+A calibração versionada está em [`ml/collection/bench-calibration-v1.json`](../collection/bench-calibration-v1.json). Os CSVs originais da bancada ficam em `data/dados_reais/` e não são versionados. A série pode ser gerada sem esses CSVs porque o arquivo de calibração guarda as medianas usadas. O manifesto registra as fontes, exclusões e hipóteses da simulação.
 
 ## Gerar
 
 Na raiz do projeto:
 
 ```powershell
-docker compose run --build --rm ml-data-generator python generate_mock_data.py --seed 42 --start 2026-09-01T00:00:00-03:00 --timezone America/Sao_Paulo --days 16 --interval-minutes 5
+python ml/build_real_dataset.py --calibration --output data/ml/bench-household/raw/readings.csv
 ```
 
-Também é possível executar `python ml/generate_mock_data.py` na raiz do projeto, sem instalar dependências. O caminho padrão é `data/mock-ml/readings.csv`, ignorado pelo Git. A mesma combinação de seed, início, duração e intervalo produz os mesmos bytes.
+Por padrão, são gerados 16 dias, com intervalos de cinco minutos, seed 42 e fuso `America/Sao_Paulo`. O Compose, o Airflow e o notebook chamam o mesmo builder e a mesma calibração versionada. O Compose também carrega uma série gerada no PostgreSQL da conta local de Administração.
 
-## Schema
+O simulador conserva os cenários de consumo normal, fluxo contínuo, consumo noturno e lacunas. Os rótulos vêm desses cenários programados; a condição da bancada não determina o rótulo. Nos fins de semana, o consumo de fundo entre 8h e 18h recebe um multiplicador de 1,2, uma hipótese adotada para a simulação. O contador acumulado avança durante lacunas, mas essas linhas não são leituras transmitidas.
 
-| Coluna | Unidade ou formato | Significado |
+## Calibração e limitações
+
+As medianas positivas versionadas são 4,13; 4,80; 5,33 e 1,00 L/min, uma por corrida da bancada. O cálculo excluiu as oito amostras consideradas suspeitas: índices 602, 603 e 604 da corrida “direita fechada”, e 91, 92, 93, 251 e 260 da corrida “esquerda fechada”. Os arquivos originais são preservados localmente. Como os horários dos sopros restantes não são conhecidos, a mediana reduz a influência de valores extremos, mas não identifica nem remove todos os possíveis sopros.
+
+As durações, frequência e horários dos usos, os padrões de consumo e as anomalias são simulados. O aumento de fim de semana também é uma hipótese, não uma conclusão derivada das coletas. As métricas medem o reconhecimento dos rótulos simulados e não estimam o desempenho em casas reais ou confirmam vazamentos.
+
+## Formato e preparação
+
+O CSV bruto contém campos de telemetria e colunas auxiliares do simulador:
+
+| Campo | Unidade ou formato | Significado |
 | --- | --- | --- |
-| `device_serial` | texto | Série fictícia `AF-ML-MOCK-001` |
-| `event_id` | UUID | Identificador estável por seed, série e instante; vazio em lacunas |
+| `device_serial` | texto | Identificador gerado para a série |
+| `event_id` | texto | Identificador estável da amostra; vazio em lacunas |
 | `recorded_at` | ISO 8601 UTC | Instante esperado da amostra |
-| `cumulative_volume_liters` | L | Contador acumulado, vazio em lacunas |
-| `flow_rate_liters_minute` | L/min | Vazão instantânea, vazia em lacunas |
-| `battery_percent` | % | Bateria simulada, vazia em lacunas |
-| `signal_dbm` | dBm | Sinal simulado, vazio em lacunas |
-| `firmware_version` | texto | Versão fictícia, vazia em lacunas |
-| `reading_present` | 0 ou 1 | Indica se existe leitura naquele horário |
-| `scenario_label` | texto | `normal`, `continuous_flow`, `night_consumption` ou `missing_reading` |
-| `anomaly_label` | 0 ou 1 | Rótulo do cenário gerado, não confirmação de vazamento |
+| `cumulative_volume_liters` | L | Contador acumulado; vazio em lacunas |
+| `flow_rate_liters_minute` | L/min | Vazão média simulada no intervalo; vazia em lacunas |
+| `battery_percent` | % | Valor auxiliar simulado |
+| `signal_dbm` | dBm | Valor auxiliar simulado |
+| `firmware_version` | texto | Identifica a série gerada |
+| `reading_present` | 0 ou 1 | Indica se houve leitura naquele instante |
+| `scenario_label` | texto | Cenário simulado da amostra |
+| `anomaly_label` | 0 ou 1 | Rótulo binário derivado do cenário, não diagnóstico de campo |
 
-Por padrão, a cobertura contém 16 dias locais a partir de 1º de setembro de 2026, com 4.608 horários esperados a cada cinco minutos. `recorded_at` permanece em UTC; a classificação de cenários e as horas do dia usam `America/Sao_Paulo`, fuso local padrão da propriedade. Dias alternam cenários; o consumo normal tem picos matinais, ao meio-dia e à noite, com variação pseudoaleatória determinada pela seed. Cenários de fluxo contínuo acrescentam 0,2 L/min entre 9h e 15h locais; os noturnos acrescentam 0,2 L/min entre 22h e 6h locais; os de lacuna omitem a leitura entre 12h e 14h locais. O contador continua avançando durante lacunas para representar o volume que o dispositivo mediria sem transmitir.
+`prepare_dataset.py` remove horários sem leitura e deriva as features a partir das medições: vazão, variação do volume acumulado, duração real do intervalo, hora local codificada em seno e cosseno e dia da semana. Rótulos e identificadores não entram nas features.
 
-Linhas com `reading_present=0` descrevem horários esperados e não são payloads válidos de ingestão. Ao enviar os dados pela API/MQTT, filtre essas linhas e remova as colunas de cenário e rótulo. Na modelagem, mantenha os rótulos separados das features para evitar vazamento da resposta. A distribuição, os limiares e a ausência de falhas físicas reais são limitações deliberadas; avalie novamente os modelos quando houver telemetria do ESP32.
-
-## Perfis para avaliar mudança de rotina
-
-O gerador também aceita `--profile shifted` e `--profile stress`. Eles alteram horários de consumo normal, ruído e intensidade/duração dos cenários anômalos. O treinamento usa o perfil `shifted` durante a escolha do modelo e incorpora essas observações no ajuste final. O perfil `stress` fica reservado para a avaliação final da execução. Seeds diferentes tornam os ruídos reproduzíveis sem repetir os mesmos valores. Esses perfis verificam sensibilidade às mudanças especificadas no próprio simulador; não substituem telemetria real nem uma validação independente de domínio.
+O gerador legado [`generate_mock_data.py`](../generate_mock_data.py) ainda fornece o esqueleto temporal e os cenários ao builder; ele não é a fonte de vazões do fluxo padrão atual. Perfis `shifted` e `stress` continuam artificiais e usam a mesma calibração para avaliar mudanças simuladas de rotina, não conjuntos residenciais independentes.

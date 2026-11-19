@@ -1,6 +1,6 @@
 # Pipeline de preparação, treinamento e inferência
 
-O pipeline de ML do AquaFlow é um experimento reproduzível sobre dados sintéticos. Ele existe para demonstrar geração, validação, preparação, comparação temporal, registro e inferência antes de haver telemetria de hardware. Os rótulos foram criados pelo simulador; não são observações de vazamentos reais.
+O pipeline de ML do AquaFlow é um experimento reproduzível sobre uma série doméstica simulada com vazões calibradas em bancada. Ele existe para demonstrar geração, validação, preparação, comparação temporal, registro e inferência antes de haver telemetria de hardware. Os rótulos foram criados pelo simulador; não são observações de vazamentos reais.
 
 ## Dois caminhos de preparação
 
@@ -8,22 +8,24 @@ O Compose e o DAG do Airflow usam os mesmos scripts, mas são execuções indepe
 
 | Caminho | Como inicia | Pastas de saída |
 | --- | --- | --- |
-| Treinamento integrado | `docker compose up --build`, quando o artefato não existe; também pode ser forçado manualmente | Origem, relatório e preparados em `data/ml/compose/`; modelo e métricas em `data/ml/training/` |
-| DAG Airflow | Habilitar e acionar `aquaflow_mock_telemetry_pipeline` em `http://localhost:8080` | Origem em `data/ml/raw/`, análise em `data/ml/analysis/` e tabelas preparadas em `data/ml/prepared/` |
+| Treinamento integrado | `docker compose up --build`, quando o artefato não existe; também pode ser forçado manualmente | Origem, relatório e preparados em `data/ml/compose/`; modelo e métricas em `data/ml/training-bench-v2/` |
+| DAG Airflow | Habilitar e acionar `aquaflow_hybrid_telemetry_pipeline` em `http://localhost:8080` | Origem em `data/ml/raw/`, análise em `data/ml/analysis/` e tabelas preparadas em `data/ml/prepared/` |
 
 O Compose não depende de o DAG ter sido acionado. O DAG termina na geração, análise e preparação; não treina o modelo. Esses arquivos e modelos locais ficam sob `data/`, ignorada pelo Git.
 
 ## Etapas do pipeline
 
-1. **Geração:** `ml/generate_mock_data.py` cria 16 dias de horários simulados com seed fixa, cadência esperada de cinco minutos e fuso `America/Sao_Paulo`.
+1. **Geração:** `ml/build_real_dataset.py --calibration` cria 16 dias de horários simulados com seed fixa, cadência esperada de cinco minutos e fuso `America/Sao_Paulo`.
 2. **Análise e validação:** `ml/prepare_dataset.py analyze` verifica schema, ordem e duplicidade temporal, IDs, plausibilidade de valores e coerência dos rótulos. O relatório inclui cobertura, lacunas, cenários e estatísticas.
 3. **Preparação:** `ml/prepare_dataset.py prepare` exclui intervalos sem leitura e a primeira observação sem predecessor. Deriva a variação de volume e a duração real do intervalo e cria hora/dia da semana cíclicos no fuso local.
 4. **Treino e seleção:** `ml/train_model.py` usa uma divisão cronológica local de oito dias de treino, quatro de validação e quatro de teste. A busca de hiperparâmetros usa validação cruzada temporal somente dentro do bloco de treino.
-5. **Avaliação:** compara baseline de prevalência, regressão logística, Random Forest e HistGradientBoosting. A seleção usa average precision na validação temporal e num perfil simulado com rotina alterada. O perfil de estresse fica reservado para avaliar o modelo escolhido depois da seleção.
+5. **Avaliação:** compara baseline de prevalência, KNN, Árvore de Decisão e Random Forest. A seleção usa average precision na validação temporal e num perfil simulado com rotina alterada. O perfil de estresse fica reservado para avaliar o modelo escolhido depois da seleção.
 6. **Registro:** métricas, parâmetros e artefatos são registrados no MLflow e em arquivos locais para o notebook e o worker.
 7. **Inferência:** o worker do Compose processa leituras persistidas que tenham dados suficientes para calcular as features. Registra probabilidade, hash do modelo e sinais considerados; uma previsão positiva pode criar um alerta experimental.
 
 ## Tabelas preparadas
+
+A busca usa `TimeSeriesSplit` com três divisões dentro do bloco de treino. Cada validação vem depois dos dados de ajuste. K-fold convencional, k-fold estratificado e Leave-One-Out podem misturar leituras anteriores e futuras no treino e na validação. Como leituras próximas compartilham o mesmo contexto de consumo, essa mistura pode inflar as métricas por vazamento temporal.
 
 | Arquivo | Conteúdo | Uso |
 | --- | --- | --- |
@@ -33,11 +35,11 @@ O Compose não depende de o DAG ter sido acionado. O DAG termina na geração, a
 | `preparation_manifest.json` | Fuso e políticas de transformação | Conferência do preparo |
 | `eda_report.json` | Qualidade e estatísticas da origem | Inspeção do dataset |
 
-O preparo não preenche lacunas com zero ou interpolação. Uma lacuna continua visível no intervalo entre observações válidas. Vazão, delta e intervalo mantêm unidades; o scaler da regressão logística é ajustado dentro do pipeline de treino. A função `ml/feature_transforms.py` mantém as transformações cíclicas compartilhadas com a inferência.
+O preparo não preenche lacunas com zero ou interpolação. Uma lacuna continua visível no intervalo entre observações válidas. Vazão, delta e intervalo mantêm unidades; o scaler do KNN é ajustado dentro do pipeline de treino. A função `ml/feature_transforms.py` mantém as transformações cíclicas compartilhadas com a inferência.
 
 ## Artefatos de treinamento e MLflow
 
-O trainer salva em `data/ml/training/`:
+O trainer salva em `data/ml/training-bench-v2/`:
 
 - `best_model.joblib`: pipeline classificador selecionado, ajustado sem usar o bloco de teste;
 - `metrics.json`: comparação, métricas de validação e teste, limitações e diagnóstico heurístico de overfitting;

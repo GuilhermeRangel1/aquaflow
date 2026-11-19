@@ -51,6 +51,8 @@ O resultado muito alto no teste temporal não deve ser lido isoladamente. No per
 
 ## Como reproduzir
 
+Use a revisão indicada na tabela de identificação. Este relatório preserva a execução histórica com os candidatos daquela revisão.
+
 Instale as dependências indicadas em [`ml/requirements-training.txt`](../requirements-training.txt). Na raiz do repositório, gere, analise, prepare e treine a série:
 
 ```powershell

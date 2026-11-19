@@ -168,9 +168,9 @@ def main() -> None:
         type=Path,
         default=Path("data/ml/inference/prepared/preparation_manifest.json"),
     )
-    parser.add_argument("--model", type=Path, default=Path("data/ml/training/best_model.joblib"))
+    parser.add_argument("--model", type=Path, default=Path("data/ml/training-bench-v2/best_model.joblib"))
     parser.add_argument(
-        "--training-report", type=Path, default=Path("data/ml/training/metrics.json")
+        "--training-report", type=Path, default=Path("data/ml/training-bench-v2/metrics.json")
     )
     parser.add_argument("--output-dir", type=Path, default=Path("data/ml/predictions"))
     args = parser.parse_args()
