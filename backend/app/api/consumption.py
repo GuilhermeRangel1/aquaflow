@@ -96,7 +96,9 @@ async def get_consumption(
         )
 
     property_row = await session.scalar(
-        select(Property).where(Property.id == property_id, Property.owner_id == user.id)
+        select(Property).where(
+            Property.id == property_id, Property.owner_id == user.id, Property.archived_at.is_(None)
+        )
     )
     if property_row is None:
         raise HTTPException(

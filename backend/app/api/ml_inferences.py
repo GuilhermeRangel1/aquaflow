@@ -23,7 +23,9 @@ async def list_property_ml_inferences(
     session: AsyncSession = Depends(get_session),
 ) -> MLInferenceList:
     property_exists = await session.scalar(
-        select(Property.id).where(Property.id == property_id, Property.owner_id == user.id)
+        select(Property.id).where(
+            Property.id == property_id, Property.owner_id == user.id, Property.archived_at.is_(None)
+        )
     )
     if property_exists is None:
         raise HTTPException(

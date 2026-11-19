@@ -32,7 +32,7 @@ async def transition_alert(
         select(Alert, AnomalyEvent)
         .join(AnomalyEvent, AnomalyEvent.id == Alert.anomaly_id)
         .join(Property, Property.id == AnomalyEvent.property_id)
-        .where(Alert.id == alert_id, Property.owner_id == owner_id)
+        .where(Alert.id == alert_id, Property.owner_id == owner_id, Property.archived_at.is_(None))
     )
     row = result.first()
     if row is None:

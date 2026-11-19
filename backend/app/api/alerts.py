@@ -25,7 +25,9 @@ async def list_property_anomalies(
     session: AsyncSession = Depends(get_session),
 ) -> AnomalyList:
     property_exists = await session.scalar(
-        select(Property.id).where(Property.id == property_id, Property.owner_id == user.id)
+        select(Property.id).where(
+            Property.id == property_id, Property.owner_id == user.id, Property.archived_at.is_(None)
+        )
     )
     if property_exists is None:
         raise _not_found("property_not_found", "Property was not found")
@@ -69,7 +71,11 @@ async def get_anomaly(
     anomaly = await session.scalar(
         select(AnomalyEvent)
         .join(Property, Property.id == AnomalyEvent.property_id)
-        .where(AnomalyEvent.id == anomaly_id, Property.owner_id == user.id)
+        .where(
+            AnomalyEvent.id == anomaly_id,
+            Property.owner_id == user.id,
+            Property.archived_at.is_(None),
+        )
     )
     if anomaly is None:
         raise _not_found("anomaly_not_found", "Anomaly was not found")
@@ -86,7 +92,9 @@ async def list_property_alerts(
     session: AsyncSession = Depends(get_session),
 ) -> AlertList:
     property_exists = await session.scalar(
-        select(Property.id).where(Property.id == property_id, Property.owner_id == user.id)
+        select(Property.id).where(
+            Property.id == property_id, Property.owner_id == user.id, Property.archived_at.is_(None)
+        )
     )
     if property_exists is None:
         raise _not_found("property_not_found", "Property was not found")

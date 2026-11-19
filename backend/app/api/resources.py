@@ -36,7 +36,9 @@ async def list_properties(
     user: User = Depends(current_user), session: AsyncSession = Depends(get_session)
 ) -> PropertyList:
     result = await session.scalars(
-        select(Property).where(Property.owner_id == user.id).order_by(Property.created_at)
+        select(Property)
+        .where(Property.owner_id == user.id, Property.archived_at.is_(None))
+        .order_by(Property.created_at)
     )
     return PropertyList(items=[PropertyOutput.model_validate(item) for item in result])
 
@@ -48,7 +50,9 @@ async def get_property(
     session: AsyncSession = Depends(get_session),
 ) -> PropertyOutput:
     property_row = await session.scalar(
-        select(Property).where(Property.id == property_id, Property.owner_id == user.id)
+        select(Property).where(
+            Property.id == property_id, Property.owner_id == user.id, Property.archived_at.is_(None)
+        )
     )
     if property_row is None:
         raise HTTPException(
@@ -82,6 +86,56 @@ async def create_property(
     return PropertyOutput.model_validate(property_row)
 
 
+@router.delete(
+    "/api/v1/properties/{property_id}",
+    status_code=204,
+    response_class=Response,
+    summary="Arquivar propriedade",
+    description="Oculta a propriedade da listagem e preserva seu histórico.",
+)
+async def archive_property(
+    property_id: UUID,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    property_row = await session.scalar(
+        select(Property)
+        .where(Property.id == property_id, Property.owner_id == user.id)
+        .with_for_update()
+    )
+    if property_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "property_not_found", "message": "Property was not found"},
+        )
+    protected_device = await session.scalar(
+        select(Device.id).where(
+            Device.property_id == property_id,
+            Device.serial_number == "AF-DEMO-HIBRIDO-001",
+        )
+    )
+    if protected_device is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "property_archive_protected",
+                "message": "A Casa da Administração está protegida contra arquivamento.",
+            },
+        )
+    if property_row.archived_at is None:
+        property_row.archived_at = datetime.now(UTC)
+        add_audit_entry(
+            session,
+            actor_id=user.id,
+            action="property.archived",
+            resource_type="property",
+            resource_id=property_id,
+            metadata={},
+        )
+        await session.commit()
+    return Response(status_code=204)
+
+
 @router.patch("/api/v1/properties/{property_id}", response_model=PropertyOutput)
 async def update_property(
     property_id: UUID,
@@ -90,7 +144,9 @@ async def update_property(
     session: AsyncSession = Depends(get_session),
 ) -> PropertyOutput:
     property_row = await session.scalar(
-        select(Property).where(Property.id == property_id, Property.owner_id == user.id)
+        select(Property).where(
+            Property.id == property_id, Property.owner_id == user.id, Property.archived_at.is_(None)
+        )
     )
     if property_row is None:
         raise HTTPException(
@@ -138,7 +194,9 @@ async def list_devices(
     result = await session.scalars(
         select(Device)
         .join(Property, Device.property_id == Property.id)
-        .where(Property.owner_id == user.id, Device.is_active.is_(True))
+        .where(
+            Property.owner_id == user.id, Property.archived_at.is_(None), Device.is_active.is_(True)
+        )
         .order_by(Device.created_at)
     )
     return DeviceList(items=[DeviceOutput.model_validate(item) for item in result])
@@ -148,7 +206,12 @@ async def _owned_device(session: AsyncSession, user: User, device_id: UUID) -> D
     device = await session.scalar(
         select(Device)
         .join(Property, Device.property_id == Property.id)
-        .where(Device.id == device_id, Property.owner_id == user.id, Device.is_active.is_(True))
+        .where(
+            Device.id == device_id,
+            Property.owner_id == user.id,
+            Property.archived_at.is_(None),
+            Device.is_active.is_(True),
+        )
     )
     if device is None:
         raise HTTPException(
@@ -352,7 +415,11 @@ async def create_device(
     session: AsyncSession = Depends(get_session),
 ) -> ProvisionedDeviceOutput:
     property_row = await session.scalar(
-        select(Property).where(Property.id == payload.property_id, Property.owner_id == user.id)
+        select(Property).where(
+            Property.id == payload.property_id,
+            Property.owner_id == user.id,
+            Property.archived_at.is_(None),
+        )
     )
     if property_row is None:
         raise HTTPException(
@@ -400,6 +467,7 @@ async def rotate_device_key(
         .where(
             Device.id == device_id,
             Property.owner_id == user.id,
+            Property.archived_at.is_(None),
             Device.is_active.is_(True),
         )
     )
