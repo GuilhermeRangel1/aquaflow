@@ -1489,6 +1489,9 @@ select {
   margin: 0;
   padding: clamp(22px, 3vw, 34px);
 }
+.property-create-card {
+  margin-top: 24px;
+}
 .settings-card .section-heading {
   min-height: 40px;
 }
@@ -1657,4 +1660,37 @@ input[type="number"]::-webkit-outer-spin-button {
   .device-form .field input {
     font-size: 16px;
   }
+}
+
+.property-archive-dialog {
+  width: min(460px, calc(100vw - 32px));
+  margin: auto;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 35%);
+}
+.property-archive-dialog::backdrop {
+  background: rgb(0 0 0 / 60%);
+  backdrop-filter: blur(3px);
+}
+.property-archive-dialog h2 {
+  margin: 0 0 12px;
+  font-size: 22px;
+}
+.property-archive-dialog p {
+  line-height: 1.6;
+}
+.property-archive-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 26px;
+}
+.property-archive-confirm {
+  background: #b83232;
+  color: #fff;
 }

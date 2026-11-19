@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Area,
@@ -580,6 +580,12 @@ export default function Dashboard() {
     }
   }
 
+  async function archiveSelectedProperty() {
+    if (!selected) return;
+    await api(`properties/${selected.id}`, { method: "DELETE" });
+    await load();
+  }
+
   async function savePropertySettings(patch: PropertyPatch) {
     if (!selectedId) throw new Error("Selecione uma propriedade para editar.");
     const updated = await api<Property>(`properties/${selectedId}`, {
@@ -649,6 +655,23 @@ export default function Dashboard() {
     }
     return [...totals].map(([reason, count]) => ({ reason, count }));
   }, [alerts, dashboardHealth]);
+
+  const propertyCreationForm = (
+    <form onSubmit={createProperty} className="inline-form">
+      <label className="field">
+        Nome da propriedade
+        <input
+          value={newProperty}
+          onChange={(event) => setNewProperty(event.target.value)}
+          placeholder="Ex.: Minha casa"
+          required
+        />
+      </label>
+      <button className="button button--primary">
+        Criar propriedade <span aria-hidden="true">→</span>
+      </button>
+    </form>
+  );
 
   return (
     <main className="dashboard-page">
@@ -748,20 +771,7 @@ export default function Dashboard() {
                 Organize medidores e leituras por local. Depois, você pode conectar um dispositivo e
                 acompanhar o consumo aqui.
               </p>
-              <form onSubmit={createProperty} className="inline-form">
-                <label className="field">
-                  Nome da propriedade
-                  <input
-                    value={newProperty}
-                    onChange={(event) => setNewProperty(event.target.value)}
-                    placeholder="Ex.: Minha casa"
-                    required
-                  />
-                </label>
-                <button className="button button--primary">
-                  Criar propriedade <span aria-hidden="true">→</span>
-                </button>
-              </form>
+              {propertyCreationForm}
             </div>
           </section>
         ) : loading && properties.length === 0 ? (
@@ -773,7 +783,19 @@ export default function Dashboard() {
                 key={selected.id}
                 property={selected}
                 onSave={savePropertySettings}
+                onArchive={
+                  selected.name === "Casa da Administração" ? undefined : archiveSelectedProperty
+                }
               />
+            )}
+            {view === "settings" && (
+              <section
+                className="surface settings-card property-create-card"
+                aria-labelledby="new-property-title"
+              >
+                <h2 id="new-property-title">Adicionar propriedade</h2>
+                {propertyCreationForm}
+              </section>
             )}
             {view === "overview" && (
               <section className="metrics-grid" aria-label="Resumo de consumo">
@@ -1346,7 +1368,6 @@ export default function Dashboard() {
                 )}
               </section>
             )}
-            {view === "overview" && <RecentInferences key={selectedId} propertyId={selectedId} />}
             {view === "overview" && (
               <section className="overview-shortcuts" aria-label="Acessos rápidos">
                 <button className="surface shortcut-card" onClick={() => navigateView("meters")}>
@@ -1379,77 +1400,6 @@ function formatDate(value: string): string {
     dateStyle: "short",
     timeStyle: "short",
   }).format(new Date(value));
-}
-
-type RecentInference = {
-  id: string;
-  device_name: string;
-  recorded_at: string;
-  status: "scored" | "skipped";
-  predicted_anomaly: boolean | null;
-};
-
-function RecentInferences({ propertyId }: { propertyId: string }) {
-  const [items, setItems] = useState<RecentInference[] | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: number | undefined;
-    async function refresh() {
-      try {
-        const result = await api<{ items: RecentInference[] }>(
-          `properties/${propertyId}/ml-inferences?limit=10`,
-        );
-        if (!cancelled) {
-          setItems(result.items);
-          setFailed(false);
-        }
-      } catch {
-        if (!cancelled) setFailed(true);
-      } finally {
-        if (!cancelled) timer = window.setTimeout(refresh, 30_000);
-      }
-    }
-    void refresh();
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [propertyId]);
-
-  return (
-    <section className="surface system-health-card" aria-labelledby="recent-inferences-title">
-      <h2 id="recent-inferences-title">Inferências recentes</h2>
-      {failed ? (
-        <p role="status">Não foi possível atualizar as inferências. Tentaremos novamente.</p>
-      ) : items === null ? (
-        <p role="status">Carregando inferências…</p>
-      ) : items.length === 0 ? (
-        <p>Nenhuma inferência registrada para esta propriedade.</p>
-      ) : (
-        <ul className="alert-list">
-          {items.map((item) => (
-            <li key={item.id} className="alert-row">
-              <div className="alert-main">
-                <strong>{item.device_name}</strong>
-                <p>
-                  <time dateTime={item.recorded_at}>{formatDate(item.recorded_at)}</time>
-                </p>
-              </div>
-              <span>
-                {item.status === "skipped" || item.predicted_anomaly === null
-                  ? "Dados insuficientes"
-                  : item.predicted_anomaly
-                    ? "Anomalia experimental"
-                    : "Sem sinal identificado"}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
 }
 
 function mqttStatusLabel(status: DashboardHealth["ingestion"]["mqtt_status"]): string {
@@ -1841,10 +1791,38 @@ function toSettingsDraft(property: Property): PropertySettingsDraft {
 function PropertySettingsForm({
   property,
   onSave,
+  onArchive,
 }: {
   property: Property;
+  onArchive?: () => Promise<void>;
   onSave: (patch: PropertyPatch) => Promise<Property>;
 }) {
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const archiveDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (confirmArchive) archiveDialog.current?.showModal();
+    else archiveDialog.current?.close();
+  }, [confirmArchive]);
+  const [archiving, setArchiving] = useState(false);
+
+  async function archive() {
+    if (!onArchive || archiving) return;
+    setFeedback(null);
+    setArchiving(true);
+    try {
+      await onArchive();
+      setConfirmArchive(false);
+    } catch (caught) {
+      setFeedback({
+        kind: "error",
+        message:
+          caught instanceof Error ? caught.message : "Não foi possível arquivar a propriedade.",
+      });
+    } finally {
+      setArchiving(false);
+    }
+  }
+
   const [draft, setDraft] = useState(() => toSettingsDraft(property));
   const [timezoneOptions, setTimezoneOptions] = useState([property.timezone]);
   const [timezoneOptionsLoaded, setTimezoneOptionsLoaded] = useState(false);
@@ -1999,10 +1977,22 @@ function PropertySettingsForm({
           </label>
         </div>
         <div className="settings-actions">
+          {onArchive && (
+            <button
+              type="button"
+              className="button button--quiet"
+              disabled={saving || archiving}
+              aria-expanded={confirmArchive}
+              aria-controls={confirmArchive ? "property-archive-confirm" : undefined}
+              onClick={() => setConfirmArchive(true)}
+            >
+              Arquivar propriedade
+            </button>
+          )}
           <button
             type="button"
             className="button button--quiet"
-            disabled={saving}
+            disabled={saving || archiving}
             onClick={() => {
               setDraft(toSettingsDraft(property));
               setFeedback(null);
@@ -2010,12 +2000,51 @@ function PropertySettingsForm({
           >
             Descartar alterações
           </button>
-          <button type="submit" className="button button--primary" disabled={saving}>
+          <button type="submit" className="button button--primary" disabled={saving || archiving}>
             {saving ? "Salvando…" : "Salvar configurações"}
             <span aria-hidden="true">→</span>
           </button>
         </div>
       </form>
+      {onArchive && (
+        <dialog
+          ref={archiveDialog}
+          onCancel={(event) => {
+            if (archiving) event.preventDefault();
+            else setConfirmArchive(false);
+          }}
+          onClose={() => setConfirmArchive(false)}
+          id="property-archive-confirm"
+          className="property-archive-dialog"
+          aria-labelledby="property-archive-title"
+          aria-describedby="property-archive-question"
+        >
+          <h2 id="property-archive-title">Arquivar propriedade?</h2>
+          <p id="property-archive-question">
+            <strong>{property.name}</strong> deixará de aparecer na lista de propriedades. O
+            histórico será preservado.
+          </p>
+          <div className="property-archive-dialog-actions">
+            <button
+              type="button"
+              className="button button--quiet"
+              autoFocus
+              disabled={archiving}
+              onClick={() => setConfirmArchive(false)}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="button property-archive-confirm"
+              disabled={archiving || saving}
+              onClick={() => void archive()}
+            >
+              {archiving ? "Arquivando…" : "Confirmar arquivamento"}
+            </button>
+          </div>
+        </dialog>
+      )}
     </section>
   );
 }
