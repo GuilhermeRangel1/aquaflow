@@ -225,38 +225,31 @@ export default function Dashboard() {
   const acknowledgedAlertCount = alerts.filter((alert) => alert.status === "acknowledged").length;
   const activeAlertCount = openAlertCount + acknowledgedAlertCount;
 
-  const load = useCallback(
-    async (propertyId?: string) => {
-      setLoading(true);
-      setError("");
-      try {
-        const [propertyResult, deviceResult] = await Promise.all([
-          api<{ items: Property[] }>("properties"),
-          api<{ items: Device[] }>("devices"),
-        ]);
-        setProperties(propertyResult.items);
-        setDevices(deviceResult.items);
-        const activeId = resolveActivePropertyId(
-          propertyId,
-          selectedId,
-          propertyResult.items.map((property) => property.id),
-        );
-        setSelectedId(activeId);
-        if (!activeId) {
-          setConsumption(null);
-          setAlerts([]);
-          setAlertVisibleLimit(5);
-          setAlertsCursor(null);
-          setAlertsHasMore(false);
-        }
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "Falha ao carregar os dados.");
-      } finally {
-        setLoading(false);
+  const load = useCallback(async (propertyId?: string) => {
+    setLoading(true);
+    setError("");
+    try {
+      const [propertyResult, deviceResult] = await Promise.all([
+        api<{ items: Property[] }>("properties"),
+        api<{ items: Device[] }>("devices"),
+      ]);
+      setProperties(propertyResult.items);
+      setDevices(deviceResult.items);
+      const availableIds = propertyResult.items.map((property) => property.id);
+      setSelectedId((currentId) => resolveActivePropertyId(propertyId, currentId, availableIds));
+      if (availableIds.length === 0) {
+        setConsumption(null);
+        setAlerts([]);
+        setAlertVisibleLimit(5);
+        setAlertsCursor(null);
+        setAlertsHasMore(false);
       }
-    },
-    [selectedId],
-  );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Falha ao carregar os dados.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     const syncView = () =>
