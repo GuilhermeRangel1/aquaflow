@@ -1353,6 +1353,7 @@ export default function Dashboard() {
                 )}
               </section>
             )}
+            {view === "overview" && <RecentInferences key={selectedId} propertyId={selectedId} />}
             {view === "overview" && (
               <section className="overview-shortcuts" aria-label="Acessos rápidos">
                 <button className="surface shortcut-card" onClick={() => navigateView("meters")}>
@@ -1385,6 +1386,77 @@ function formatDate(value: string): string {
     dateStyle: "short",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+type RecentInference = {
+  id: string;
+  device_name: string;
+  recorded_at: string;
+  status: "scored" | "skipped";
+  predicted_anomaly: boolean | null;
+};
+
+function RecentInferences({ propertyId }: { propertyId: string }) {
+  const [items, setItems] = useState<RecentInference[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    async function refresh() {
+      try {
+        const result = await api<{ items: RecentInference[] }>(
+          `properties/${propertyId}/ml-inferences?limit=10`,
+        );
+        if (!cancelled) {
+          setItems(result.items);
+          setFailed(false);
+        }
+      } catch {
+        if (!cancelled) setFailed(true);
+      } finally {
+        if (!cancelled) timer = window.setTimeout(refresh, 30_000);
+      }
+    }
+    void refresh();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [propertyId]);
+
+  return (
+    <section className="surface system-health-card" aria-labelledby="recent-inferences-title">
+      <h2 id="recent-inferences-title">Inferências recentes</h2>
+      {failed ? (
+        <p role="status">Não foi possível atualizar as inferências. Tentaremos novamente.</p>
+      ) : items === null ? (
+        <p role="status">Carregando inferências…</p>
+      ) : items.length === 0 ? (
+        <p>Nenhuma inferência registrada para esta propriedade.</p>
+      ) : (
+        <ul className="alert-list">
+          {items.map((item) => (
+            <li key={item.id} className="alert-row">
+              <div className="alert-main">
+                <strong>{item.device_name}</strong>
+                <p>
+                  <time dateTime={item.recorded_at}>{formatDate(item.recorded_at)}</time>
+                </p>
+              </div>
+              <span>
+                {item.status === "skipped" || item.predicted_anomaly === null
+                  ? "Dados insuficientes"
+                  : item.predicted_anomaly
+                    ? "Anomalia experimental"
+                    : "Sem sinal identificado"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
 }
 
 function mqttStatusLabel(status: DashboardHealth["ingestion"]["mqtt_status"]): string {

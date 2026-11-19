@@ -25,7 +25,8 @@ O protótipo pode ser demonstrado com o histórico carregado pelo Compose ou com
 | [Arquitetura](docs/arquitetura.md) | Serviços, caminhos de dados e decisões da integração. |
 | [Estado atual](docs/estado-do-projeto.md) | O que está implementado, o que é experimental e o que falta validar. |
 | [Métricas e parâmetros](docs/metricas-e-parametros.md) | Limites, valores padrão e métricas usados no projeto. |
-| [Resultado do experimento ML](ml/docs/resultado-experimento.md) | Execução de referência, comparação de modelos e limitações. |
+| [Avaliação do dataset híbrido](#resultado-de-referência) | Resultado atual e limites da avaliação. |
+| [Histórico do experimento sintético](ml/docs/resultado-experimento.md) | Execução anterior à calibração de bancada. |
 | [Dados e modelos](ml/README.md) | Série híbrida, pipeline, notebook, treinamento e inferência. |
 | [Contrato MQTT](docs/contrato-mqtt.md) | Tópicos, autenticação e payload aceito pelo broker local. |
 | [Especificação](especificacao-monitoramento-consumo-agua.md) | Requisitos e contratos de referência do produto e da API. |
@@ -138,7 +139,11 @@ O treinamento padrão usa 16 dias simulados com vazões calibradas em bancada, p
 
 ### Resultado de referência
 
+O Dummy Classifier usa a prevalência do treino como referência para medir o ganho de modelos que usam as features. O MLflow guarda cada combinação da busca aleatória, suas métricas por divisão temporal e a combinação vencedora de cada modelo. A seleção final usa a média da AP na validação padrão e na validação com rotina alterada. O teste cronológico e o perfil de estresse ficam reservados para avaliação posterior.
+
 Na execução com a série híbrida, o Random Forest foi selecionado com AP média de **0,594** na validação. No teste cronológico, a AP foi **0,999**. No perfil de estresse, a AP caiu para **0,502** e o recall foi **5,6%** no limiar de 0,5. As métricas descrevem o desempenho em perfis simulados calibrados em bancada. O relatório da execução local está em `data/ml/training-bench-v2/training_report.md`.
+
+O relatório mostra a diferença entre treino e validação e a variação da AP entre divisões temporais. A queda no perfil de estresse indica sensibilidade a mudanças de rotina simuladas. A generalização para residências depende de validação em campo.
 
 ### Airflow, treinamento e notebook
 

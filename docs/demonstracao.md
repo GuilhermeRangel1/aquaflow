@@ -66,6 +66,14 @@ docker compose logs -f ml-trainer ml-inference api mqtt-ingestor
 
 O dashboard pode indicar que a análise do modelo ainda está indisponível durante o treinamento. Se o trainer falhar, consulte os logs desse serviço. Artefatos e resultados ficam em `data/ml/training-bench-v2/`; os arquivos são locais e ignorados pelo Git. O experimento aparece em MLflow. Mais detalhes sobre perfis, métricas e limitações estão em [Dados e modelos](../ml/README.md).
 
+### Roteiro para a apresentação
+
+1. Mostre no Airflow a execução do DAG híbrido e as saídas de análise e preparação.
+2. Abra o MLflow e expanda uma execução por modelo para mostrar as tentativas de busca, as métricas por divisão temporal e a combinação escolhida.
+3. Selecione no dashboard a propriedade do ESP32. Passe água pelo sensor e confirme a chegada da leitura via MQTT e sua persistência pela API.
+4. Mantenha a coleta até fechar uma janela válida de cinco minutos com uma leitura anterior disponível como referência. Compare a última leitura na API com a seção **Inferências recentes**, que atualiza a cada 30 segundos.
+5. Apresente a diferença entre o desempenho no teste padrão e no perfil de estresse. Se usar um publicador de teste, identifique essa etapa como simulação e registre o ensaio físico como pendente.
+
 Os parâmetros e limites atuais estão em [Métricas e parâmetros](metricas-e-parametros.md), e uma execução de referência com métricas, hashes e interpretação está registrada em [Resultado do experimento](../ml/docs/resultado-experimento.md).
 
 Para abrir o notebook de exploração e gráficos, configure as dependências em [ml/README.md](../ml/README.md#notebook-de-exploração-e-avaliação-visual). A primeira parte gera e prepara sua própria série híbrida; a seção de avaliação precisa dos artefatos de treinamento acima.

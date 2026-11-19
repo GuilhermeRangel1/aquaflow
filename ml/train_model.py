@@ -256,10 +256,12 @@ def train(
     mlflow.set_experiment(experiment_name)
 
     candidates: dict[str, dict[str, Any]] = {}
+    search_trials: dict[str, list[dict[str, Any]]] = {}
     specifications = _models(seed)
     model_search_budget = len(specifications) * search_iterations * cv.n_splits
 
     for name, (estimator, parameter_space) in specifications.items():
+        search_trials[name] = []
         sampled_parameters = list(
             ParameterSampler(parameter_space, n_iter=search_iterations, random_state=seed)
         )
@@ -288,6 +290,11 @@ def train(
                     )
                 )
             mean_validation = float(np.mean(validation_scores))
+            search_trials[name].append({
+                "parameters": parameters,
+                "train_scores": train_scores,
+                "validation_scores": validation_scores,
+            })
             if mean_validation > best_cv_score:
                 best_cv_score = mean_validation
                 best_cv_train_score = float(np.mean(train_scores))
@@ -508,6 +515,27 @@ def train(
 
     for name, result in candidates.items():
         with mlflow.start_run(run_name=name):
+            for index, trial in enumerate(search_trials.get(name, []), start=1):
+                with mlflow.start_run(run_name=f"{name}-trial-{index:02d}", nested=True):
+                    mlflow.log_params({
+                        **trial["parameters"],
+                        "model": name,
+                        "seed": seed,
+                        "data_sha256": data_hash,
+                        "strategy": "random_search",
+                    })
+                    mlflow.set_tag(
+                        "selected_for_model",
+                        str(trial["parameters"] == result["best_parameters"]).lower(),
+                    )
+                    for partition in ("train", "validation"):
+                        scores = trial[f"{partition}_scores"]
+                        for fold, score in enumerate(scores, start=1):
+                            mlflow.log_metric(f"cv_{partition}_average_precision", score, step=fold)
+                        mlflow.log_metrics({
+                            f"cv_mean_{partition}_average_precision": float(np.mean(scores)),
+                            f"cv_std_{partition}_average_precision": float(np.std(scores)),
+                        })
             mlflow.log_params(
                 {
                     "model": name,
