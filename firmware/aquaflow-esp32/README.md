@@ -28,6 +28,7 @@ Esta e uma fatia fora do MVP atual da API/dashboard; ainda nao foi validada em h
 - [PlatformIO](https://platformio.org/) (extensao do VS Code ou `pip install platformio`).
 - Placa ESP32-WROOM-32 e um sensor de vazao por pulso (ex.: YF-S201/YF-S401) no pino definido em `include/config.h`.
 - Um dispositivo ja cadastrado via `POST /devices` na API do AquaFlow, com a chave anotada (ela so e exibida uma vez).
+  Cadastre `expected_interval_seconds: 30` para o intervalo padrão do firmware. O worker de ML usa essa configuração para agregar as leituras em janelas de cinco minutos.
 - O broker MQTT acessivel na rede. No prototipo local, suba o Compose e exponha a porta
   do broker (`docker compose` ja publica `1883:1883`); use o IP da maquina do Docker em
   `MQTT_BROKER_HOST`.
