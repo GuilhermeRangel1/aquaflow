@@ -1,0 +1,6 @@
+FROM apache/airflow:3.3.2-python3.12
+
+COPY requirements-training.txt /tmp/aquaflow-requirements-training.txt
+RUN python -m venv /home/airflow/aquaflow-training \
+    && /home/airflow/aquaflow-training/bin/pip install --no-cache-dir \
+        -r /tmp/aquaflow-requirements-training.txt

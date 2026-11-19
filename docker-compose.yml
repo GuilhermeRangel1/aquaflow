@@ -200,9 +200,12 @@ services:
     restart: unless-stopped
 
   ml-airflow:
-    image: apache/airflow:3.3.2-python3.12
+    build:
+      context: ./ml
+      dockerfile: Dockerfile.airflow
     command: standalone
     environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
       AIRFLOW__CORE__PARALLELISM: "2"
@@ -216,6 +219,9 @@ services:
       - ./ml/airflow/dags:/opt/airflow/dags:ro
       - ./ml:/opt/airflow/ml:ro
       - ./data/ml:/opt/airflow/data/ml
+    depends_on:
+      mlflow:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD

@@ -163,3 +163,21 @@ def test_cli_compares_models_on_chronological_holdout(
     )
     assert (output / "split_manifest.json").is_file()
     assert (tmp_path / "mlflow.db").is_file()
+
+    from mlflow.tracking import MlflowClient
+
+    client = MlflowClient(tracking_uri=tracking)
+    runs = client.search_runs([report["mlflow_experiment_id"]])
+    summaries = {run.info.run_id: run.info.run_name for run in runs}
+    trials = [run for run in runs if "mlflow.parentRunId" in run.data.tags]
+    assert len(trials) == 3
+    for trial in trials:
+        parent_name = summaries[trial.data.tags["mlflow.parentRunId"]]
+        assert trial.data.params["model"] == parent_name
+        assert trial.data.params["data_sha256"] == report["training_data_sha256"]
+        assert trial.data.tags["selected_for_model"] == "true"
+        for partition in ("train", "validation"):
+            history = client.get_metric_history(
+                trial.info.run_id, f"cv_{partition}_average_precision"
+            )
+            assert sorted(metric.step for metric in history) == [1, 2, 3]

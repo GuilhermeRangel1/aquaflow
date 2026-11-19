@@ -251,7 +251,9 @@ def train(
     artifact_dir.mkdir(parents=True, exist_ok=True)
     mlflow.set_tracking_uri(tracking_uri)
     client = MlflowClient()
-    if mlflow.get_experiment_by_name(experiment_name) is None:
+    if not tracking_uri.startswith(("http://", "https://")) and (
+        mlflow.get_experiment_by_name(experiment_name) is None
+    ):
         client.create_experiment(experiment_name, artifact_location=artifact_dir.resolve().as_uri())
     mlflow.set_experiment(experiment_name)
 
@@ -513,8 +515,10 @@ def train(
     report_markdown_path = output_dir / "training_report.md"
     report_markdown_path.write_text(_training_report_markdown(report), encoding="utf-8")
 
+    airflow_run_id = os.environ.get("AQUAFLOW_AIRFLOW_RUN_ID")
+    run_tags = {"airflow_run_id": airflow_run_id} if airflow_run_id else None
     for name, result in candidates.items():
-        with mlflow.start_run(run_name=name):
+        with mlflow.start_run(run_name=name, tags=run_tags):
             for index, trial in enumerate(search_trials.get(name, []), start=1):
                 with mlflow.start_run(run_name=f"{name}-trial-{index:02d}", nested=True):
                     mlflow.log_params({

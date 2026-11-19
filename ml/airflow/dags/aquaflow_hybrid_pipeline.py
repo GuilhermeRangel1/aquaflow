@@ -1,22 +1,22 @@
 """Reproducible hybrid telemetry pipeline for the AquaFlow academic demo."""
 
+import hashlib
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from airflow.sdk import dag, task
+from airflow.sdk import dag, get_current_context, task
 
 ML_ROOT = Path("/opt/airflow/ml")
 DATA_ROOT = Path("/opt/airflow/data/ml")
-RAW_DATA = DATA_ROOT / "raw" / "household_readings.csv"
-ANALYSIS_DATA = DATA_ROOT / "analysis"
-PREPARED_DATA = DATA_ROOT / "prepared"
+TRAINING_PYTHON = "/home/airflow/aquaflow-training/bin/python"
 
 
 @dag(
     dag_id="aquaflow_hybrid_telemetry_pipeline",
-    description="Gera, analisa e prepara telemetria híbrida do AquaFlow.",
+    description="Gera, analisa e prepara telemetria híbrida e treina um modelo candidato.",
     start_date=datetime(2026, 1, 1, tzinfo=UTC),
     schedule=None,
     catchup=False,
@@ -25,13 +25,16 @@ PREPARED_DATA = DATA_ROOT / "prepared"
 def hybrid_telemetry_pipeline():
     @task
     def generate_data() -> str:
+        run_id = get_current_context()["run_id"]
+        run_key = hashlib.sha256(run_id.encode()).hexdigest()
+        raw_data = DATA_ROOT / "airflow" / run_key / "raw" / "household_readings.csv"
         subprocess.run(
             [
                 sys.executable,
                 str(ML_ROOT / "build_real_dataset.py"),
                 "--calibration",
                 "--output",
-                str(RAW_DATA),
+                str(raw_data),
                 "--seed",
                 "42",
                 "--start",
@@ -45,10 +48,11 @@ def hybrid_telemetry_pipeline():
             ],
             check=True,
         )
-        return str(RAW_DATA)
+        return str(raw_data)
 
     @task
     def analyze_data(input_file: str) -> str:
+        analysis_data = Path(input_file).parent.parent / "analysis"
         subprocess.run(
             [
                 sys.executable,
@@ -57,16 +61,17 @@ def hybrid_telemetry_pipeline():
                 "--input",
                 input_file,
                 "--output-dir",
-                str(ANALYSIS_DATA),
+                str(analysis_data),
                 "--timezone",
                 "America/Sao_Paulo",
             ],
             check=True,
         )
-        return str(ANALYSIS_DATA / "eda_report.json")
+        return str(analysis_data / "eda_report.json")
 
     @task
     def prepare_data(input_file: str, _report_file: str) -> str:
+        prepared_data = Path(input_file).parent.parent / "prepared"
         subprocess.run(
             [
                 sys.executable,
@@ -75,17 +80,48 @@ def hybrid_telemetry_pipeline():
                 "--input",
                 input_file,
                 "--output-dir",
-                str(PREPARED_DATA),
+                str(prepared_data),
                 "--timezone",
                 "America/Sao_Paulo",
             ],
             check=True,
         )
-        return str(PREPARED_DATA)
+        return str(prepared_data)
+
+    @task
+    def train_candidate(prepared_dir: str) -> str:
+        prepared = Path(prepared_dir)
+        output = prepared.parent / "training"
+        run_id = get_current_context()["run_id"]
+        subprocess.run(
+            [
+                TRAINING_PYTHON,
+                str(ML_ROOT / "train_model.py"),
+                "--features",
+                str(prepared / "features.csv"),
+                "--labels",
+                str(prepared / "labels.csv"),
+                "--metadata",
+                str(prepared / "metadata.csv"),
+                "--output-dir",
+                str(output),
+                "--bench-calibration",
+                str(ML_ROOT / "collection" / "bench-calibration-v1.json"),
+                "--timezone",
+                "America/Sao_Paulo",
+                "--experiment-name",
+                "aquaflow-hybrid-airflow",
+                "--tracking-uri",
+                os.environ["MLFLOW_TRACKING_URI"],
+            ],
+            check=True,
+            env={**os.environ, "AQUAFLOW_AIRFLOW_RUN_ID": run_id},
+        )
+        return str(output / "metrics.json")
 
     raw_file = generate_data()
     report_file = analyze_data(raw_file)
-    prepare_data(raw_file, report_file)
+    train_candidate(prepare_data(raw_file, report_file))
 
 
 hybrid_telemetry_pipeline()
