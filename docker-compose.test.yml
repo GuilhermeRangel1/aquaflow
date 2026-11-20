@@ -11,6 +11,14 @@ services:
     profiles:
       - test
 
+  demo-data:
+    build:
+      context: ./ml
+    command: ["python", "build_real_dataset.py", "--calibration", "--output", "/demo-data/readings.csv"]
+    volumes:
+      - aquaflow-demo-data-test:/demo-data
+    restart: "no"
+
   mqtt-test-db:
     image: postgres:16-alpine
     environment:
@@ -39,7 +47,7 @@ services:
     command: >-
       sh -c "alembic upgrade head && python -m app.demo_seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     volumes:
-      - aquaflow-demo-data:/app/demo-data:ro
+      - aquaflow-demo-data-test:/app/demo-data:ro
     depends_on:
       mqtt-test-db:
         condition: service_healthy
@@ -151,3 +159,4 @@ services:
 
 volumes:
   aquaflow-postgres-mqtt-test:
+  aquaflow-demo-data-test:

@@ -1208,11 +1208,7 @@ export default function Dashboard() {
                     key={selected.id}
                     property={selected}
                     onSave={savePropertySettings}
-                    onArchive={
-                      selected.name === "Casa da Administração"
-                        ? undefined
-                        : archiveSelectedProperty
-                    }
+                    onArchive={archiveSelectedProperty}
                   />
                 )}
                 {view === "settings" && !showPropertyForm && (
