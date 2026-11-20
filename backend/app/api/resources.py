@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -124,6 +124,10 @@ async def archive_property(
         )
     if property_row.archived_at is None:
         property_row.archived_at = datetime.now(UTC)
+        # Stop ingestion for the archived property; raw telemetry stays for traceability.
+        await session.execute(
+            update(Device).where(Device.property_id == property_id).values(is_active=False)
+        )
         add_audit_entry(
             session,
             actor_id=user.id,

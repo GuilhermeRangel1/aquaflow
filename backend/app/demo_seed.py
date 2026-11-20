@@ -37,13 +37,14 @@ async def seed_demo_data(
     password: str,
     email: str | None = None,
     dataset_path: Path,
+    cleanup_legacy: bool = False,
 ) -> bool:
-    """Populate the hybrid history and remove positively identified legacy fixtures."""
+    """Populate the hybrid history; legacy fixtures are only migrated/removed on request."""
     configured_email = email or ADMIN_EMAIL
     async with session_factory() as session:
         now = datetime.now(UTC).replace(second=0, microsecond=0)
         user = await session.scalar(select(User).where(User.email == configured_email))
-        if user is None and configured_email == ADMIN_EMAIL:
+        if user is None and cleanup_legacy and configured_email == ADMIN_EMAIL:
             user = await session.scalar(
                 select(User)
                 .join(Property, Property.owner_id == User.id)
@@ -53,9 +54,9 @@ async def seed_demo_data(
                     Device.serial_number == "AF-DEMO-HIBRIDO-001",
                 )
             )
-        if user is None:
+        if user is None and cleanup_legacy:
             user = await session.scalar(select(User).where(User.email == DEMO_EMAIL))
-        if user is None:
+        if user is None and cleanup_legacy:
             user = await session.scalar(select(User).where(User.email == LEGACY_DEMO_EMAIL))
         if user is not None and user.email != configured_email:
             if configured_email == ADMIN_EMAIL and user.name in (
@@ -78,7 +79,7 @@ async def seed_demo_data(
         if user.name == "Conta de demonstração":
             user.name = "Administração"
         populated = await _seed_hybrid_property(session, user, dataset_path, now)
-        removed = await _remove_legacy_fixtures(session, user)
+        removed = await _remove_legacy_fixtures(session, user) if cleanup_legacy else False
         await session.commit()
         return populated or removed or created
 
@@ -243,6 +244,7 @@ async def main() -> None:
             password=settings.demo_user_password,
             email=settings.demo_user_email or ADMIN_EMAIL,
             dataset_path=settings.demo_dataset_path,
+            cleanup_legacy=settings.demo_cleanup_legacy,
         )
         if created:
             print("Histórico híbrido preparado.")

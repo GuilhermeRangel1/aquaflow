@@ -339,7 +339,7 @@ async def run_batch(
                    p.timezone, bucket.window_start
             FROM telemetry_readings AS r
             JOIN devices AS d ON d.id = r.device_id
-            JOIN properties AS p ON p.id = d.property_id
+            JOIN properties AS p ON p.id = d.property_id AND p.archived_at IS NULL
             CROSS JOIN LATERAL (
                 SELECT date_bin(interval '5 minutes', r.recorded_at,
                                 timestamptz '2000-01-01 00:00:00+00') AS window_start

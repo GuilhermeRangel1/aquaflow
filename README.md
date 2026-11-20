@@ -74,9 +74,10 @@ Essas funções mostram o funcionamento integrado do protótipo. Elas não compr
 - Porta `1883` disponível para o broker MQTT local.
 - Memória suficiente para a aplicação, o Airflow e o treinamento inicial. A geração do modelo pode levar alguns minutos.
 
-Na raiz do repositório, inicie a solução completa:
+Na raiz do repositório, copie `.env.example` para `.env` (o Compose exige `DEMO_USER_PASSWORD`) e inicie a solução completa:
 
 ```powershell
+Copy-Item .env.example .env
 docker compose up --build
 ```
 
@@ -90,7 +91,7 @@ Na primeira execução, o Compose inicia PostgreSQL, API, dashboard, broker MQTT
 | Experimentos MLflow | [http://localhost:5000](http://localhost:5000) |
 | Interface Airflow | [http://localhost:8080](http://localhost:8080) |
 
-O acesso ao Airflow e ao MLflow é local. O ESP32 acessa o broker pela porta `1883` no IP do computador que executa o Compose, na mesma rede. Use essa configuração de desenvolvimento em uma rede local de confiança.
+O acesso ao Airflow e ao MLflow é local. O ESP32 acessa o broker pela porta `1883` no IP do computador que executa o Compose, na mesma rede. A API publica a porta `8000` apenas em `127.0.0.1`. Use essa configuração de desenvolvimento em uma rede local de confiança.
 
 ### Conta local de Administração
 
