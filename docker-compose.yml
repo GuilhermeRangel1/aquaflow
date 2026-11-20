@@ -29,12 +29,15 @@ services:
       DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-admin123}
       MQTT_INGESTOR_HEALTH_URL: http://mqtt-ingestor:8081/health
       ML_WORKER_HEALTH_URL: http://ml-inference:8081/health
+      ML_ARTIFACTS_DIR: /app/ml-artifacts
+      MLFLOW_TRACKING_URI: http://mlflow:5000
     command: >-
       sh -c "alembic upgrade head && python -m app.demo_seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     ports:
       - "8000:8000"
     volumes:
       - aquaflow-demo-data:/app/demo-data:ro
+      - ./data/ml/training-bench-v2:/app/ml-artifacts/training-bench-v2:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=3)"]
       interval: 5s

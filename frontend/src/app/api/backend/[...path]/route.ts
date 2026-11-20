@@ -29,7 +29,8 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     path[0] !== "properties" &&
     path[0] !== "devices" &&
     path[0] !== "ingestion" &&
-    path[0] !== "alerts"
+    path[0] !== "alerts" &&
+    path[0] !== "ml"
   ) {
     return NextResponse.json({ code: "not_found", message: "Route not found" }, { status: 404 });
   }
