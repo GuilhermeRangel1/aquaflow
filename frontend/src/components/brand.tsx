@@ -3,15 +3,30 @@
 import { useTheme } from "../app/theme-provider";
 import Image from "next/image";
 
-export function Brand({ compact = false }: { compact?: boolean }) {
+export function Brand({
+  compact = false,
+  inverse = false,
+  lightArtwork = "/aquaflow-v2-light.png",
+  darkArtwork = "/aquaflow-v2-light.png",
+}: {
+  compact?: boolean;
+  inverse?: boolean;
+  lightArtwork?: string;
+  darkArtwork?: string;
+}) {
+  const { theme } = useTheme();
+  const useDarkArtwork = inverse || theme === "dark";
+
   return (
-    <span className={`brand-lockup${compact ? " brand-lockup--compact" : ""}`}>
+    <span
+      className={`brand-lockup${compact ? " brand-lockup--compact" : ""}${useDarkArtwork ? " brand-lockup--dark" : ""}`}
+    >
       <Image
-        className="brand-logo"
-        src="/aquaflow-logo.png"
+        className={`brand-logo${useDarkArtwork ? " brand-logo--dark" : ""}`}
+        src={useDarkArtwork ? darkArtwork : lightArtwork}
         width={2172}
         height={724}
-        alt="aquaflow"
+        alt="AquaFlow"
         priority
       />
     </span>
@@ -29,7 +44,6 @@ export function ThemeToggle() {
       title={theme === "dark" ? "Modo claro" : "Modo escuro"}
     >
       {theme === "dark" ? <SunIcon /> : <MoonIcon />}
-      <span className="theme-toggle-label">{theme === "dark" ? "Claro" : "Escuro"}</span>
     </button>
   );
 }

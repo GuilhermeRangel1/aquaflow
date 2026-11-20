@@ -1,0 +1,6 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="256" height="60" viewBox="0 0 256 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+<mask id="stroke0_0_102" fill="white">
+<path d="M256 30C256 46.5685 198.692 60 128 60C57.3076 60 0 46.5685 0 30C0 13.4315 57.3076 0 128 0C198.692 0 256 13.4315 256 30Z"/>
+</mask>
+<ellipse id="C&#195;&#173;rculo de &#195;&#161;gua / 2" cx="128" cy="30" rx="128" ry="30" stroke-width="2" stroke="#70D9CF" stroke-opacity="0.18" mask="url(#stroke0_0_102)"/>
+</svg>
