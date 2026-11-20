@@ -2053,12 +2053,10 @@ function OverviewInsights({
   hourlyLoading: boolean;
   hourlyError: string;
 }) {
-  const hourlyPlot = hourlyData
-    .map((point) => ({
-      ...point,
-      chartValue: point.volume_liters ?? 0,
-    }))
-    .sort((left, right) => Number(left.hour) - Number(right.hour));
+  const hourlyPlot = hourlyData.map((point) => ({
+    ...point,
+    chartValue: point.volume_liters ?? 0,
+  }));
 
   const observedHours = hourlyData.filter((point) => point.volume_liters !== null).length;
   let recordedTotal = 0;
@@ -2192,11 +2190,35 @@ function OverviewInsights({
                         tickLine={false}
                         tick={{ fill: "var(--muted)", fontSize: 11 }}
                       />
+                      <Tooltip
+                        cursor={{ stroke: "var(--line)", strokeDasharray: "3 3" }}
+                        formatter={(value) => [
+                          value == null
+                            ? "Sem dados suficientes"
+                            : `${Number(value).toLocaleString("pt-BR", {
+                                maximumFractionDigits: 3,
+                              })} L`,
+                          "Acumulado",
+                        ]}
+                        labelFormatter={(hour) => `${hour}h`}
+                        contentStyle={{
+                          borderRadius: 12,
+                          borderColor: "var(--line)",
+                          background: "var(--surface)",
+                          color: "var(--ink)",
+                        }}
+                      />
                       <Area
                         type="stepAfter"
                         dataKey="total"
                         stroke="var(--accent-strong)"
                         fill="var(--accent-soft)"
+                        activeDot={{
+                          r: 4,
+                          fill: "var(--accent-strong)",
+                          stroke: "var(--surface)",
+                          strokeWidth: 2,
+                        }}
                       />
                     </AreaChart>
                   </ResponsiveContainer>
