@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.schemas.ml_dashboard import ActiveModelSummary
+
 
 class TrainingDashboardUnavailable(Exception):
     """The active training report and model artifact are missing or inconsistent."""
@@ -28,6 +30,16 @@ def _decode_json_object(contents: bytes) -> dict[str, Any]:
 
 def load_active_training_report(artifacts_dir: Path) -> tuple[dict[str, Any], str]:
     training_dir = artifacts_dir / "training-bench-v2"
+    try:
+        pointer = json.loads((training_dir / "active-model.json").read_text(encoding="utf-8"))
+        candidate = Path(pointer["directory"])
+        if candidate.is_absolute() or ".." in candidate.parts:
+            raise ValueError("Invalid active model pointer")
+        training_dir = training_dir / candidate
+    except FileNotFoundError:
+        pass
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        raise TrainingDashboardUnavailable from None
     report_path = training_dir / "metrics.json"
     model_path = training_dir / "best_model.joblib"
     try:
@@ -44,7 +56,7 @@ def load_active_training_report(artifacts_dir: Path) -> tuple[dict[str, Any], st
     return report, model_hash
 
 
-def active_model_summary(report: dict[str, Any], model_hash: str) -> dict[str, Any]:
+def active_model_summary(report: dict[str, Any], model_hash: str) -> ActiveModelSummary:
     trained_at = report.get("final_training_end")
     if isinstance(trained_at, str):
         try:
@@ -53,12 +65,12 @@ def active_model_summary(report: dict[str, Any], model_hash: str) -> dict[str, A
             trained_at = None
     else:
         trained_at = None
-    return {
-        "key": report["selected_model"],
-        "version": model_hash,
-        "trained_at": trained_at,
-        "threshold": float(report["threshold"]),
-    }
+    return ActiveModelSummary(
+        key=report["selected_model"],
+        version=model_hash,
+        trained_at=trained_at,
+        threshold=float(report["threshold"]),
+    )
 
 
 def _mlflow_json(uri: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -171,14 +183,12 @@ async def ml_worker_status(url: str | None) -> str:
 def _load_execution_report(artifacts_dir: Path, run_id: str) -> dict[str, Any]:
     if not run_id or Path(run_id).name != run_id:
         raise TrainingDashboardUnavailable
-    report_path = (
-        artifacts_dir
-        / "training-bench-v2"
-        / "mlflow-artifacts"
-        / run_id
-        / "artifacts"
-        / "metrics.json"
-    )
+    training_dir = artifacts_dir / "training-bench-v2"
+    report_paths = [training_dir / "mlflow-artifacts" / run_id / "artifacts" / "metrics.json"]
+    candidates = training_dir / "candidates"
+    if candidates.is_dir():
+        report_paths.extend(candidates.glob(f"*/mlflow-artifacts/{run_id}/artifacts/metrics.json"))
+    report_path = next((path for path in report_paths if path.is_file()), report_paths[0])
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -188,9 +198,7 @@ def _load_execution_report(artifacts_dir: Path, run_id: str) -> dict[str, Any]:
     return report
 
 
-async def load_mlflow_execution_report(
-    artifacts_dir: Path, run_id: str
-) -> dict[str, Any]:
+async def load_mlflow_execution_report(artifacts_dir: Path, run_id: str) -> dict[str, Any]:
     try:
         return await asyncio.to_thread(_load_execution_report, artifacts_dir, run_id)
     except TrainingDashboardUnavailable:

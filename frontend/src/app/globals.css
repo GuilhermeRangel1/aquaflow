@@ -2771,6 +2771,19 @@ button.ml-history-row:hover,
   outline: 2px solid var(--accent-strong);
   outline-offset: 2px;
 }
+.ml-history-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.ml-history-footer .ml-text-action {
+  padding: 6px 0;
+  white-space: nowrap;
+}
 .ml-data-notice h2 {
   margin-top: 0;
   font-size: 20px;
@@ -2823,6 +2836,19 @@ button.ml-history-row:hover,
     grid-template-columns: 1fr;
     gap: 16px;
   }
+}
+.ml-training-action {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.ml-training-action p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 .ml-selection-grid {
   display: grid;

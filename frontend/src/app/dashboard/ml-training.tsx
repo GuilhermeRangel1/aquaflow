@@ -31,6 +31,7 @@ const MODEL_LABELS: Record<string, string> = {
   knn: "KNN",
   random_forest: "Random Forest",
 };
+const HISTORY_PREVIEW_LIMIT = 5;
 
 function object(value: unknown): JsonObject {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : {};
@@ -93,6 +94,13 @@ export function MLTrainingView() {
     left: number;
     top: number;
   } | null>(null);
+  const [trainingJob, setTrainingJob] = useState<{
+    id: string;
+    status: string;
+  } | null>(null);
+  const [startingTraining, setStartingTraining] = useState(false);
+  const [trainingError, setTrainingError] = useState("");
+  const [showFullHistory, setShowFullHistory] = useState(false);
   const [panel, setPanel] = useState<"execution" | "evaluation" | "details" | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const requestRef = useRef(0);
@@ -143,6 +151,41 @@ export function MLTrainingView() {
     const timer = window.setInterval(() => void load(executionRef.current, true), 60_000);
     return () => window.clearInterval(timer);
   }, [load]);
+
+  useEffect(() => {
+    if (!trainingJob || !["queued", "running"].includes(trainingJob.status)) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const response = await fetch(`/api/backend/ml/training-jobs/${trainingJob.id}`, {
+          cache: "no-store",
+        });
+        const result = await response.json();
+        if (response.ok) {
+          setTrainingJob(result);
+          if (result.status === "succeeded") void load("");
+        }
+      } catch {
+        setTrainingError("Não foi possível acompanhar o treinamento.");
+      }
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [trainingJob, load]);
+
+  async function startTraining() {
+    setStartingTraining(true);
+    setTrainingError("");
+    try {
+      const response = await fetch("/api/backend/ml/training-jobs", { method: "POST" });
+      const result = await response.json();
+      if (!response.ok)
+        throw new Error(result.detail?.message ?? "Não foi possível iniciar o treinamento.");
+      setTrainingJob(result);
+    } catch (error) {
+      setTrainingError(error instanceof Error ? error.message : "Falha ao iniciar o treinamento.");
+    } finally {
+      setStartingTraining(false);
+    }
+  }
 
   const report = object(data?.report);
   const selectedModel = text(report.selected_model, data?.active_model.key ?? "Modelo");
@@ -254,6 +297,29 @@ export function MLTrainingView() {
 
   return (
     <section className="ml-dashboard" aria-label="Modelos e treinamento">
+      <div className="ml-training-action">
+        <button
+          className="button button--primary"
+          type="button"
+          onClick={() => void startTraining()}
+          disabled={
+            startingTraining ||
+            (!!trainingJob && ["queued", "running"].includes(trainingJob.status))
+          }
+        >
+          {startingTraining || ["queued", "running"].includes(trainingJob?.status ?? "")
+            ? "Treinamento em andamento…"
+            : "Treinar novamente"}
+        </button>
+        <span className="sr-only" role="status" aria-live="polite">
+          {startingTraining || trainingJob?.status === "queued" || trainingJob?.status === "running"
+            ? "Treinamento em andamento."
+            : trainingJob?.status === "succeeded"
+              ? "Treinamento concluído e modelo atualizado."
+              : ""}
+        </span>
+        {trainingError && <p role="alert">{trainingError}</p>}
+      </div>
       <div className="ml-selection-grid">
         <div className="surface ml-selection-card">
           <div>
@@ -749,7 +815,10 @@ export function MLTrainingView() {
               <span>Execução</span>
               <span>Modelo / Estado</span>
             </div>
-            {data.executions.map((execution) => (
+            {(showFullHistory
+              ? data.executions
+              : data.executions.slice(0, HISTORY_PREVIEW_LIMIT)
+            ).map((execution) => (
               <button
                 type="button"
                 className={`ml-history-row ${execution.id === executionId ? "ml-candidate-row--selected" : ""}`}
@@ -770,6 +839,25 @@ export function MLTrainingView() {
               </button>
             ))}
           </div>
+          {data.executions.length > HISTORY_PREVIEW_LIMIT && (
+            <div className="ml-history-footer">
+              <span>
+                {showFullHistory
+                  ? `${data.executions.length} execuções no histórico`
+                  : `${HISTORY_PREVIEW_LIMIT} execuções mais recentes`}
+              </span>
+              <button
+                className="ml-text-action"
+                type="button"
+                aria-expanded={showFullHistory}
+                onClick={() => setShowFullHistory((expanded) => !expanded)}
+              >
+                {showFullHistory
+                  ? "Mostrar menos"
+                  : `Ver mais ${data.executions.length - HISTORY_PREVIEW_LIMIT}`}
+              </button>
+            </div>
+          )}
         </article>
         <article className="surface ml-card ml-card--wide">
           <div className="section-heading">

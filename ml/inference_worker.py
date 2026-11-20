@@ -9,6 +9,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from itertools import pairwise
 from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
@@ -236,17 +237,25 @@ async def _backfill_existing_ml_alerts(
     model_version: str,
     threshold: float,
 ) -> int:
-    async with pool.acquire() as connection:
-        async with connection.transaction():
-            return await _backfill_ml_alerts(
-                connection,
-                model_version=model_version,
-                threshold=threshold,
-            )
+    async with pool.acquire() as connection, connection.transaction():
+        return await _backfill_ml_alerts(
+            connection,
+            model_version=model_version,
+            threshold=threshold,
+        )
 
 
 def load_model(model_path: Path, report_path: Path) -> tuple[Any, dict[str, Any], str]:
     """Load only a model whose local training report records its matching hash."""
+    pointer_path = model_path.parent / "active-model.json"
+    if pointer_path.is_file():
+        pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+        relative = Path(pointer["directory"])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("active model pointer is invalid")
+        active_dir = model_path.parent / relative
+        model_path = active_dir / "best_model.joblib"
+        report_path = active_dir / "metrics.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
     model_hash = hashlib.sha256(model_path.read_bytes()).hexdigest()
     if report.get("model_sha256") != model_hash:
@@ -298,7 +307,7 @@ async def _aggregate_window(
         return None, "Cobertura insuficiente para a janela de cinco minutos."
     # Reuse the previous bucket's last sample as the next volume baseline.
     samples = [*history[candidates[-1]:], reading]
-    for before, after in zip(samples, samples[1:]):
+    for before, after in pairwise(samples):
         step = after["recorded_at"] - before["recorded_at"]
         if not timedelta(0) < step <= tolerance:
             return None, "Lacuna ou timestamp duplicado na janela de cinco minutos."
@@ -308,7 +317,7 @@ async def _aggregate_window(
     ):
         return None, "Volume acumulado válido insuficiente na janela de cinco minutos."
     volumes = [sample["cumulative_volume_liters"] for sample in samples]
-    if any(after < before for before, after in zip(volumes, volumes[1:])):
+    if any(after < before for before, after in pairwise(volumes)):
         return None, "O contador de volume diminuiu dentro da janela de cinco minutos."
     elapsed = (end - samples[0]["recorded_at"]).total_seconds() / 60
     delta = float(volumes[-1] - volumes[0])
@@ -618,6 +627,14 @@ async def serve() -> None:
                     backfill_complete = True
                     if count:
                         logger.info("Backfilled %d actionable ML alerts", count)
+                refreshed_model, refreshed_report, refreshed_version = load_model(model_path, report_path)
+                if refreshed_version != version:
+                    model, report, version = refreshed_model, refreshed_report, refreshed_version
+                    backfill_complete = False
+                    with _health_lock:
+                        _health["model_name"] = report["selected_model"]
+                        _health["model_version"] = version
+                    logger.info("Activated experimental model %s version %s", report["selected_model"], version)
                 processed = await run_batch(pool, model=model, report=report, model_version=version)
                 with _health_lock:
                     _health["status"] = "healthy"

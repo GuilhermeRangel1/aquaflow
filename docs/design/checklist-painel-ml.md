@@ -37,9 +37,10 @@ históricos são lidos do volume local do MLflow em modo somente leitura. Quando
 relatório antigo não contém curvas ou folds, a interface informa que esses dados
 não foram registrados naquela execução.
 
-O endpoint está disponível para qualquer usuário autenticado neste momento. A
-restrição por papel administrativo segue como item posterior já combinado; não
-exponha a tela em implantação compartilhada antes de acrescentá-la.
+O painel e as rotas de treinamento são restritos ao e-mail configurado em
+`ROOT_USER_EMAIL`. O cadastro público não concede o papel e também não pode
+reservar esse e-mail. Contas comuns recebem `403`; quando a configuração está
+vazia, o acesso administrativo fica desativado.
 
 Verificações executadas em 20/11/2026: backend `42 passed, 3 skipped`, testes do
 treinamento `3 passed`, frontend `3 passed`, typecheck, lint, build Next.js e
@@ -49,8 +50,6 @@ inexistente `404` e acesso anônimo `401`.
 
 ## Escopo posterior
 
-- Controle de acesso por papel administrativo, antes de disponibilização compartilhada.
-- Acionamento de novos treinamentos pela interface.
 - Telemetria e inferências ao vivo em uma entrega própria; esta tela não conclui sozinha essa parte do critério 11.
 
 ## Estado do Figma
@@ -81,7 +80,9 @@ retornaram zero avisos. O estado de navegação inativa no tema escuro foi
 corrigido após a inspeção. A seção desktop não colide com outras seções.
 As interações dos seletores são uma referência visual, ainda sem navegação
 interativa configurada no Figma. A interface e a consulta dinâmica estão
-implementadas; a restrição por papel administrativo permanece no escopo posterior.
+implementadas. Desde 20/11/2026, o controle de acesso administrativo e o
+acionamento seguro de retreinamento também estão implementados; confira a seção
+de retreinamento local no todo.
 
 ## Fluxos de navegação em preparação
 
@@ -116,3 +117,7 @@ Conjunto organizado para implementação salvo em
 com nomes estáveis e resolução original, exportados novamente em 20/11/2026.
 Inclui desktop, dark, mobile, estados, seletores, detalhes e estresse. As imagens
 35 a 38 foram também inspecionadas visualmente após esta exportação.
+
+## Acesso administrativo
+
+A API do painel exige a conta identificada por ROOT_USER_EMAIL, configurado no ambiente com o e-mail da conta root existente. Vazio desativa o acesso. Cadastro público não concede privilégios. Contas comuns recebem 403. A consulta auth/me informa is_admin para controlar a navegação. Ao recriar o banco, configure novamente o UUID da conta root.

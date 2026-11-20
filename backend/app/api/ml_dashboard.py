@@ -1,8 +1,12 @@
 import asyncio
+import json
+import urllib.error
+import urllib.request
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from app.api.deps import current_user
+from app.api.deps import root_user
 from app.db.models import User
 from app.schemas.ml_dashboard import MLTrainingDashboardOutput
 from app.services.ml_dashboard import (
@@ -17,11 +21,51 @@ from app.services.ml_dashboard import (
 router = APIRouter(prefix="/api/v1/ml", tags=["experimental ML dashboard"])
 
 
+def _retrainer_request(url: str, method: str) -> dict[str, Any]:
+    request = urllib.request.Request(f"{url.rstrip('/')}/jobs", method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            payload = json.loads(response.read())
+            return payload if isinstance(payload, dict) else {}
+    except urllib.error.HTTPError as error:
+        if error.code == 409:
+            payload = json.loads(error.read())
+            return payload if isinstance(payload, dict) else {}
+        raise
+
+
+@router.post("/training-jobs", status_code=202)
+async def start_training_job(request: Request, _user: User = Depends(root_user)) -> dict[str, Any]:
+    url = request.app.state.settings.ml_retraining_url
+    if not url:
+        raise HTTPException(status_code=503, detail={"code": "ml_retraining_unavailable"})
+    try:
+        return await asyncio.to_thread(_retrainer_request, url, "POST")
+    except (OSError, TimeoutError, urllib.error.URLError):
+        raise HTTPException(status_code=503, detail={"code": "ml_retraining_unavailable"}) from None
+
+
+@router.get("/training-jobs/{job_id}")
+async def get_training_job(
+    job_id: str, request: Request, _user: User = Depends(root_user)
+) -> dict[str, Any]:
+    url = request.app.state.settings.ml_retraining_url
+    if not url:
+        raise HTTPException(status_code=503, detail={"code": "ml_retraining_unavailable"})
+    try:
+        result = await asyncio.to_thread(_retrainer_request, url, "GET")
+    except (OSError, TimeoutError, urllib.error.URLError):
+        raise HTTPException(status_code=503, detail={"code": "ml_retraining_unavailable"}) from None
+    if result.get("id") != job_id:
+        raise HTTPException(status_code=404, detail={"code": "ml_training_job_not_found"})
+    return result
+
+
 @router.get("/training-dashboard", response_model=MLTrainingDashboardOutput)
 async def get_training_dashboard(
     request: Request,
     execution_id: str | None = Query(default=None, min_length=1, max_length=160),
-    user: User = Depends(current_user),
+    user: User = Depends(root_user),
 ) -> MLTrainingDashboardOutput:
     del user
     try:
@@ -76,8 +120,7 @@ async def get_training_dashboard(
         history_available=bool(executions),
         worker_status=worker,
         executions=[
-            {key: value for key, value in item.items() if key != "run_id"}
-            for item in executions
+            {key: value for key, value in item.items() if key != "run_id"} for item in executions
         ],
         active_report=active_report,
         report=report,

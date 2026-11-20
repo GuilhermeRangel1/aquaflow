@@ -12,5 +12,6 @@ COPY collection/bench-calibration-v1.json ./collection/bench-calibration-v1.json
 COPY feature_transforms.py ./feature_transforms.py
 COPY estimators.py ./estimators.py
 COPY inference_worker.py ./inference_worker.py
+COPY retraining_service.py ./retraining_service.py
 
 CMD ["python", "train_model.py"]

@@ -103,3 +103,14 @@ Pendência de validação: estados de erro/vazio não foram forçados visualment
 Em 20/11/2026, o usuário escolheu ativar automaticamente o novo modelo após aprovação. O botão de retreinamento ainda não está implementado. A implementação deve executar o pipeline, mostrar progresso/erro, impedir execuções duplicadas e só promover o artefato após as validações; não substituir o modelo ativo no início do treinamento. Relatórios históricos não devem ser sobrescritos.
 
 Correção dos históricos: o contrato agora inclui o relatório ativo separado do relatório consultado. A explicação da seleção permanece vinculada ao modelo ativo. As duas execuções de Random Forest de 19/11 não têm folds nem curvas nos artefatos originais; a interface informa a ausência e reduz o espaço vazio. Quality gate completo aprovado para essa alteração.
+
+
+## Retreinamento local concluido (20/11/2026)
+
+- O painel oferece Treinar novamente, bloqueia acionamentos simultaneos e mostra estado, falha e conclusao.
+- API autoriza o fluxo somente para ROOT_USER_EMAIL; o trabalhador de ML fica interno ao Compose.
+- Cadastro público rejeita o e-mail reservado ao root; preencher esse endereço sozinho não concede acesso administrativo.
+- Treinamento grava em pasta de candidato; valida hash, AP e comparacao sem regressao de AP/recall nos conjuntos de teste e estresse antes de trocar atomicamente active-model.json.
+- O worker consulta o ponteiro ativo e recarrega um artefato novo validado, sem parar as inferencias durante o treinamento.
+- Validado no Docker com execucoes aprovadas, historico atualizado, conta comum bloqueada (403) e worker healthy. As execucoes geraram o mesmo hash por usarem o mesmo dataset fixo e seed; os novos registros entraram no historico, mas os pesos nao mudaram.
+- A tela desktop foi inspecionada no navegador. Comparacao visual integral de mobile, tema escuro e estados com as exportacoes ainda pendente.
