@@ -466,7 +466,12 @@ export default function Dashboard() {
     if (!selectedId || loading || view !== "overview") return;
     let cancelled = false;
     const refreshHourlyConsumption = () => {
-      const end = new Date();
+      const now = Date.now();
+      const localMinutes = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: selected?.timezone ?? "UTC",
+        minute: "numeric",
+      }).format(now);
+      const end = new Date(Math.floor(now / 60_000) * 60_000 - Number(localMinutes) * 60_000);
       const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
       const params = new URLSearchParams({
         start: start.toISOString(),
@@ -495,7 +500,7 @@ export default function Dashboard() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [selectedId, loading, view]);
+  }, [selectedId, selected?.timezone, loading, view]);
   useEffect(() => {
     if (view !== "meters" || selectedDevices.length === 0) return;
     let cancelled = false;
@@ -928,10 +933,10 @@ export default function Dashboard() {
     if (hourlyWindowEnd === null) return [];
     const hourMs = 60 * 60 * 1000;
     const end = hourlyWindowEnd;
-    const firstHour = Math.floor((end - 24 * hourMs) / hourMs) * hourMs;
+    const firstHour = end - 24 * hourMs;
     const volumeByHour = new Map(
       (hourlyConsumption?.items ?? []).map((item) => [
-        Math.floor(new Date(item.bucket_start).getTime() / hourMs) * hourMs,
+        new Date(item.bucket_start).getTime(),
         item.volume_liters,
       ]),
     );
@@ -2060,10 +2065,12 @@ function OverviewInsights({
   hourlyLoading: boolean;
   hourlyError: string;
 }) {
-  const hourlyPlot = hourlyData.map((point) => ({
-    ...point,
-    chartValue: point.volume_liters ?? 0,
-  }));
+  const hourlyPlot = hourlyData
+    .map((point) => ({
+      ...point,
+      chartValue: point.volume_liters ?? 0,
+    }))
+    .sort((left, right) => Number(left.hour) - Number(right.hour));
 
   const observedHours = hourlyData.filter((point) => point.volume_liters !== null).length;
   let recordedTotal = 0;
@@ -2072,14 +2079,15 @@ function OverviewInsights({
     return { hour: point.hour, total: point.volume_liters === null ? null : recordedTotal };
   });
   const periods = ["Madrugada", "Manhã", "Tarde", "Noite"].map((label, index) => {
-    const observed = hourlyData.filter(
-      (point) => Math.floor(Number(point.hour) / 6) === index && point.volume_liters !== null,
-    );
+    const hours = hourlyData.filter((point) => Math.floor(Number(point.hour) / 6) === index);
+    const observed = hours.filter((point) => point.volume_liters !== null);
     const value = observed.reduce((sum, point) => sum + (point.volume_liters ?? 0), 0);
     return {
       label,
       value,
-      display: observed.length ? `${formatLiters(value)} · ${observed.length}/6 h` : "Sem dados",
+      display: observed.length
+        ? `${formatLiters(value)} · ${observed.length}/${hours.length} h`
+        : "Sem dados",
     };
   });
 
@@ -2088,7 +2096,7 @@ function OverviewInsights({
       <article className="overview-insight-card">
         <div className="overview-insight-heading">
           <h3>Consumo por horário</h3>
-          <span>Últimas 24 horas · litros</span>
+          <span>Últimas 24 horas completas · litros</span>
         </div>
         {hourlyLoading ? (
           <p className="overview-insight-message" role="status">
@@ -2165,7 +2173,7 @@ function OverviewInsights({
           <article className="overview-insight-card">
             <div className="overview-insight-heading">
               <h3>Consumo acumulado</h3>
-              <span>Últimas 24 horas · litros</span>
+              <span>Últimas 24 horas completas · litros</span>
             </div>
             {observedHours === 0 ? (
               <p className="overview-insight-message">
@@ -2242,7 +2250,7 @@ function InsightBreakdown({
     <article className="overview-insight-card">
       <div className="overview-insight-heading">
         <h3>{title}</h3>
-        <span>Últimas 24 horas</span>
+        <span>Últimas 24 horas completas</span>
       </div>
       <ul className="insight-breakdown">
         {rows.map((row) => (
