@@ -5,7 +5,6 @@ import pytest
 from httpx import AsyncClient
 
 
-
 def _reading(event_id: str) -> dict[str, object]:
     return {
         "device_serial": "TEST-DEVICE-001",
@@ -83,4 +82,4 @@ async def test_administration_house_cannot_be_archived(
 
     assert device.status_code == 201
     assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "property_archive_protected"
+    assert response.json()["code"] == "property_archive_protected"

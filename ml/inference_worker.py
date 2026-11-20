@@ -9,6 +9,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from itertools import pairwise
 from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
@@ -236,13 +237,12 @@ async def _backfill_existing_ml_alerts(
     model_version: str,
     threshold: float,
 ) -> int:
-    async with pool.acquire() as connection:
-        async with connection.transaction():
-            return await _backfill_ml_alerts(
-                connection,
-                model_version=model_version,
-                threshold=threshold,
-            )
+    async with pool.acquire() as connection, connection.transaction():
+        return await _backfill_ml_alerts(
+            connection,
+            model_version=model_version,
+            threshold=threshold,
+        )
 
 
 def load_model(model_path: Path, report_path: Path) -> tuple[Any, dict[str, Any], str]:
@@ -298,7 +298,7 @@ async def _aggregate_window(
         return None, "Cobertura insuficiente para a janela de cinco minutos."
     # Reuse the previous bucket's last sample as the next volume baseline.
     samples = [*history[candidates[-1]:], reading]
-    for before, after in zip(samples, samples[1:]):
+    for before, after in pairwise(samples):
         step = after["recorded_at"] - before["recorded_at"]
         if not timedelta(0) < step <= tolerance:
             return None, "Lacuna ou timestamp duplicado na janela de cinco minutos."
@@ -308,7 +308,7 @@ async def _aggregate_window(
     ):
         return None, "Volume acumulado válido insuficiente na janela de cinco minutos."
     volumes = [sample["cumulative_volume_liters"] for sample in samples]
-    if any(after < before for before, after in zip(volumes, volumes[1:])):
+    if any(after < before for before, after in pairwise(volumes)):
         return None, "O contador de volume diminuiu dentro da janela de cinco minutos."
     elapsed = (end - samples[0]["recorded_at"]).total_seconds() / 60
     delta = float(volumes[-1] - volumes[0])
@@ -382,7 +382,9 @@ async def run_batch(
         for reading in readings:
             if reading["expected_interval_seconds"] < MODEL_WINDOW_SECONDS:
                 if reading["timezone"] != report.get("timezone"):
-                    features, reason = None, "Fuso da propriedade diferente do fuso usado no treinamento."
+                    features, reason = None, (
+                        "Fuso da propriedade diferente do fuso usado no treinamento."
+                    )
                 else:
                     features, reason = await _aggregate_window(connection, reading)
                 if features is not None:
@@ -586,7 +588,9 @@ async def serve() -> None:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
     database_url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
     model_path = Path(os.getenv("ML_MODEL_PATH", "data/ml/training-bench-v2/best_model.joblib"))
-    report_path = Path(os.getenv("ML_TRAINING_REPORT_PATH", "data/ml/training-bench-v2/metrics.json"))
+    report_path = Path(
+        os.getenv("ML_TRAINING_REPORT_PATH", "data/ml/training-bench-v2/metrics.json")
+    )
     poll_seconds = max(1, int(os.getenv("ML_POLL_SECONDS", "5")))
     model, report, version = load_model(model_path, report_path)
     pool = await asyncpg.create_pool(database_url, min_size=1, max_size=4)

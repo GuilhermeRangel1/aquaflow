@@ -12,9 +12,9 @@ ML = Path(__file__).resolve().parents[1]
 if str(ML) not in sys.path:
     sys.path.insert(0, str(ML))
 
-from estimators import ProportionalKNeighborsClassifier  # noqa: E402
-from inference_worker import _aggregate_window  # noqa: E402
-from train_model import _regularized_trial  # noqa: E402
+from estimators import ProportionalKNeighborsClassifier
+from inference_worker import _aggregate_window
+from train_model import _regularized_trial
 
 BOUNDARY = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
 
@@ -75,7 +75,7 @@ def _window(history: list[dict], last: dict) -> tuple[dict | None, str | None]:
 
 def _full_history() -> list[dict]:
     # 10 samples every 30 s inside the bucket, preceded by one just before it.
-    return [_sample(-20, "100"), *[_sample(30 * i, str(100 + i)) for i in range(0, 10)]]
+    return [_sample(-20, "100"), *[_sample(30 * i, str(100 + i)) for i in range(10)]]
 
 
 def test_complete_window_yields_features() -> None:
