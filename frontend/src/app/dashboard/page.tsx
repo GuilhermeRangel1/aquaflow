@@ -345,11 +345,7 @@ export default function Dashboard() {
     () => devices.filter((item) => item.property_id === selectedId),
     [devices, selectedId],
   );
-  const latestMeterContact = selectedDevices.reduce<string | null>((latest, device) => {
-    const seen = device.last_seen_at;
-    if (!seen) return latest;
-    return latest === null || Date.parse(seen) > Date.parse(latest) ? seen : latest;
-  }, null);
+  const metersWithReadings = selectedDevices.filter((device) => device.last_seen_at).length;
   const selectedDevice = selectedDevices.find((item) => item.id === selectedDeviceId);
   const openAlertCount = alerts.filter((alert) => alert.status === "open").length;
   const acknowledgedAlertCount = alerts.filter((alert) => alert.status === "acknowledged").length;
@@ -1290,22 +1286,14 @@ export default function Dashboard() {
                     />
                     <Metric
                       label="Medidores"
-                      value={`${selectedDevices.length}`}
-                      note={
-                        latestMeterContact
-                          ? `Última comunicação · ${formatDate(latestMeterContact)}`
-                          : selectedDevices.length
-                            ? "Aguardando a primeira leitura"
-                            : "Nenhum medidor cadastrado"
-                      }
-                      actionLabel="Ver medidores"
-                      onAction={() => navigateView("meters")}
+                      value={`${metersWithReadings}`}
+                      unit="com leituras recebidas"
                     />
                     <Metric
-                      label="Avisos para acompanhar"
+                      label="Para acompanhar"
                       value={`${activeAlertCount}`}
-                      unit="avisos"
-                      note={`${openAlertCount} ${openAlertCount === 1 ? "aberto" : "abertos"} · ${acknowledgedAlertCount} ${acknowledgedAlertCount === 1 ? "reconhecido" : "reconhecidos"}`}
+                      unit={activeAlertCount === 1 ? "aviso" : "avisos"}
+                      attention={activeAlertCount > 0}
                       actionLabel={firstActiveAlert ? "Ver alertas" : undefined}
                       onAction={firstActiveAlert ? () => navigateView("alerts") : undefined}
                     />
@@ -2275,19 +2263,21 @@ function Metric({
   note,
   unit,
   featured = false,
+  attention = false,
   actionLabel,
   onAction,
 }: {
   label: string;
   value: string;
-  note: string;
+  note?: string;
   unit?: string;
   featured?: boolean;
+  attention?: boolean;
   actionLabel?: string;
   onAction?: () => void;
 }) {
   const metricValue = (
-    <p className="metric-value">
+    <p className={attention ? "metric-value metric-value--attention" : "metric-value"}>
       {value}
       {unit && <span>{unit}</span>}
     </p>
@@ -2306,7 +2296,7 @@ function Metric({
       ) : (
         metricValue
       )}
-      <span className="metric-note">{note}</span>
+      {note && <span className="metric-note">{note}</span>}
       {featured && (
         <span className="metric-spark" aria-hidden="true">
           ↗

@@ -766,8 +766,8 @@
 }
 
 .dashboard-page .metrics-grid .metric-card {
-  min-height: 94px;
-  padding: 16px 22px;
+  min-height: 82px;
+  padding: 14px 20px;
   background: var(--surface);
   border: 0;
   border-radius: 18px;
@@ -775,8 +775,8 @@
 
 .dashboard-page .metrics-grid .metric-card--featured {
   grid-area: 1 / 1 / span 2;
-  min-height: 204px;
-  padding: 24px 26px;
+  min-height: 180px;
+  padding: 20px 24px;
   border-radius: 24px;
   background: var(--accent-soft);
 }
@@ -786,7 +786,28 @@
 }
 
 .dashboard-page .metric-card--featured .metric-value {
-  font-size: clamp(40px, 5vw, 64px);
+  font-size: clamp(40px, 4.5vw, 62px);
+}
+
+.dashboard-page .metric-card:not(.metric-card--featured) .metric-value {
+  margin: 5px 0 0;
+}
+
+.dashboard-page .metric-card:not(.metric-card--featured) .metric-label,
+.dashboard-page .metric-card:not(.metric-card--featured) .metric-value span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.dashboard-page .metric-card .metric-value--attention,
+.dashboard-page .metric-card:not(.metric-card--featured) .metric-value--attention span {
+  color: var(--warm);
+}
+
+.dashboard-page .metric-card:not(.metric-card--featured) .metric-value--attention span {
+  font-size: 0.7em;
+  font-weight: inherit;
 }
 
 .dashboard-page .metric-card--featured .metric-value span {
@@ -1399,7 +1420,7 @@
 
 .dashboard-page .dashboard-heading h1 {
   font-size: clamp(30px, 3vw, 38px);
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: -0.025em;
 }
 
@@ -1432,7 +1453,7 @@
 }
 
 .dashboard-page .chart-wrap {
-  height: clamp(210px, 21vw, 275px);
+  height: clamp(205px, 18vw, 245px);
 }
 
 .metric-value-row {
@@ -1528,7 +1549,19 @@
   }
 
   .dashboard-page .app-sidebar .app-nav {
-    margin-top: 42px;
+    margin-top: 36px;
+    gap: 4px;
+  }
+
+  .dashboard-page .app-sidebar .nav-link {
+    min-height: 42px;
+    border-radius: 10px;
+    font-size: 13px;
+  }
+
+  .dashboard-page .app-sidebar .nav-link--active {
+    color: var(--ink);
+    font-weight: 500;
   }
 }
 
@@ -2340,10 +2373,6 @@
   .dashboard-page :is(.property-create-page, .alert-detail-card, .settings-card) {
     animation: none;
   }
-}
-
-.dashboard-page .dashboard-heading--device-list h1 {
-  font-weight: 600;
 }
 
 .dashboard-heading--device-list .add-meter-button,
