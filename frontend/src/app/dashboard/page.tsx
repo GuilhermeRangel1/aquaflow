@@ -15,7 +15,12 @@ import {
   YAxis,
 } from "recharts";
 import { Brand, ThemeToggle } from "../../components/brand";
-import { resolveActivePropertyId, resolveDashboardRoute } from "./dashboard-state.mjs";
+import { MLTrainingView } from "./ml-training";
+import {
+  orderHoursFromMidnight,
+  resolveActivePropertyId,
+  resolveDashboardRoute,
+} from "./dashboard-state.mjs";
 
 type Property = {
   id: string;
@@ -279,7 +284,9 @@ function PropertyPicker({
 
 export default function Dashboard() {
   const router = useRouter();
-  const [view, setView] = useState<"overview" | "meters" | "alerts" | "settings">("overview");
+  const [view, setView] = useState<"overview" | "meters" | "alerts" | "settings" | "training">(
+    "overview",
+  );
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [properties, setProperties] = useState<Property[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
@@ -819,7 +826,7 @@ export default function Dashboard() {
     return updated;
   }
 
-  function navigateView(destination: "overview" | "meters" | "alerts" | "settings") {
+  function navigateView(destination: "overview" | "meters" | "alerts" | "settings" | "training") {
     setView(destination);
     setSuccessNotice("");
     setError("");
@@ -941,13 +948,15 @@ export default function Dashboard() {
       timeZone: selected?.timezone ?? "UTC",
       hourCycle: "h23",
     });
-    return Array.from({ length: 24 }, (_, index) => {
-      const timestamp = firstHour + index * hourMs;
-      return {
-        hour: hourLabel.format(timestamp),
-        volume_liters: volumeByHour.get(timestamp) ?? null,
-      };
-    });
+    return orderHoursFromMidnight(
+      Array.from({ length: 24 }, (_, index) => {
+        const timestamp = firstHour + index * hourMs;
+        return {
+          hour: hourLabel.format(timestamp),
+          volume_liters: volumeByHour.get(timestamp) ?? null,
+        };
+      }),
+    );
   }, [hourlyConsumption, hourlyWindowEnd, selected?.timezone]);
   const cancelPropertyCreation = () => {
     setShowPropertyForm(false);
@@ -1039,6 +1048,15 @@ export default function Dashboard() {
                 <span className="nav-link-label">{label}</span>
               </button>
             ))}
+            <span className="sidebar-section-label nav-section-label">Área técnica</span>
+            <button
+              type="button"
+              aria-current={view === "training" ? "page" : undefined}
+              className={`nav-link${view === "training" ? " nav-link--active" : ""}`}
+              onClick={() => navigateView("training")}
+            >
+              <span className="nav-link-label">Modelos e treinamento</span>
+            </button>
           </nav>
           <div className="sidebar-footer">
             <button onClick={logout} className="button button--quiet">
@@ -1054,7 +1072,9 @@ export default function Dashboard() {
                   <Brand compact />
                 </div>
                 <span className="app-context-property">
-                  {selected?.name ?? "Acompanhamento da sua água"}
+                  {view === "training"
+                    ? "Área técnica / Machine Learning"
+                    : (selected?.name ?? "Acompanhamento da sua água")}
                 </span>
               </div>
               <div className="header-actions">
@@ -1086,7 +1106,9 @@ export default function Dashboard() {
                           : !selected
                             ? "Vamos começar pela sua casa"
                             : "Sua casa, do seu jeito"
-                        : "Sua água, de perto"}
+                        : view === "training"
+                          ? "Modelos e treinamento"
+                          : "Sua água, de perto"}
                 </h1>
                 <p>
                   {view === "meters"
@@ -1103,7 +1125,9 @@ export default function Dashboard() {
                           : !selected
                             ? "Crie um local para organizar seus medidores."
                             : "Ajuste os dados e o acompanhamento da sua casa."
-                        : "Acompanhe o consumo e o que merece atenção."}
+                        : view === "training"
+                          ? "Acompanhe as avaliações, compare modelos e consulte cada treinamento."
+                          : "Acompanhe o consumo e o que merece atenção."}
                 </p>
               </div>
               <div className="mobile-property-picker">{propertyPicker}</div>
@@ -1154,7 +1178,9 @@ export default function Dashboard() {
                 {successNotice}
               </p>
             )}
-            {loading && properties.length === 0 ? (
+            {view === "training" ? (
+              <MLTrainingView />
+            ) : loading && properties.length === 0 ? (
               <LoadingCard />
             ) : error && properties.length === 0 ? (
               <section className="surface load-error-card" aria-labelledby="load-error-title">
