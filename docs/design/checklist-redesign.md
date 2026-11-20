@@ -83,4 +83,4 @@ medidor e dois avisos. Os nomes, os horários e o número de itens vêm da API.
 - [x] Imagem do frontend reconstruída e contêiner saudável em `http://localhost:3000`.
 - [x] API, PostgreSQL, inferência ML e MQTT continuam saudáveis; contêineres órfãos de validação do PR1 foram removidos.
 - [ ] Capturas comparativas automatizadas no navegador: não concluídas; a tentativa de automação local foi bloqueada pela política do ambiente.
-- [ ] Testes automatizados: não executados nesta rodada.
+- [x] Testes automatizados do frontend: 3 passaram. O teste do seed não iniciou porque o ambiente Python local não tem `asyncpg` instalado.
