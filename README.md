@@ -104,7 +104,7 @@ Para mudar o e-mail ou a senha, copie `.env.example` para `.env` e altere `DEMO_
 
 ### O que você verá
 
-Na conta local de Administração, selecione **Casa da Administração** para ver o **Medidor da série híbrida**. O Compose carrega esse histórico no PostgreSQL na primeira execução. A série usa vazões calibradas por medições do sensor de bancada, com rotina e datas simuladas. O seed preserva a telemetria física e remove os medidores antigos identificados como exemplos, junto com seus alertas e leituras.
+Na conta local de Administração, selecione **Casa da Administração** para ver o **Medidor principal**. O Compose carrega esse histórico no PostgreSQL na primeira execução. A série usa vazões calibradas por medições do sensor de bancada, com rotina e datas simuladas. O seed preserva a telemetria física e remove os medidores antigos identificados como exemplos, junto com seus alertas e leituras.
 
 ### Demonstrar com o ESP32
 

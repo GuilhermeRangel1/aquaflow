@@ -150,7 +150,7 @@ async def _seed_hybrid_property(
         device = _device(
             property_row.id,
             serial,
-            "Medidor da série híbrida",
+            "Medidor principal",
             now,
             last_seen_at=readings[-1][0],
         )
