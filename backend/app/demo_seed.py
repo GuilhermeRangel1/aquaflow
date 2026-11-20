@@ -4,7 +4,7 @@ import asyncio
 import csv
 import re
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -105,15 +105,6 @@ async def _seed_hybrid_property(
                 property_row.name = name
         if property_row is None or device.property_id != property_row.id:
             raise RuntimeError("Dispositivo híbrido pertence a outra propriedade.")
-        if await session.scalar(
-            select(TelemetryReading.id)
-            .where(
-                TelemetryReading.device_id == device.id,
-                TelemetryReading.event_id.like("demo-hybrid-v1-%"),
-            )
-            .limit(1)
-        ):
-            return False
     with dataset_path.open(newline="", encoding="utf-8") as source:
         rows = [
             (datetime.fromisoformat(row["recorded_at"]), row)
@@ -122,9 +113,27 @@ async def _seed_hybrid_property(
         ]
     if not rows:
         raise ValueError("Dataset da demonstração híbrida sem leituras.")
+    if device is not None:
+        latest = await session.scalar(
+            select(TelemetryReading)
+            .where(TelemetryReading.device_id == device.id)
+            .order_by(TelemetryReading.recorded_at.desc())
+            .limit(1)
+        )
+        if latest is not None:
+            extended = _extend_hybrid_history(session, device, latest, rows, now)
+            adjusted = await _add_afternoon_usage(session, device, now)
+            return extended or adjusted
     zone = ZoneInfo(PROPERTY_TIMEZONE)
     shift = now.astimezone(zone).date() - rows[-1][0].astimezone(zone).date()
+    # Reserve the recent window for the normal-use profile on the first startup too.
+    # Smaller fixtures without a normal profile retain their original import behavior.
     readings = [(timestamp + shift, row) for timestamp, row in rows if timestamp + shift <= now]
+    if any(row.get("scenario_label") == "normal" for _, row in rows):
+        recent_start = now - timedelta(hours=24)
+        historical = [(timestamp, row) for timestamp, row in readings if timestamp < recent_start]
+        if historical:
+            readings = historical
     if not readings:
         raise ValueError("Dataset da demonstração híbrida sem leituras até o horário atual.")
     if property_row is None:
@@ -147,24 +156,111 @@ async def _seed_hybrid_property(
         )
         session.add(device)
         await session.flush()
-    session.add_all(
-        [
+    historical_readings = [
+        TelemetryReading(
+            device_id=device.id,
+            event_id=f"demo-hybrid-v1-{row['event_id']}",
+            recorded_at=timestamp,
+            received_at=now,
+            cumulative_volume_liters=Decimal(row["cumulative_volume_liters"]),
+            flow_rate_liters_minute=Decimal(row["flow_rate_liters_minute"]),
+            quality="valid",
+            battery_percent=int(row["battery_percent"]),
+            signal_dbm=int(row["signal_dbm"]),
+            firmware_version=row["firmware_version"],
+        )
+        for timestamp, row in readings
+    ]
+    session.add_all(historical_readings)
+    _extend_hybrid_history(session, device, historical_readings[-1], rows, now)
+    await _add_afternoon_usage(session, device, now)
+    return True
+
+
+def _extend_hybrid_history(
+    session: AsyncSession,
+    device: Device,
+    latest: TelemetryReading,
+    rows: list[tuple[datetime, dict[str, str]]],
+    now: datetime,
+) -> bool:
+    if not latest.event_id.startswith(("demo-hybrid-v1-", "demo-hybrid-extension-")):
+        return False
+    zone = ZoneInfo(PROPERTY_TIMEZONE)
+    profiles: dict[date, dict[tuple[int, int], Decimal]] = {}
+    for timestamp, row in rows:
+        if row.get("scenario_label") != "normal":
+            continue
+        local = timestamp.astimezone(zone)
+        profiles.setdefault(local.date(), {})[local.hour, local.minute] = Decimal(
+            row["flow_rate_liters_minute"]
+        )
+    if not profiles or latest.cumulative_volume_liters is None:
+        return False
+
+    profile = max(profiles.values(), key=len)
+    interval = timedelta(minutes=5)
+    end = now.replace(minute=now.minute // 5 * 5)
+    previous = latest.recorded_at
+    previous = previous.replace(tzinfo=UTC) if previous.tzinfo is None else previous
+    start = previous + interval
+    timestamp = max(start, end - timedelta(hours=24))
+    cumulative = latest.cumulative_volume_liters
+    if timestamp > end:
+        return False
+    while timestamp <= end:
+        local = timestamp.astimezone(zone)
+        flow = profile.get((local.hour, local.minute // 5 * 5), Decimal(0))
+        cumulative += flow * 5
+        session.add(
             TelemetryReading(
                 device_id=device.id,
-                event_id=f"demo-hybrid-v1-{row['event_id']}",
+                event_id=f"demo-hybrid-extension-{timestamp:%Y%m%d%H%M}",
                 recorded_at=timestamp,
                 received_at=now,
-                cumulative_volume_liters=Decimal(row["cumulative_volume_liters"]),
-                flow_rate_liters_minute=Decimal(row["flow_rate_liters_minute"]),
+                cumulative_volume_liters=cumulative,
+                flow_rate_liters_minute=flow,
                 quality="valid",
-                battery_percent=int(row["battery_percent"]),
-                signal_dbm=int(row["signal_dbm"]),
-                firmware_version=row["firmware_version"],
             )
-            for timestamp, row in readings
-        ]
-    )
+        )
+        timestamp += interval
+    device.last_seen_at = timestamp - interval
     return True
+
+
+async def _add_afternoon_usage(session: AsyncSession, device: Device, now: datetime) -> bool:
+    """Add short normal uses to the simulated extension and carry the meter total forward."""
+    await session.flush()
+    recent = (
+        await session.scalars(
+            select(TelemetryReading)
+            .where(
+                TelemetryReading.device_id == device.id,
+                TelemetryReading.recorded_at >= now - timedelta(hours=24),
+            )
+            .order_by(TelemetryReading.recorded_at)
+        )
+    ).all()
+    if any(not reading.event_id.startswith("demo-hybrid-") for reading in recent):
+        return False
+
+    zone = ZoneInfo(PROPERTY_TIMEZONE)
+    uses = {(16, 10): Decimal("1.4"), (17, 10): Decimal("0.8")}
+    extra_volume = Decimal(0)
+    for reading in recent:
+        if not reading.event_id.startswith("demo-hybrid-extension-"):
+            continue
+        timestamp = reading.recorded_at
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=UTC)
+        local = timestamp.astimezone(zone)
+        flow = uses.get((local.hour, local.minute))
+        if flow is not None and reading.flow_rate_liters_minute == 0:
+            reading.flow_rate_liters_minute = flow
+            extra_volume += flow * 5
+        if extra_volume and reading.cumulative_volume_liters is not None:
+            reading.cumulative_volume_liters += extra_volume
+    return bool(extra_volume)
 
 
 def _device(
