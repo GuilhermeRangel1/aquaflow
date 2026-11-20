@@ -341,6 +341,7 @@ export default function Dashboard() {
   const [alertFilter, setAlertFilter] = useState<"open" | "acknowledged" | "resolved" | "all">(
     "open",
   );
+  const [isAdmin, setIsAdmin] = useState(false);
   const [showDeviceForm, setShowDeviceForm] = useState(false);
   const [showPropertyForm, setShowPropertyForm] = useState(false);
   const selected = properties.find((item) => item.id === selectedId);
@@ -375,10 +376,13 @@ export default function Dashboard() {
     setLoading(true);
     setError("");
     try {
-      const [propertyResult, deviceResult] = await Promise.all([
+      const [propertyResult, deviceResult, account] = await Promise.all([
         api<{ items: Property[] }>("properties"),
         api<{ items: Device[] }>("devices"),
+        api<{ is_admin: boolean }>("auth/me"),
       ]);
+      setIsAdmin(account.is_admin === true);
+      if (!account.is_admin) setView((current) => (current === "training" ? "overview" : current));
       setProperties(propertyResult.items);
       setDevices(deviceResult.items);
       const availableIds = propertyResult.items.map((property) => property.id);
@@ -1048,15 +1052,19 @@ export default function Dashboard() {
                 <span className="nav-link-label">{label}</span>
               </button>
             ))}
-            <span className="sidebar-section-label nav-section-label">Área técnica</span>
-            <button
-              type="button"
-              aria-current={view === "training" ? "page" : undefined}
-              className={`nav-link${view === "training" ? " nav-link--active" : ""}`}
-              onClick={() => navigateView("training")}
-            >
-              <span className="nav-link-label">Modelos e treinamento</span>
-            </button>
+            {isAdmin && (
+              <>
+                <span className="sidebar-section-label nav-section-label">Área técnica</span>
+                <button
+                  type="button"
+                  aria-current={view === "training" ? "page" : undefined}
+                  className={`nav-link${view === "training" ? " nav-link--active" : ""}`}
+                  onClick={() => navigateView("training")}
+                >
+                  <span className="nav-link-label">Modelos e treinamento</span>
+                </button>
+              </>
+            )}
           </nav>
           <div className="sidebar-footer">
             <button onClick={logout} className="button button--quiet">
@@ -1178,7 +1186,7 @@ export default function Dashboard() {
                 {successNotice}
               </p>
             )}
-            {view === "training" ? (
+            {view === "training" && isAdmin ? (
               <MLTrainingView />
             ) : loading && properties.length === 0 ? (
               <LoadingCard />

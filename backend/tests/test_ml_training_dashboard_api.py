@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.api.deps import current_user
+from app.api.deps import current_user, root_user
 from app.core.config import Settings
 from app.main import create_app
 
@@ -14,7 +14,7 @@ def _dashboard_client(artifacts_dir: Path, mlflow_uri: str | None = None) -> Asy
     app = create_app(
         settings=Settings(ml_artifacts_dir=artifacts_dir, mlflow_tracking_uri=mlflow_uri)
     )
-    app.dependency_overrides[current_user] = lambda: None
+    app.dependency_overrides[root_user] = lambda: None
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
@@ -77,14 +77,16 @@ async def test_dashboard_rejects_execution_not_in_mlflow_history(
     (model_artifact.parent / "metrics.json").write_text(json.dumps(report), encoding="utf-8")
 
     async def executions(*_args):
-        return [{
-            "id": "known-run",
-            "run_id": "internal-run-id",
-            "model": "knn",
-            "model_version": report["model_sha256"],
-            "started_at": None,
-            "candidate_count": 4,
-        }]
+        return [
+            {
+                "id": "known-run",
+                "run_id": "internal-run-id",
+                "model": "knn",
+                "model_version": report["model_sha256"],
+                "started_at": None,
+                "candidate_count": 4,
+            }
+        ]
 
     monkeypatch.setattr("app.api.ml_dashboard.list_mlflow_executions", executions)
     async with _dashboard_client(tmp_path) as client:
@@ -108,9 +110,7 @@ async def test_dashboard_loads_selected_history_without_changing_active_model(
         "mlflow_experiment_id": "2",
         "threshold": 0.5,
     }
-    (model_artifact.parent / "metrics.json").write_text(
-        json.dumps(active_report), encoding="utf-8"
-    )
+    (model_artifact.parent / "metrics.json").write_text(json.dumps(active_report), encoding="utf-8")
     history_report = {"selected_model": "decision_tree", "threshold": 0.5}
 
     async def executions(*_args):
@@ -184,3 +184,39 @@ def test_worker_status_reads_only_known_health_state(monkeypatch) -> None:
     )
     assert ml_dashboard._read_ml_worker_status("http://worker/health") == "unavailable"
     assert ml_dashboard._read_ml_worker_status(None) == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_rejects_regular_authenticated_account(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    app = create_app(
+        settings=Settings(ml_artifacts_dir=tmp_path, root_user_email="root@example.com")
+    )
+    app.dependency_overrides[current_user] = lambda: SimpleNamespace(
+        id=uuid4(), email="regular@example.com"
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/ml/training-dashboard")
+    assert response.status_code == 403
+    assert response.json()["code"] == "admin_required"
+
+
+@pytest.mark.asyncio
+async def test_public_registration_cannot_claim_root_email(tmp_path: Path) -> None:
+    app = create_app(
+        settings=Settings(ml_artifacts_dir=tmp_path, root_user_email="root@example.com")
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "name": "Tentativa de cadastro root",
+                "email": "ROOT@example.com",
+                "password": "test-password-with-12",
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "root_account_reserved"

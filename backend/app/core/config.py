@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import EmailStr, Field, model_validator
+from pydantic import EmailStr, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,8 +23,15 @@ class Settings(BaseSettings):
     demo_user_password: str = Field(default="AquaFlow-demo-123!", min_length=8, max_length=128)
     mqtt_ingestor_health_url: str | None = None
     ml_worker_health_url: str | None = None
+    root_user_email: EmailStr | None = None
     ml_artifacts_dir: Path = Path("data/ml")
     mlflow_tracking_uri: str | None = None
+    ml_retraining_url: str | None = None
+
+    @field_validator("root_user_email", mode="before")
+    @classmethod
+    def empty_root_email(cls, value: object) -> object:
+        return None if value == "" else value
 
     @model_validator(mode="after")
     def require_secure_production_secret(self) -> "Settings":
