@@ -6,7 +6,7 @@ import "./auth.css";
 import { useRouter } from "next/navigation";
 import { Brand, ThemeToggle } from "../components/brand";
 
-type ApiError = { message?: string; detail?: { message?: string } };
+type ApiError = { code?: string; message?: string; detail?: { code?: string; message?: string } };
 
 export default function Home() {
   const router = useRouter();
@@ -32,6 +32,8 @@ export default function Home() {
         body: JSON.stringify(payload),
       });
       const result = (await response.json()) as ApiError;
+      if (!response.ok && (result.code ?? result.detail?.code) === "invalid_credentials")
+        throw new Error("E-mail ou senha incorretos.");
       if (!response.ok)
         throw new Error(result.message ?? result.detail?.message ?? "Não foi possível entrar.");
       router.replace("/dashboard");

@@ -9,6 +9,8 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -302,11 +304,12 @@ export default function Dashboard() {
   const [loadingMoreAlerts, setLoadingMoreAlerts] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
-  const [periodDays, setPeriodDays] = useState<7 | 30 | 90>(7);
+  const [periodDays, setPeriodDays] = useState<1 | 7 | 30 | 90>(7);
   const [consumption, setConsumption] = useState<Consumption | null>(null);
   const [loadedPeriod, setLoadedPeriod] = useState(periodDays);
   const [consumptionFailed, setConsumptionFailed] = useState(false);
   const consumptionPending = !consumptionFailed && (!consumption || loadedPeriod !== periodDays);
+  const detailHours = periodDays * 24;
   const [hourlyConsumption, setHourlyConsumption] = useState<Consumption | null>(null);
   const [hourlyWindowEnd, setHourlyWindowEnd] = useState<number | null>(null);
   const [hourlyConsumptionError, setHourlyConsumptionError] = useState("");
@@ -433,7 +436,7 @@ export default function Dashboard() {
     const params = new URLSearchParams({
       start: start.toISOString(),
       end: end.toISOString(),
-      granularity: "day",
+      granularity: periodDays === 1 ? "hour" : "day",
     });
     api<Consumption>(`properties/${selectedId}/consumption?${params}`)
       .then((result) => {
@@ -479,14 +482,26 @@ export default function Dashboard() {
         minute: "numeric",
       }).format(now);
       const end = new Date(Math.floor(now / 60_000) * 60_000 - Number(localMinutes) * 60_000);
-      const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+      const start = new Date(end.getTime() - detailHours * 60 * 60 * 1000);
       const params = new URLSearchParams({
         start: start.toISOString(),
         end: end.toISOString(),
         granularity: "hour",
-        limit: "48",
+        limit: "2000",
       });
-      api<Consumption>(`properties/${selectedId}/consumption?${params}`)
+      (async () => {
+        const items: Bucket[] = [];
+        let result: Consumption & { cursor?: string | null; has_more?: boolean };
+        do {
+          result = await api<Consumption & { cursor?: string | null; has_more?: boolean }>(
+            `properties/${selectedId}/consumption?${params}`,
+          );
+          items.push(...result.items);
+          if (result.has_more && result.cursor) params.set("cursor", result.cursor);
+          else break;
+        } while (!cancelled);
+        return { ...result, items };
+      })()
         .then((result) => {
           if (!cancelled) {
             setHourlyConsumption(result);
@@ -507,7 +522,7 @@ export default function Dashboard() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [selectedId, selected?.timezone, loading, view]);
+  }, [selectedId, selected?.timezone, loading, view, detailHours]);
   useEffect(() => {
     if (view !== "meters" || selectedDevices.length === 0) return;
     let cancelled = false;
@@ -881,8 +896,11 @@ export default function Dashboard() {
     window.history.pushState({}, "", "/dashboard?view=alerts");
   }
 
-  function changePeriod(days: 7 | 30 | 90) {
+  function changePeriod(days: 1 | 7 | 30 | 90) {
     setConsumptionFailed(false);
+    setHourlyConsumption(null);
+    setHourlyWindowEnd(null);
+    setHourlyConsumptionError("");
     setPeriodDays(days);
   }
 
@@ -909,8 +927,9 @@ export default function Dashboard() {
   const chartData = (consumption?.items ?? []).map((item) => ({
     ...item,
     day: new Intl.DateTimeFormat("pt-BR", {
-      day: "2-digit",
-      month: "short",
+      ...(loadedPeriod === 1
+        ? { hour: "2-digit" as const, minute: "2-digit" as const }
+        : { day: "2-digit" as const, month: "short" as const }),
       timeZone: selected?.timezone,
     }).format(new Date(item.bucket_start)),
   }));
@@ -940,7 +959,7 @@ export default function Dashboard() {
     if (hourlyWindowEnd === null) return [];
     const hourMs = 60 * 60 * 1000;
     const end = hourlyWindowEnd;
-    const firstHour = end - 24 * hourMs;
+    const firstHour = end - detailHours * hourMs;
     const volumeByHour = new Map(
       (hourlyConsumption?.items ?? []).map((item) => [
         new Date(item.bucket_start).getTime(),
@@ -952,16 +971,24 @@ export default function Dashboard() {
       timeZone: selected?.timezone ?? "UTC",
       hourCycle: "h23",
     });
-    return orderHoursFromMidnight(
-      Array.from({ length: 24 }, (_, index) => {
-        const timestamp = firstHour + index * hourMs;
-        return {
-          hour: hourLabel.format(timestamp),
-          volume_liters: volumeByHour.get(timestamp) ?? null,
-        };
-      }),
-    );
-  }, [hourlyConsumption, hourlyWindowEnd, selected?.timezone]);
+    const dateLabel = new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      timeZone: selected?.timezone ?? "UTC",
+    });
+    const points = Array.from({ length: detailHours }, (_, index) => {
+      const timestamp = firstHour + index * hourMs;
+      return {
+        hour:
+          detailHours === 24
+            ? hourLabel.format(timestamp)
+            : `${dateLabel.format(timestamp)} ${hourLabel.format(timestamp)}h`,
+        periodHour: Number(hourLabel.format(timestamp)),
+        volume_liters: volumeByHour.get(timestamp) ?? null,
+      };
+    });
+    return detailHours === 24 ? orderHoursFromMidnight(points) : points;
+  }, [hourlyConsumption, hourlyWindowEnd, selected?.timezone, detailHours]);
   const cancelPropertyCreation = () => {
     setShowPropertyForm(false);
     setNewProperty("");
@@ -1139,19 +1166,28 @@ export default function Dashboard() {
                 </p>
               </div>
               <div className="mobile-property-picker">{propertyPicker}</div>
-              {view === "meters" && selectedDevice && editingDeviceId !== selectedDevice.id && (
-                <button
-                  type="button"
-                  className="button button--outline meter-edit-trigger"
-                  onClick={() => {
-                    beginDeviceEdit(selectedDevice);
-                    requestAnimationFrame(() =>
-                      document.getElementById("meter-edit-name")?.focus(),
-                    );
-                  }}
-                >
-                  Editar medidor
-                </button>
+              {view === "meters" && selectedDevice && (
+                <div className="meter-detail-actions meter-detail-actions--top">
+                  <button
+                    type="button"
+                    className="button button--outline meter-edit-trigger"
+                    onClick={() => {
+                      beginDeviceEdit(selectedDevice);
+                      requestAnimationFrame(() =>
+                        document.getElementById("meter-edit-name")?.focus(),
+                      );
+                    }}
+                  >
+                    Editar medidor
+                  </button>
+                  <button
+                    type="button"
+                    className="button button--quiet meter-retire-trigger"
+                    onClick={() => retireDialog.current?.showModal()}
+                  >
+                    Retirar medidor
+                  </button>
+                </div>
               )}
               {view === "meters" && selected && !selectedDeviceId && (
                 <button
@@ -1301,7 +1337,7 @@ export default function Dashboard() {
                   <section className="metrics-grid" aria-label="Resumo de consumo">
                     <Metric
                       featured
-                      label={`Seu consumo · Últimos ${consumption ? loadedPeriod : periodDays} dias`}
+                      label={`Seu consumo · ${consumptionWindowLabel((consumption ? loadedPeriod : periodDays) * 24)}`}
                       value={
                         consumption?.summary.valid_interval_count
                           ? consumption.summary.total_volume_liters.toLocaleString("pt-BR", {
@@ -1444,57 +1480,7 @@ export default function Dashboard() {
                                   : "Salvar alterações"}
                               </button>
                             </div>
-                            <div className="meter-edit-removal">
-                              <button
-                                type="button"
-                                className="button button--quiet"
-                                disabled={deviceActionId === selectedDevice.id}
-                                onClick={() => retireDialog.current?.showModal()}
-                              >
-                                Retirar medidor
-                              </button>
-                            </div>
                           </form>
-                          <dialog
-                            ref={retireDialog}
-                            className="property-archive-dialog"
-                            aria-labelledby="meter-retire-title"
-                            aria-describedby="meter-retire-description"
-                            onCancel={(event) => {
-                              if (deviceActionId === selectedDevice.id) event.preventDefault();
-                            }}
-                          >
-                            <h2 id="meter-retire-title">Retirar medidor?</h2>
-                            <p id="meter-retire-description">
-                              <strong>{selectedDevice.name}</strong> deixará de aparecer na lista. O
-                              histórico de leituras será preservado.
-                            </p>
-                            <div className="property-archive-dialog-actions">
-                              <button
-                                type="button"
-                                className="button button--quiet"
-                                autoFocus
-                                disabled={deviceActionId === selectedDevice.id}
-                                onClick={() => retireDialog.current?.close()}
-                              >
-                                Cancelar
-                              </button>
-                              <button
-                                type="button"
-                                className="button property-archive-confirm"
-                                disabled={deviceActionId === selectedDevice.id}
-                                onClick={async (event) => {
-                                  const dialog = event.currentTarget.closest("dialog");
-                                  await retireDevice(selectedDevice);
-                                  dialog?.close();
-                                }}
-                              >
-                                {deviceActionId === selectedDevice.id
-                                  ? "Retirando…"
-                                  : "Confirmar retirada"}
-                              </button>
-                            </div>
-                          </dialog>
                         </section>
                       )}
                       <section className="meter-current-card" aria-label="Última leitura">
@@ -1595,6 +1581,46 @@ export default function Dashboard() {
                           </p>
                         )}
                       </section>
+                      <dialog
+                        ref={retireDialog}
+                        className="property-archive-dialog"
+                        aria-labelledby="meter-retire-title"
+                        aria-describedby="meter-retire-description"
+                        onCancel={(event) => {
+                          if (deviceActionId === selectedDevice.id) event.preventDefault();
+                        }}
+                      >
+                        <h2 id="meter-retire-title">Retirar medidor?</h2>
+                        <p id="meter-retire-description">
+                          <strong>{selectedDevice.name}</strong> deixará de aparecer na lista. O
+                          histórico de leituras será preservado.
+                        </p>
+                        <div className="property-archive-dialog-actions">
+                          <button
+                            type="button"
+                            className="button button--quiet"
+                            autoFocus
+                            disabled={deviceActionId === selectedDevice.id}
+                            onClick={() => retireDialog.current?.close()}
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="button"
+                            className="button property-archive-confirm"
+                            disabled={deviceActionId === selectedDevice.id}
+                            onClick={async (event) => {
+                              const dialog = event.currentTarget.closest("dialog");
+                              await retireDevice(selectedDevice);
+                              dialog?.close();
+                            }}
+                          >
+                            {deviceActionId === selectedDevice.id
+                              ? "Retirando…"
+                              : "Confirmar retirada"}
+                          </button>
+                        </div>
+                      </dialog>
                     </section>
                   ) : loading ? (
                     <LoadingCard />
@@ -1617,11 +1643,15 @@ export default function Dashboard() {
                         <article className="surface chart-card">
                           <div className="section-heading">
                             <div>
-                              <h2>Consumo ao longo dos dias</h2>
+                              <h2>
+                                {periodDays === 1
+                                  ? "Consumo ao longo das horas"
+                                  : "Consumo ao longo dos dias"}
+                              </h2>
                             </div>
                             <fieldset className="consumption-period">
                               <legend className="sr-only">Período do gráfico</legend>
-                              {([7, 30, 90] as const).map((days) => (
+                              {([1, 7, 30, 90] as const).map((days) => (
                                 <label key={days}>
                                   <input
                                     className="sr-only"
@@ -1630,12 +1660,14 @@ export default function Dashboard() {
                                     checked={periodDays === days}
                                     onChange={() => changePeriod(days)}
                                   />
-                                  <span>{days} dias</span>
+                                  <span>{days === 1 ? "24 h" : `${days} dias`}</span>
                                 </label>
                               ))}
                             </fieldset>
                           </div>
-                          <p className="section-subtitle">Litros por dia</p>
+                          <p className="section-subtitle">
+                            {periodDays === 1 ? "Litros por hora" : "Litros por dia"}
+                          </p>
                           <div
                             className={`chart-wrap consumption-chart${consumptionPending ? " consumption-chart--pending" : ""}`}
                             aria-busy={consumptionPending}
@@ -1760,11 +1792,20 @@ export default function Dashboard() {
                                 return (
                                   <li key={device.id} className="meter-row">
                                     <strong className="meter-list-name">{device.name}</strong>
-                                    <small className="meter-list-reading">
+                                    <small
+                                      className="meter-list-reading"
+                                      title={
+                                        reading
+                                          ? formatDate(reading.recorded_at)
+                                          : lastSeen
+                                            ? formatDate(lastSeen)
+                                            : undefined
+                                      }
+                                    >
                                       {reading
-                                        ? `Última leitura ${formatDate(reading.recorded_at)}`
+                                        ? `Última leitura ${formatRelativeUpdate(reading.recorded_at).replace("Atualizado", "").trim()}`
                                         : lastSeen
-                                          ? `Último contato ${formatDate(lastSeen)}`
+                                          ? `Último contato ${formatRelativeUpdate(lastSeen).replace("Atualizado", "").trim()}`
                                           : "Aguardando a primeira leitura"}
                                     </small>
                                     <span
@@ -2007,6 +2048,7 @@ export default function Dashboard() {
                     <summary className="overview-insights-toggle">Detalhes do consumo</summary>
                     <div className="overview-insights-content">
                       <OverviewInsights
+                        hours={detailHours}
                         hourlyData={hourlyChartData}
                         hourlyLoading={!hourlyConsumption && !hourlyConsumptionError}
                         hourlyError={hourlyConsumptionError}
@@ -2079,11 +2121,13 @@ function formatObservedDuration(minutes: number): string {
 }
 
 function OverviewInsights({
+  hours,
   hourlyData,
   hourlyLoading,
   hourlyError,
 }: {
-  hourlyData: Array<{ hour: string; volume_liters: number | null }>;
+  hours: number;
+  hourlyData: Array<{ hour: string; periodHour: number; volume_liters: number | null }>;
   hourlyLoading: boolean;
   hourlyError: string;
 }) {
@@ -2099,15 +2143,13 @@ function OverviewInsights({
     return { hour: point.hour, total: point.volume_liters === null ? null : recordedTotal };
   });
   const periods = ["Madrugada", "Manhã", "Tarde", "Noite"].map((label, index) => {
-    const hours = hourlyData.filter((point) => Math.floor(Number(point.hour) / 6) === index);
+    const hours = hourlyData.filter((point) => Math.floor(point.periodHour / 6) === index);
     const observed = hours.filter((point) => point.volume_liters !== null);
     const value = observed.reduce((sum, point) => sum + (point.volume_liters ?? 0), 0);
     return {
       label,
       value,
-      display: observed.length
-        ? `${formatLiters(value)} · ${observed.length}/${hours.length} h`
-        : "Sem dados",
+      display: observed.length ? formatLiters(value) : "Sem dados",
     };
   });
 
@@ -2116,7 +2158,7 @@ function OverviewInsights({
       <article className="overview-insight-card">
         <div className="overview-insight-heading">
           <h3>Consumo por horário</h3>
-          <span>Últimas 24 horas completas · litros</span>
+          <span>{consumptionWindowLabel(hours)} · litros</span>
         </div>
         {hourlyLoading ? (
           <p className="overview-insight-message" role="status">
@@ -2132,7 +2174,7 @@ function OverviewInsights({
           <div
             className="overview-insight-chart"
             role="img"
-            aria-label="Consumo em litros por hora nas últimas 24 horas. Marcas cinza indicam horas sem dados suficientes."
+            aria-label={`Consumo em litros por hora. ${consumptionWindowLabel(hours)}. Marcas cinza indicam horas sem dados suficientes.`}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={hourlyPlot} margin={{ top: 8, right: 4, left: -20, bottom: 0 }}>
@@ -2142,7 +2184,15 @@ function OverviewInsights({
                   axisLine={false}
                   tickLine={false}
                   tick={{ fill: "var(--muted)", fontSize: 11 }}
-                  interval={3}
+                  interval="preserveStartEnd"
+                  minTickGap={36}
+                  ticks={hourlyData
+                    .filter((point, index) =>
+                      hours === 24 ? index % 4 === 0 : point.periodHour === 0,
+                    )
+                    .filter((_point, index) => index % Math.max(1, Math.ceil(hours / 24 / 7)) === 0)
+                    .map((point) => point.hour)}
+                  tickFormatter={(value: string) => (hours === 24 ? value : value.split(" ")[0])}
                 />
                 <YAxis
                   axisLine={false}
@@ -2157,7 +2207,7 @@ function OverviewInsights({
                       : Number(value).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + " L",
                     "Consumo",
                   ]}
-                  labelFormatter={(hour) => hour + "h"}
+                  labelFormatter={(hour) => (hours === 24 ? `${hour}h` : String(hour))}
                   contentStyle={{
                     borderRadius: 12,
                     borderColor: "var(--line)",
@@ -2184,16 +2234,13 @@ function OverviewInsights({
             </ResponsiveContainer>
           </div>
         )}
-        {hourlyPlot.some((point) => point.volume_liters === null) && !hourlyError && (
-          <small>Marcas cinza indicam horas sem dados suficientes.</small>
-        )}
       </article>
       {!hourlyLoading && !hourlyError && hourlyData.length > 0 && (
         <>
           <article className="overview-insight-card">
             <div className="overview-insight-heading">
               <h3>Consumo acumulado</h3>
-              <span>Últimas 24 horas completas · litros</span>
+              <span>{consumptionWindowLabel(hours)} · litros</span>
             </div>
             {observedHours === 0 ? (
               <p className="overview-insight-message">
@@ -2216,7 +2263,19 @@ function OverviewInsights({
                         dataKey="hour"
                         axisLine={false}
                         tickLine={false}
-                        interval={3}
+                        interval="preserveStartEnd"
+                        minTickGap={36}
+                        ticks={hourlyData
+                          .filter((point, index) =>
+                            hours === 24 ? index % 4 === 0 : point.periodHour === 0,
+                          )
+                          .filter(
+                            (_point, index) => index % Math.max(1, Math.ceil(hours / 24 / 7)) === 0,
+                          )
+                          .map((point) => point.hour)}
+                        tickFormatter={(value: string) =>
+                          hours === 24 ? value : value.split(" ")[0]
+                        }
                         tick={{ fill: "var(--muted)", fontSize: 11 }}
                       />
                       <YAxis
@@ -2234,7 +2293,7 @@ function OverviewInsights({
                               })} L`,
                           "Acumulado",
                         ]}
-                        labelFormatter={(hour) => `${hour}h`}
+                        labelFormatter={(hour) => (hours === 24 ? `${hour}h` : String(hour))}
                         contentStyle={{
                           borderRadius: 12,
                           borderColor: "var(--line)",
@@ -2261,31 +2320,77 @@ function OverviewInsights({
               </>
             )}
           </article>
-          <InsightBreakdown title="Consumo por período do dia" rows={periods} />
-          <InsightBreakdown
-            title="Horas com dados de consumo"
-            rows={[
-              { label: "Com dados", value: observedHours, display: `${observedHours} h` },
-              {
-                label: "Dados insuficientes",
-                value: hourlyData.length - observedHours,
-                display: `${hourlyData.length - observedHours} h`,
-              },
-            ]}
-          />
+          <InsightBreakdown hours={hours} title="Consumo por período do dia" rows={periods} />
+          <article className="overview-insight-card">
+            <div className="overview-insight-heading">
+              <h3>Horas com dados de consumo</h3>
+              <span>{consumptionWindowLabel(hours)}</span>
+            </div>
+            <div className="consumption-coverage">
+              <div className="consumption-coverage-chart" aria-hidden="true">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={[
+                        { name: "Com dados", value: observedHours },
+                        { name: "Dados insuficientes", value: hourlyData.length - observedHours },
+                      ]}
+                      dataKey="value"
+                      innerRadius="74%"
+                      outerRadius="94%"
+                      startAngle={90}
+                      endAngle={-270}
+                      stroke="none"
+                      isAnimationActive={false}
+                    >
+                      <Cell fill="var(--accent)" />
+                      <Cell fill="var(--line)" />
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="consumption-coverage-total">
+                  <strong>
+                    {observedHours} de {hourlyData.length} h
+                  </strong>
+                  <span>com dados</span>
+                </div>
+              </div>
+              <dl className="consumption-coverage-legend">
+                <div>
+                  <dt>
+                    <i aria-hidden="true" />
+                    Com dados
+                  </dt>
+                  <dd>{observedHours} h</dd>
+                </div>
+                <div>
+                  <dt>
+                    <i className="coverage-missing" aria-hidden="true" />
+                    Dados insuficientes
+                  </dt>
+                  <dd>{hourlyData.length - observedHours} h</dd>
+                </div>
+              </dl>
+            </div>
+          </article>
         </>
       )}
     </div>
   );
+}
+function consumptionWindowLabel(hours: number): string {
+  return hours === 24 ? "Últimas 24 horas completas" : `Últimos ${hours / 24} dias`;
 }
 function formatLiters(value: number) {
   return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} L`;
 }
 
 function InsightBreakdown({
+  hours,
   title,
   rows,
 }: {
+  hours: number;
   title: string;
   rows: Array<{ label: string; value: number; display: string }>;
 }) {
@@ -2294,7 +2399,7 @@ function InsightBreakdown({
     <article className="overview-insight-card">
       <div className="overview-insight-heading">
         <h3>{title}</h3>
-        <span>Últimas 24 horas completas</span>
+        <span>{consumptionWindowLabel(hours)}</span>
       </div>
       <ul className="insight-breakdown">
         {rows.map((row) => (
@@ -2608,6 +2713,7 @@ function PropertySettingsForm({
               className="button button--quiet"
               disabled={saving || archiving}
               aria-expanded={confirmArchive}
+              data-action="archive-property"
               aria-controls={confirmArchive ? "property-archive-confirm" : undefined}
               onClick={() => setConfirmArchive(true)}
             >
@@ -2634,6 +2740,17 @@ function PropertySettingsForm({
       {onArchive && (
         <dialog
           ref={archiveDialog}
+          onClick={(event) => {
+            if (archiving || event.target !== event.currentTarget) return;
+            const bounds = event.currentTarget.getBoundingClientRect();
+            if (
+              event.clientX < bounds.left ||
+              event.clientX > bounds.right ||
+              event.clientY < bounds.top ||
+              event.clientY > bounds.bottom
+            )
+              setConfirmArchive(false);
+          }}
           onCancel={(event) => {
             if (archiving) event.preventDefault();
             else setConfirmArchive(false);
@@ -2776,7 +2893,7 @@ function AlertEvidence({ alert }: { alert: Alert }) {
 
   return (
     <details className="alert-evidence">
-      <summary>Detalhes técnicos</summary>
+      <summary>Ver evidências do aviso</summary>
       <dl>
         {rows.map(([label, value]) => (
           <div key={label}>
@@ -2889,7 +3006,7 @@ function AlertDetail({
           </div>
         )}
         <div className="alert-detail-next-step">
-          <h3>Vale conferir</h3>
+          <h3>Vale verificar</h3>
           <p>{nextStep}</p>
         </div>
         <AlertEvidence key={alert.id} alert={alert} />
@@ -2903,12 +3020,12 @@ function AlertDetail({
               disabled={busy}
               onClick={onAcknowledge}
             >
-              {busy ? "Salvando…" : "Marcar como visto"}
+              {busy ? "Salvando…" : "Reconhecer aviso"}
             </button>
           )}
           <button
             type="button"
-            className="button button--outline"
+            className="button button--primary"
             disabled={busy}
             onClick={onResolve}
           >
@@ -2920,7 +3037,7 @@ function AlertDetail({
             disabled={busy}
             onClick={onFalsePositive}
           >
-            Marcar como incorreto
+            Marcar como falso positivo
           </button>
         </div>
       )}
