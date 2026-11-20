@@ -62,6 +62,24 @@ docker compose run --build --rm -e ML_RETRAIN_MODEL=true ml-trainer
 
 A CLI usa divisão cronológica local de 8/4/4 dias, faz busca aleatória reproduzível com validação cruzada temporal no bloco de treino e compara baseline de prevalência, KNN, Árvore de Decisão e Random Forest. Por padrão, também gera um perfil deslocado e outro de estresse, com rotinas, ruído e intensidades diferentes. A seleção considera a average precision média da validação temporal e do perfil deslocado; esse segundo conjunto também entra no ajuste final. O perfil de estresse fica separado até o fim e mede a resposta do modelo a mudanças não usadas na seleção. A busca usa modelos mais regularizados, como árvores rasas e folhas maiores.
 
+Os classificadores usam vazão, delta de volume e duração do intervalo. As colunas
+de calendário continuam no contrato de entrada para compatibilidade, mas são
+excluídas dentro dos pipelines para reduzir a memorização da agenda simulada.
+O KNN usa votos uniformes e vizinhanças de 1% a 2,5% das amostras de cada ajuste,
+com mínimo de três vizinhos quando há dados suficientes. A proporção é mantida
+entre os folds e o ajuste final. As árvores têm
+profundidade máxima de dois ou três níveis e folhas de pelo menos 20 ou 40 amostras.
+Entre configurações próximas, a busca prefere a mais simples dentro de um erro
+padrão da melhor AP. Os folds têm separação de 12 amostras.
+
+O perfil deslocado padrão começa em agosto, antes do teste principal de setembro.
+A CLI rejeita um perfil de ajuste que termine no início do teste ou depois dele.
+O relatório registra os limites reais de ajuste/teste, o desempenho final dos
+três modelos e diagnósticos separados de diferença treino/validação e estabilidade.
+Os modelos dos candidatos e suas matrizes de treino, teste e estresse são
+registrados depois da seleção. Resultados de estresse já inspecionados informam
+o desenvolvimento seguinte e precisam ser complementados por novas avaliações.
+
 O serviço MLflow é iniciado por `docker compose up --build` em [http://localhost:5000](http://localhost:5000). O treinamento automático e a execução manual de `ml-trainer` pelo Compose usam `http://mlflow:5000` para registrar parâmetros, métricas e artefatos. O servidor persiste seu banco e os artefatos em `data/ml/mlflow-server/`, separado do banco usado pelo modo local sem Compose para preservar os experimentos existentes.
 
 O treinamento grava `metrics.json`, `split_manifest.json`, `best_model.joblib` e `training_report.md` em `data/ml/training-bench-v2/`, além das execuções e artefatos do MLflow em `data/ml/mlflow-server/`. O relatório compara os modelos, mostra o gap treino/CV, a variação entre folds, os resultados por perfil, matrizes de confusão e os hiperparâmetros escolhidos. O campo `overfitting_diagnostics.domain_shift_assessment` sinaliza quando o desempenho cai entre perfis. Esses sinais são diagnósticos; não existe garantia de ausência de overfitting com dados sintéticos.
