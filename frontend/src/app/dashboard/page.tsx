@@ -98,20 +98,40 @@ type Alert = {
 type DashboardRefresh = { checked_at: string };
 type ApiError = { code?: string; message?: string; detail?: { code?: string; message?: string } };
 
+const SUCCESS_NOTICE_DURATION_MS = 3_000;
+
+const brazilianTimezoneNames = new Map([
+  ["America/Araguaina", "Araguaína"],
+  ["America/Bahia", "Bahia"],
+  ["America/Belem", "Belém"],
+  ["America/Boa_Vista", "Boa Vista"],
+  ["America/Campo_Grande", "Campo Grande"],
+  ["America/Cuiaba", "Cuiabá"],
+  ["America/Eirunepe", "Eirunepé"],
+  ["America/Fortaleza", "Fortaleza"],
+  ["America/Maceio", "Maceió"],
+  ["America/Manaus", "Manaus"],
+  ["America/Noronha", "Fernando de Noronha"],
+  ["America/Porto_Velho", "Porto Velho"],
+  ["America/Recife", "Recife"],
+  ["America/Rio_Branco", "Rio Branco"],
+  ["America/Santarem", "Santarém"],
+  ["America/Sao_Paulo", "São Paulo"],
+]);
+
+function timezoneName(timezone: string): string {
+  return (
+    brazilianTimezoneNames.get(timezone) ??
+    (timezone.split("/").pop() ?? timezone).replaceAll("_", " ")
+  );
+}
+
 function getTimezoneOptions(currentTimezone: string): string[] {
-  const zones = new Set<string>(["UTC"]);
+  const zones = new Set<string>(["UTC", ...brazilianTimezoneNames.keys()]);
   if (typeof Intl.supportedValuesOf === "function") {
     Intl.supportedValuesOf("timeZone").forEach((timezone) => zones.add(timezone));
   } else {
     [
-      "America/Manaus",
-      "America/Belem",
-      "America/Fortaleza",
-      "America/Recife",
-      "America/Sao_Paulo",
-      "America/Cuiaba",
-      "America/Porto_Velho",
-      "America/Rio_Branco",
       "Europe/Lisbon",
       "Europe/London",
       "Europe/Paris",
@@ -126,10 +146,14 @@ function getTimezoneOptions(currentTimezone: string): string[] {
     ].forEach((timezone) => zones.add(timezone));
   }
   zones.add(currentTimezone);
-  return [...zones].sort((left, right) => left.localeCompare(right));
+  return [...zones].sort((left, right) =>
+    timezoneName(left).localeCompare(timezoneName(right), "pt-BR"),
+  );
 }
 
-function timezoneOffsetLabel(timezone: string): string {
+function timezoneLabel(timezone: string, includeOffset: boolean): string {
+  const name = timezoneName(timezone);
+  if (!includeOffset || timezone === "UTC") return name;
   try {
     const offset = new Intl.DateTimeFormat("en", {
       timeZone: timezone,
@@ -137,10 +161,11 @@ function timezoneOffsetLabel(timezone: string): string {
     })
       .formatToParts(new Date())
       .find((part) => part.type === "timeZoneName")
-      ?.value.replace("GMT", "UTC");
-    return offset ?? "UTC";
+      ?.value.replace("GMT", "UTC")
+      .replace("-", "−");
+    return offset ? `${name} (${offset})` : name;
   } catch {
-    return "UTC";
+    return name;
   }
 }
 
@@ -279,23 +304,31 @@ export default function Dashboard() {
   const [hourlyWindowEnd, setHourlyWindowEnd] = useState<number | null>(null);
   const [hourlyConsumptionError, setHourlyConsumptionError] = useState("");
   const [dashboardRefresh, setDashboardRefresh] = useState<DashboardRefresh | null>(null);
+  const [meterListUpdatedAt, setMeterListUpdatedAt] = useState("");
+  const [alertListUpdate, setAlertListUpdate] = useState<{ propertyId: string; at: string } | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [successNotice, setSuccessNotice] = useState("");
   const [newProperty, setNewProperty] = useState("");
+  const [creatingProperty, setCreatingProperty] = useState(false);
+  const [propertyCreationError, setPropertyCreationError] = useState("");
   const [newDevice, setNewDevice] = useState("");
   const [newSerial, setNewSerial] = useState("");
-  const [provisioned, setProvisioned] = useState<{ key: string; serial: string } | null>(null);
+  const [provisioned, setProvisioned] = useState<{ deviceId: string; key: string } | null>(null);
   const [deviceNotice, setDeviceNotice] = useState<{
     kind: "success" | "error";
     message: string;
+    createdDeviceId?: string;
   } | null>(null);
-  const [copiedKey, setCopiedKey] = useState(false);
+  const [keyCopyStatus, setKeyCopyStatus] = useState<"idle" | "copied" | "error">("idle");
   const [provisioning, setProvisioning] = useState(false);
   const [editingDeviceId, setEditingDeviceId] = useState("");
   const [editingDeviceName, setEditingDeviceName] = useState("");
   const [editingDeviceInterval, setEditingDeviceInterval] = useState("300");
   const [deviceActionId, setDeviceActionId] = useState("");
-  const [retiringDeviceId, setRetiringDeviceId] = useState("");
+  const retireDialog = useRef<HTMLDialogElement>(null);
   const [alertActionId, setAlertActionId] = useState("");
   const [alertNotice, setAlertNotice] = useState("");
   const [alertFilter, setAlertFilter] = useState<"open" | "acknowledged" | "resolved" | "all">(
@@ -348,6 +381,7 @@ export default function Dashboard() {
       const availableIds = propertyResult.items.map((property) => property.id);
       setSelectedId((currentId) => resolveActivePropertyId(propertyId, currentId, availableIds));
       if (availableIds.length === 0) {
+        setView("settings");
         setConsumption(null);
         setAlerts([]);
         setAlertVisibleLimit(5);
@@ -472,7 +506,10 @@ export default function Dashboard() {
       }),
     )
       .then((results) => {
-        if (!cancelled) setDeviceHealth(Object.fromEntries(results));
+        if (!cancelled) {
+          setDeviceHealth(Object.fromEntries(results));
+          setMeterListUpdatedAt(new Date().toISOString());
+        }
       })
       .catch((caught: unknown) => {
         if (!cancelled)
@@ -519,6 +556,7 @@ export default function Dashboard() {
       .then((alertResult) => {
         if (!cancelled) {
           setAlerts(alertResult.items);
+          setAlertListUpdate({ propertyId: selectedId, at: new Date().toISOString() });
           setAlertsLoading(false);
           setAlertsCursor(alertResult.cursor);
           setAlertsHasMore(alertResult.has_more);
@@ -537,7 +575,9 @@ export default function Dashboard() {
 
   async function createProperty(event: FormEvent) {
     event.preventDefault();
-    if (!newProperty.trim()) return;
+    if (!newProperty.trim() || creatingProperty) return;
+    setCreatingProperty(true);
+    setPropertyCreationError("");
     try {
       const result = await api<Property>("properties", {
         method: "POST",
@@ -545,18 +585,44 @@ export default function Dashboard() {
       });
       setNewProperty("");
       setShowPropertyForm(false);
+      window.history.replaceState({}, "", "/dashboard");
+      setView("overview");
       await load(result.id);
+      setSuccessNotice(`${result.name} foi adicionada. Agora você pode cadastrar um medidor.`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Não foi possível criar o imóvel.");
+      setPropertyCreationError(
+        caught instanceof Error ? caught.message : "Não foi possível adicionar esta propriedade.",
+      );
+    } finally {
+      setCreatingProperty(false);
     }
   }
+
+  useEffect(() => {
+    if (deviceNotice?.kind !== "success") return;
+    const timer = window.setTimeout(() => {
+      setDeviceNotice((current) => (current === deviceNotice ? null : current));
+    }, SUCCESS_NOTICE_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [deviceNotice]);
+
+  useEffect(() => {
+    if (!successNotice) return;
+    const timer = window.setTimeout(() => setSuccessNotice(""), SUCCESS_NOTICE_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [successNotice]);
+
+  useEffect(() => {
+    if (!alertNotice) return;
+    const timer = window.setTimeout(() => setAlertNotice(""), SUCCESS_NOTICE_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [alertNotice]);
 
   async function createDevice(event: FormEvent) {
     event.preventDefault();
     if (!selectedId || !newDevice.trim() || !newSerial.trim()) return;
     setProvisioning(true);
     setDeviceNotice(null);
-    setProvisioned(null);
     try {
       const result = await api<Device & { device_key: string }>("devices", {
         method: "POST",
@@ -566,12 +632,18 @@ export default function Dashboard() {
           serial_number: newSerial.trim(),
         }),
       });
-      setProvisioned({ key: result.device_key, serial: result.serial_number });
-      setCopiedKey(false);
+      setProvisioned({ deviceId: result.id, key: result.device_key });
+      setKeyCopyStatus("idle");
       setNewDevice("");
       setNewSerial("");
       await load(selectedId);
-      setDeviceNotice({ kind: "success", message: `${result.name} foi adicionado à propriedade.` });
+      setShowDeviceForm(false);
+      setDeviceNotice({
+        kind: "success",
+        message: "Medidor adicionado",
+        createdDeviceId: result.id,
+      });
+      openMeter(result);
     } catch (caught) {
       setDeviceNotice({
         kind: "error",
@@ -583,7 +655,6 @@ export default function Dashboard() {
   }
 
   function beginDeviceEdit(device: Device) {
-    setRetiringDeviceId("");
     setEditingDeviceId(device.id);
     setEditingDeviceName(device.name);
     setEditingDeviceInterval(String(device.expected_interval_seconds));
@@ -630,10 +701,10 @@ export default function Dashboard() {
 
   async function retireDevice(device: Device) {
     setDeviceActionId(device.id);
-    setRetiringDeviceId("");
     setDeviceNotice(null);
     try {
       await api<void>(`devices/${device.id}`, { method: "DELETE" });
+      setProvisioned((current) => (current?.deviceId === device.id ? null : current));
       setDevices((current) => current.filter((item) => item.id !== device.id));
       if (selectedDeviceId === device.id) {
         setSelectedDeviceId(null);
@@ -707,12 +778,9 @@ export default function Dashboard() {
     if (!provisioned) return;
     try {
       await navigator.clipboard.writeText(provisioned.key);
-      setCopiedKey(true);
+      setKeyCopyStatus("copied");
     } catch {
-      setDeviceNotice({
-        kind: "error",
-        message: "Não foi possível copiar automaticamente. Selecione e copie a chave exibida.",
-      });
+      setKeyCopyStatus("error");
     }
   }
 
@@ -726,8 +794,16 @@ export default function Dashboard() {
 
   async function archiveSelectedProperty() {
     if (!selected) return;
+    const archivedName = selected.name;
     await api(`properties/${selected.id}`, { method: "DELETE" });
+    setView("overview");
+    setSelectedDeviceId(null);
+    setSelectedAlertId(null);
+    setShowPropertyForm(false);
+    window.history.replaceState({}, "", "/dashboard");
+    window.scrollTo({ top: 0, behavior: "auto" });
     await load();
+    setSuccessNotice(`${archivedName} foi arquivada. O histórico foi preservado.`);
   }
 
   async function savePropertySettings(patch: PropertyPatch) {
@@ -744,10 +820,11 @@ export default function Dashboard() {
 
   function navigateView(destination: "overview" | "meters" | "alerts" | "settings") {
     setView(destination);
+    setSuccessNotice("");
+    setError("");
     setSelectedDeviceId(null);
     setSelectedAlertId(null);
     setEditingDeviceId("");
-    setRetiringDeviceId("");
     window.scrollTo({ top: 0, behavior: "instant" });
     window.history.pushState(
       {},
@@ -760,7 +837,6 @@ export default function Dashboard() {
     setView("meters");
     setSelectedDeviceId(device.id);
     setEditingDeviceId("");
-    setRetiringDeviceId("");
     window.scrollTo({ top: 0, behavior: "instant" });
     window.history.pushState(
       {},
@@ -772,7 +848,6 @@ export default function Dashboard() {
   function closeMeter() {
     setSelectedDeviceId(null);
     setEditingDeviceId("");
-    setRetiringDeviceId("");
     window.scrollTo({ top: 0, behavior: "instant" });
     window.history.pushState({}, "", "/dashboard?view=meters");
   }
@@ -802,6 +877,8 @@ export default function Dashboard() {
   function selectProperty(id: string) {
     if (id === selectedId) return;
 
+    setSuccessNotice("");
+    setError("");
     setConsumptionFailed(false);
     setConsumption(null);
     setDashboardRefresh(null);
@@ -871,20 +948,50 @@ export default function Dashboard() {
       };
     });
   }, [hourlyConsumption, hourlyWindowEnd, selected?.timezone]);
+  const cancelPropertyCreation = () => {
+    setShowPropertyForm(false);
+    setNewProperty("");
+    setPropertyCreationError("");
+  };
   const propertyCreationForm = (
     <form onSubmit={createProperty} className="inline-form">
+      {propertyCreationError && (
+        <p role="alert" className="form-notice form-notice--error property-create-error">
+          {propertyCreationError}
+        </p>
+      )}
       <label className="field">
         Nome da propriedade
         <input
           value={newProperty}
-          onChange={(event) => setNewProperty(event.target.value)}
+          onChange={(event) => {
+            setNewProperty(event.target.value);
+            setPropertyCreationError("");
+          }}
           placeholder="Ex.: Minha casa"
+          maxLength={120}
           required
         />
       </label>
-      <button className="button button--primary">
-        Criar propriedade <span aria-hidden="true">→</span>
-      </button>
+      <div className="property-create-actions">
+        <button
+          className="button button--primary"
+          disabled={creatingProperty || !newProperty.trim()}
+        >
+          {creatingProperty ? "Criando propriedade…" : "Criar propriedade"}
+          {!creatingProperty && <span aria-hidden="true">→</span>}
+        </button>
+        {showPropertyForm && (
+          <button
+            type="button"
+            className="button button--quiet"
+            disabled={creatingProperty}
+            onClick={cancelPropertyCreation}
+          >
+            Cancelar
+          </button>
+        )}
+      </div>
     </form>
   );
 
@@ -892,6 +999,17 @@ export default function Dashboard() {
     properties.length > 0 ? (
       <PropertyPicker properties={properties} selectedId={selectedId} onChange={selectProperty} />
     ) : null;
+
+  const updatedAt =
+    view === "overview"
+      ? dashboardRefresh?.checked_at
+      : view === "meters" &&
+          selectedDevices.length > 0 &&
+          selectedDevices.every((device) => deviceHealth[device.id])
+        ? meterListUpdatedAt
+        : view === "alerts" && alertListUpdate?.propertyId === selectedId
+          ? alertListUpdate.at
+          : undefined;
 
   return (
     <main className="dashboard-page">
@@ -939,10 +1057,8 @@ export default function Dashboard() {
                 </span>
               </div>
               <div className="header-actions">
-                {view === "overview" && dashboardRefresh && (
-                  <span className="health-updated">
-                    {formatRelativeUpdate(dashboardRefresh.checked_at)}
-                  </span>
+                {updatedAt && (
+                  <span className="health-updated">{formatRelativeUpdate(updatedAt)}</span>
                 )}
                 <ThemeToggle />
                 <button onClick={logout} className="button button--quiet mobile-logout">
@@ -952,7 +1068,9 @@ export default function Dashboard() {
             </div>
           </header>
           <div className="dashboard-content" id="overview">
-            <section className="dashboard-heading">
+            <section
+              className={`dashboard-heading${(view === "meters" && !selectedDeviceId) || (view === "alerts" && !selectedAlertId) ? " dashboard-heading--device-list" : ""}`}
+            >
               <div>
                 <h1 id={view === "meters" && selectedDeviceId ? "meter-detail-title" : undefined}>
                   {view === "meters"
@@ -962,7 +1080,11 @@ export default function Dashboard() {
                         ? alertTitle(selectedAlert.detector_type)
                         : "O que merece atenção"
                       : view === "settings"
-                        ? "Sua casa, do seu jeito"
+                        ? showPropertyForm
+                          ? "Adicionar propriedade"
+                          : !selected
+                            ? "Vamos começar pela sua casa"
+                            : "Sua casa, do seu jeito"
                         : "Sua água, de perto"}
                 </h1>
                 <p>
@@ -975,11 +1097,29 @@ export default function Dashboard() {
                         ? `${selectedAlertDevice} · ${formatDate(selectedAlert.detected_at)}`
                         : "Entenda os avisos e acompanhe cada situação."
                       : view === "settings"
-                        ? "Ajuste os dados e o acompanhamento da sua casa."
+                        ? showPropertyForm
+                          ? "Organize o acompanhamento de outro local."
+                          : !selected
+                            ? "Crie um local para organizar seus medidores."
+                            : "Ajuste os dados e o acompanhamento da sua casa."
                         : "Acompanhe o consumo e o que merece atenção."}
                 </p>
               </div>
               <div className="mobile-property-picker">{propertyPicker}</div>
+              {view === "meters" && selectedDevice && editingDeviceId !== selectedDevice.id && (
+                <button
+                  type="button"
+                  className="button button--outline meter-edit-trigger"
+                  onClick={() => {
+                    beginDeviceEdit(selectedDevice);
+                    requestAnimationFrame(() =>
+                      document.getElementById("meter-edit-name")?.focus(),
+                    );
+                  }}
+                >
+                  Editar medidor
+                </button>
+              )}
               {view === "meters" && selected && !selectedDeviceId && (
                 <button
                   className="button button--primary add-meter-button add-meter-button--desktop"
@@ -996,33 +1136,73 @@ export default function Dashboard() {
                 </button>
               )}
             </section>
-            {error && (
-              <p role="alert" className="notice notice--error dashboard-notice">
-                {error}
+            {error && !(properties.length === 0 && !loading) && (
+              <div role="alert" className="notice notice--error dashboard-notice">
+                <span>{error}</span>
+                <button
+                  type="button"
+                  className="button button--quiet dashboard-notice-retry"
+                  onClick={() => void load(selectedId || undefined)}
+                >
+                  Tentar novamente
+                </button>
+              </div>
+            )}
+            {successNotice && (
+              <p role="status" className="form-notice form-notice--success dashboard-success">
+                {successNotice}
               </p>
             )}
-            {properties.length === 0 && !loading ? (
-              <section className="onboarding-card">
-                <div className="onboarding-art" aria-hidden="true">
-                  <span className="onboarding-drop">⌁</span>
-                  <span className="onboarding-ring onboarding-ring--one" />
-                  <span className="onboarding-ring onboarding-ring--two" />
-                </div>
-                <div className="onboarding-copy">
-                  <span className="eyebrow">Vamos começar</span>
-                  <h2>Crie sua primeira propriedade</h2>
-                  <p>
-                    Organize medidores e leituras por local. Depois, você pode conectar um
-                    dispositivo e acompanhar o consumo aqui.
-                  </p>
-                  {propertyCreationForm}
-                </div>
-              </section>
-            ) : loading && properties.length === 0 ? (
+            {loading && properties.length === 0 ? (
               <LoadingCard />
+            ) : error && properties.length === 0 ? (
+              <section className="surface load-error-card" aria-labelledby="load-error-title">
+                <span className="eyebrow">Não foi possível carregar</span>
+                <h2 id="load-error-title">Sua casa não apareceu desta vez</h2>
+                <p>Confira sua conexão e tente carregar as informações novamente.</p>
+                <button
+                  type="button"
+                  className="button button--primary"
+                  onClick={() => void load()}
+                >
+                  Tentar novamente
+                </button>
+              </section>
+            ) : properties.length === 0 ? (
+              <section
+                className="surface first-property-card"
+                aria-labelledby="first-property-title"
+              >
+                <div>
+                  <span className="eyebrow">Vamos começar</span>
+                  <h2 id="first-property-title">Como você chama este lugar?</h2>
+                  <p>Depois, você poderá conectar os medidores e acompanhar as leituras.</p>
+                </div>
+                {propertyCreationForm}
+              </section>
             ) : (
               <>
-                {view === "settings" && selected && (
+                {view === "settings" && showPropertyForm && (
+                  <section
+                    className="surface property-create-page"
+                    aria-labelledby="property-create-title"
+                  >
+                    <button
+                      type="button"
+                      className="button button--quiet property-create-back"
+                      onClick={cancelPropertyCreation}
+                    >
+                      <span aria-hidden="true">←</span> Configurações
+                    </button>
+                    <div className="property-create-intro">
+                      <span className="eyebrow">Novo local</span>
+                      <h2 id="property-create-title">Como você chama este lugar?</h2>
+                      <p>Depois, você poderá cadastrar medidores e ajustar as configurações.</p>
+                    </div>
+                    {propertyCreationForm}
+                  </section>
+                )}
+                {view === "settings" && !showPropertyForm && selected && (
                   <PropertySettingsForm
                     key={selected.id}
                     property={selected}
@@ -1034,7 +1214,7 @@ export default function Dashboard() {
                     }
                   />
                 )}
-                {view === "settings" && (
+                {view === "settings" && !showPropertyForm && (
                   <section
                     className="surface settings-card property-create-card"
                     aria-labelledby="new-property-title"
@@ -1050,30 +1230,39 @@ export default function Dashboard() {
                         <button
                           type="button"
                           className="button button--primary"
-                          onClick={() => setShowPropertyForm(true)}
+                          onClick={() => {
+                            setNewProperty("");
+                            setPropertyCreationError("");
+                            setShowPropertyForm(true);
+                            window.scrollTo({ top: 0, behavior: "auto" });
+                          }}
                         >
                           Adicionar propriedade <span aria-hidden="true">→</span>
                         </button>
                       )}
                     </div>
-                    {showPropertyForm && (
-                      <div className="property-create-form">
-                        {propertyCreationForm}
-                        <button
-                          type="button"
-                          className="button button--quiet"
-                          onClick={() => {
-                            setShowPropertyForm(false);
-                            setNewProperty("");
-                          }}
-                        >
-                          Cancelar
-                        </button>
-                      </div>
-                    )}
                   </section>
                 )}
-                {view === "overview" && (
+                {view === "overview" && selectedDevices.length === 0 ? (
+                  <section className="surface empty-overview-card">
+                    <div>
+                      <span className="eyebrow">Seu acompanhamento</span>
+                      <h2>Sua casa está pronta para começar</h2>
+                      <p>Adicione um medidor para acompanhar o consumo por aqui.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="button button--primary"
+                      onClick={() => {
+                        setShowDeviceForm(true);
+                        navigateView("meters");
+                      }}
+                    >
+                      Adicionar medidor <span aria-hidden="true">→</span>
+                    </button>
+                    <small>Ainda faltam leituras para mostrar o consumo deste período.</small>
+                  </section>
+                ) : view === "overview" ? (
                   <section className="metrics-grid" aria-label="Resumo de consumo">
                     <Metric
                       featured
@@ -1116,7 +1305,7 @@ export default function Dashboard() {
                       onAction={firstActiveAlert ? () => navigateView("alerts") : undefined}
                     />
                   </section>
-                )}
+                ) : null}
                 {view === "meters" &&
                   selectedDeviceId &&
                   (selectedDevice ? (
@@ -1128,6 +1317,159 @@ export default function Dashboard() {
                       >
                         <span aria-hidden="true">←</span> Seus medidores
                       </button>
+                      {deviceNotice?.createdDeviceId === selectedDevice.id && (
+                        <p className="meter-created-label" role="status">
+                          <span aria-hidden="true">✓</span> {deviceNotice.message}
+                        </p>
+                      )}
+                      {provisioned?.deviceId === selectedDevice.id && (
+                        <section className="surface settings-card meter-credential">
+                          <h2>Chave do medidor</h2>
+                          <p className="section-subtitle">
+                            Copie a chave para configurar o medidor. Ela fica disponível até você
+                            recarregar a página ou cadastrar outro medidor.
+                          </p>
+                          <div className="meter-credential-value">
+                            <code>{provisioned.key}</code>
+                            <button
+                              type="button"
+                              onClick={() => void copyDeviceKey()}
+                              className="button button--primary"
+                            >
+                              Copiar chave
+                            </button>
+                          </div>
+                          <span role="status">
+                            {keyCopyStatus === "copied" && "Chave copiada."}
+                            {keyCopyStatus === "error" &&
+                              "Não foi possível copiar automaticamente. Selecione e copie a chave exibida."}
+                          </span>
+                        </section>
+                      )}
+                      {deviceNotice?.kind === "success" && !deviceNotice.createdDeviceId && (
+                        <p role="status" className="meter-created-label">
+                          {deviceNotice.message}
+                        </p>
+                      )}
+                      {editingDeviceId === selectedDevice.id && (
+                        <section
+                          className="surface settings-card"
+                          aria-labelledby="meter-edit-title"
+                        >
+                          <h2 id="meter-edit-title">Editar medidor</h2>
+                          <form
+                            className="meter-edit-settings"
+                            onSubmit={(event) => void saveDevice(event, selectedDevice)}
+                          >
+                            <div className="settings-grid">
+                              <label className="field">
+                                Nome do medidor
+                                <input
+                                  id="meter-edit-name"
+                                  value={editingDeviceName}
+                                  onChange={(event) => setEditingDeviceName(event.target.value)}
+                                  required
+                                  maxLength={120}
+                                />
+                              </label>
+                              <label className="field">
+                                Intervalo de leitura (segundos)
+                                <input
+                                  type="number"
+                                  min={30}
+                                  max={86400}
+                                  step={1}
+                                  value={editingDeviceInterval}
+                                  onChange={(event) => setEditingDeviceInterval(event.target.value)}
+                                  required
+                                />
+                              </label>
+                            </div>
+                            {deviceNotice?.kind === "error" && (
+                              <p role="alert" className="form-notice form-notice--error">
+                                {deviceNotice.message}
+                              </p>
+                            )}
+                            <div className="settings-actions">
+                              <button
+                                type="button"
+                                className="button button--quiet"
+                                disabled={deviceActionId === selectedDevice.id}
+                                onClick={() => {
+                                  setEditingDeviceId("");
+                                  setDeviceNotice(null);
+                                  requestAnimationFrame(() =>
+                                    document
+                                      .querySelector<HTMLButtonElement>(".meter-edit-trigger")
+                                      ?.focus(),
+                                  );
+                                }}
+                              >
+                                Cancelar
+                              </button>
+                              <button
+                                type="submit"
+                                className="button button--primary"
+                                disabled={deviceActionId === selectedDevice.id}
+                              >
+                                {deviceActionId === selectedDevice.id
+                                  ? "Salvando…"
+                                  : "Salvar alterações"}
+                              </button>
+                            </div>
+                            <div className="meter-edit-removal">
+                              <button
+                                type="button"
+                                className="button button--quiet"
+                                disabled={deviceActionId === selectedDevice.id}
+                                onClick={() => retireDialog.current?.showModal()}
+                              >
+                                Retirar medidor
+                              </button>
+                            </div>
+                          </form>
+                          <dialog
+                            ref={retireDialog}
+                            className="property-archive-dialog"
+                            aria-labelledby="meter-retire-title"
+                            aria-describedby="meter-retire-description"
+                            onCancel={(event) => {
+                              if (deviceActionId === selectedDevice.id) event.preventDefault();
+                            }}
+                          >
+                            <h2 id="meter-retire-title">Retirar medidor?</h2>
+                            <p id="meter-retire-description">
+                              <strong>{selectedDevice.name}</strong> deixará de aparecer na lista. O
+                              histórico de leituras será preservado.
+                            </p>
+                            <div className="property-archive-dialog-actions">
+                              <button
+                                type="button"
+                                className="button button--quiet"
+                                autoFocus
+                                disabled={deviceActionId === selectedDevice.id}
+                                onClick={() => retireDialog.current?.close()}
+                              >
+                                Cancelar
+                              </button>
+                              <button
+                                type="button"
+                                className="button property-archive-confirm"
+                                disabled={deviceActionId === selectedDevice.id}
+                                onClick={async (event) => {
+                                  const dialog = event.currentTarget.closest("dialog");
+                                  await retireDevice(selectedDevice);
+                                  dialog?.close();
+                                }}
+                              >
+                                {deviceActionId === selectedDevice.id
+                                  ? "Retirando…"
+                                  : "Confirmar retirada"}
+                              </button>
+                            </div>
+                          </dialog>
+                        </section>
+                      )}
                       <section className="meter-current-card" aria-label="Última leitura">
                         <span className="eyebrow">
                           {meterLatestReading
@@ -1226,98 +1568,6 @@ export default function Dashboard() {
                           </p>
                         )}
                       </section>
-                      {editingDeviceId === selectedDevice.id ? (
-                        <form
-                          className="surface meter-detail-edit-form"
-                          onSubmit={(event) => void saveDevice(event, selectedDevice)}
-                        >
-                          <label className="field">
-                            Nome do medidor
-                            <input
-                              value={editingDeviceName}
-                              onChange={(event) => setEditingDeviceName(event.target.value)}
-                              required
-                              maxLength={120}
-                            />
-                          </label>
-                          <label className="field">
-                            Intervalo de leitura (segundos)
-                            <input
-                              type="number"
-                              min={30}
-                              max={86400}
-                              step={1}
-                              value={editingDeviceInterval}
-                              onChange={(event) => setEditingDeviceInterval(event.target.value)}
-                              required
-                            />
-                          </label>
-                          <div className="meter-actions">
-                            <button
-                              className="button button--primary"
-                              disabled={deviceActionId === selectedDevice.id}
-                            >
-                              {deviceActionId === selectedDevice.id ? "Salvando…" : "Salvar"}
-                            </button>
-                            <button
-                              type="button"
-                              className="button button--quiet"
-                              onClick={() => setEditingDeviceId("")}
-                            >
-                              Cancelar
-                            </button>
-                          </div>
-                        </form>
-                      ) : retiringDeviceId === selectedDevice.id ? (
-                        <section
-                          className="surface meter-detail-retire-confirm"
-                          role="group"
-                          aria-label={`Confirmar retirada de ${selectedDevice.name}`}
-                        >
-                          <div>
-                            <strong>Retirar este medidor?</strong>
-                            <p>O histórico de leituras será preservado.</p>
-                          </div>
-                          <div className="meter-actions">
-                            <button
-                              type="button"
-                              className="button button--quiet"
-                              onClick={() => setRetiringDeviceId("")}
-                            >
-                              Cancelar
-                            </button>
-                            <button
-                              type="button"
-                              className="button button--quiet meter-retire"
-                              disabled={deviceActionId === selectedDevice.id}
-                              onClick={() => void retireDevice(selectedDevice)}
-                            >
-                              {deviceActionId === selectedDevice.id
-                                ? "Retirando…"
-                                : "Confirmar retirada"}
-                            </button>
-                          </div>
-                        </section>
-                      ) : (
-                        <div className="meter-detail-actions">
-                          <button
-                            type="button"
-                            className="button button--quiet"
-                            disabled={deviceActionId === selectedDevice.id}
-                            onClick={() => beginDeviceEdit(selectedDevice)}
-                          >
-                            Editar medidor
-                          </button>
-                          <button
-                            type="button"
-                            className="button button--quiet meter-retire"
-                            disabled={deviceActionId === selectedDevice.id}
-                            onClick={() => setRetiringDeviceId(selectedDevice.id)}
-                          >
-                            Retirar medidor
-                          </button>
-                        </div>
-                      )}
                     </section>
                   ) : loading ? (
                     <LoadingCard />
@@ -1329,272 +1579,274 @@ export default function Dashboard() {
                       </button>
                     </section>
                   ))}
-                {view !== "alerts" && view !== "settings" && !selectedDeviceId && (
-                  <section
-                    className={`dashboard-grid${view !== "overview" ? " dashboard-grid--single" : ""}`}
-                  >
-                    {view === "overview" && (
-                      <article className="surface chart-card">
-                        <div className="section-heading">
-                          <div>
-                            <h2>Consumo ao longo dos dias</h2>
-                          </div>
-                          <fieldset className="consumption-period">
-                            <legend className="sr-only">Período do gráfico</legend>
-                            {([7, 30, 90] as const).map((days) => (
-                              <label key={days}>
-                                <input
-                                  className="sr-only"
-                                  type="radio"
-                                  name="consumption-period"
-                                  checked={periodDays === days}
-                                  onChange={() => changePeriod(days)}
-                                />
-                                <span>{days} dias</span>
-                              </label>
-                            ))}
-                          </fieldset>
-                        </div>
-                        <p className="section-subtitle">Litros por dia</p>
-                        <div
-                          className={`chart-wrap consumption-chart${consumptionPending ? " consumption-chart--pending" : ""}`}
-                          aria-busy={consumptionPending}
-                          role="img"
-                          aria-label={`Gráfico do consumo diário nos últimos ${consumption ? loadedPeriod : periodDays} dias`}
-                        >
-                          {consumptionPending && (
-                            <div className="consumption-chart-progress" aria-hidden="true" />
-                          )}
-                          <p className="sr-only">
-                            {chartData.length
-                              ? chartData
-                                  .map((point) => `${point.day}: ${point.volume_liters} litros`)
-                                  .join(". ")
-                              : !consumption && !error
-                                ? "Carregando consumo."
-                                : "Ainda não há leituras suficientes para exibir o gráfico."}
-                          </p>
-                          {chartData.length ? (
-                            <ResponsiveContainer
-                              key={loadedPeriod}
-                              className="consumption-chart-enter"
-                              width="100%"
-                              height="100%"
-                            >
-                              <AreaChart
-                                data={chartData}
-                                margin={{ top: 12, right: 8, left: -18, bottom: 0 }}
-                              >
-                                <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
-                                <XAxis
-                                  dataKey="day"
-                                  axisLine={false}
-                                  tickLine={false}
-                                  tick={{ fill: "var(--muted)", fontSize: 12 }}
-                                  dy={10}
-                                />
-                                <YAxis
-                                  axisLine={false}
-                                  tickLine={false}
-                                  tick={{ fill: "var(--muted)", fontSize: 12 }}
-                                />
-                                <Tooltip
-                                  formatter={(value) => [
-                                    `${Number(value).toLocaleString("pt-BR")} L`,
-                                    "Consumo",
-                                  ]}
-                                  contentStyle={{
-                                    borderRadius: 14,
-                                    borderColor: "var(--line)",
-                                    background: "var(--surface)",
-                                    color: "var(--ink)",
-                                  }}
-                                />
-                                <Area
-                                  type="linear"
-                                  isAnimationActive={false}
-                                  dataKey="volume_liters"
-                                  stroke="var(--accent)"
-                                  strokeWidth={3}
-                                  fill="none"
-                                  activeDot={{
-                                    r: 5,
-                                    fill: "var(--accent-strong)",
-                                    stroke: "var(--surface)",
-                                    strokeWidth: 2,
-                                  }}
-                                />
-                              </AreaChart>
-                            </ResponsiveContainer>
-                          ) : (
-                            <div className="empty-chart">
-                              {consumptionPending ? (
-                                <span className="sr-only">Carregando consumo…</span>
-                              ) : (
-                                <>
-                                  <span className="empty-chart-icon" aria-hidden="true">
-                                    ≈
-                                  </span>
-                                  <p>Ainda não há consumo para exibir</p>
-                                  <span>Conecte um medidor e envie leituras para começar.</span>
-                                </>
-                              )}
+                {view !== "alerts" &&
+                  view !== "settings" &&
+                  !selectedDeviceId &&
+                  !(view === "overview" && selectedDevices.length === 0) && (
+                    <section
+                      className={`dashboard-grid${view !== "overview" ? " dashboard-grid--single" : ""}`}
+                    >
+                      {view === "overview" && (
+                        <article className="surface chart-card">
+                          <div className="section-heading">
+                            <div>
+                              <h2>Consumo ao longo dos dias</h2>
                             </div>
-                          )}
-                        </div>
-                      </article>
-                    )}
-                    {view === "meters" && (
-                      <article
-                        className="surface meters-card"
-                        id="meters"
-                        aria-label={`Medidores de ${selected?.name ?? "esta propriedade"}`}
-                      >
-                        {deviceNotice && (
-                          <p
-                            role={deviceNotice.kind === "error" ? "alert" : "status"}
-                            className={`form-notice form-notice--${deviceNotice.kind}`}
+                            <fieldset className="consumption-period">
+                              <legend className="sr-only">Período do gráfico</legend>
+                              {([7, 30, 90] as const).map((days) => (
+                                <label key={days}>
+                                  <input
+                                    className="sr-only"
+                                    type="radio"
+                                    name="consumption-period"
+                                    checked={periodDays === days}
+                                    onChange={() => changePeriod(days)}
+                                  />
+                                  <span>{days} dias</span>
+                                </label>
+                              ))}
+                            </fieldset>
+                          </div>
+                          <p className="section-subtitle">Litros por dia</p>
+                          <div
+                            className={`chart-wrap consumption-chart${consumptionPending ? " consumption-chart--pending" : ""}`}
+                            aria-busy={consumptionPending}
+                            role="img"
+                            aria-label={`Gráfico do consumo diário nos últimos ${consumption ? loadedPeriod : periodDays} dias`}
                           >
-                            {deviceNotice.message}
-                          </p>
-                        )}
-                        {selectedDevices.length ? (
-                          <ul className="meter-list">
-                            {selectedDevices.map((device) => {
-                              const health = deviceHealth[device.id];
-                              const lastSeen = health?.last_seen_at ?? device.last_seen_at;
-                              const connected = health
-                                ? health.connectivity === "online"
-                                : lastSeen !== null &&
-                                  Date.now() - new Date(lastSeen).getTime() <=
-                                    device.expected_interval_seconds * 2 * 1000;
-                              const neverConnected =
-                                health?.connectivity === "never_connected" ||
-                                (!health && lastSeen === null);
-                              const reading = health?.latest_reading;
-                              return (
-                                <li key={device.id} className="meter-row">
-                                  <span className="meter-icon" aria-hidden="true">
-                                    <svg viewBox="0 0 24 24">
-                                      <path d="M4 16a8 8 0 1 1 16 0v2H4z" />
-                                      <path d="m12 12 3-3M7 18h10" />
-                                    </svg>
-                                  </span>
-                                  <div className="meter-info">
-                                    <strong>{device.name}</strong>
-                                    <small>
+                            {consumptionPending && (
+                              <div className="consumption-chart-progress" aria-hidden="true" />
+                            )}
+                            <p className="sr-only">
+                              {chartData.length
+                                ? chartData
+                                    .map((point) => `${point.day}: ${point.volume_liters} litros`)
+                                    .join(". ")
+                                : !consumption && !error
+                                  ? "Carregando consumo."
+                                  : "Ainda não há leituras suficientes para exibir o gráfico."}
+                            </p>
+                            {chartData.length ? (
+                              <ResponsiveContainer
+                                key={loadedPeriod}
+                                className="consumption-chart-enter"
+                                width="100%"
+                                height="100%"
+                              >
+                                <AreaChart
+                                  data={chartData}
+                                  margin={{ top: 12, right: 8, left: -18, bottom: 0 }}
+                                >
+                                  <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
+                                  <XAxis
+                                    dataKey="day"
+                                    axisLine={false}
+                                    tickLine={false}
+                                    tick={{ fill: "var(--muted)", fontSize: 12 }}
+                                    dy={10}
+                                  />
+                                  <YAxis
+                                    axisLine={false}
+                                    tickLine={false}
+                                    tick={{ fill: "var(--muted)", fontSize: 12 }}
+                                  />
+                                  <Tooltip
+                                    formatter={(value) => [
+                                      `${Number(value).toLocaleString("pt-BR")} L`,
+                                      "Consumo",
+                                    ]}
+                                    contentStyle={{
+                                      borderRadius: 14,
+                                      borderColor: "var(--line)",
+                                      background: "var(--surface)",
+                                      color: "var(--ink)",
+                                    }}
+                                  />
+                                  <Area
+                                    type="linear"
+                                    isAnimationActive={false}
+                                    dataKey="volume_liters"
+                                    stroke="var(--accent)"
+                                    strokeWidth={3}
+                                    fill="none"
+                                    activeDot={{
+                                      r: 5,
+                                      fill: "var(--accent-strong)",
+                                      stroke: "var(--surface)",
+                                      strokeWidth: 2,
+                                    }}
+                                  />
+                                </AreaChart>
+                              </ResponsiveContainer>
+                            ) : (
+                              <div className="empty-chart">
+                                {consumptionPending ? (
+                                  <span className="sr-only">Carregando consumo…</span>
+                                ) : (
+                                  <>
+                                    <span className="empty-chart-icon" aria-hidden="true">
+                                      ≈
+                                    </span>
+                                    <p>Aguardando as primeiras leituras</p>
+                                    <span>
+                                      Assim que o medidor enviar leituras suficientes, o consumo
+                                      aparecerá aqui.
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </article>
+                      )}
+                      {view === "meters" && (
+                        <article
+                          className="surface meters-card"
+                          id="meters"
+                          aria-label={`Medidores de ${selected?.name ?? "esta propriedade"}`}
+                        >
+                          {deviceNotice &&
+                            !deviceNotice.createdDeviceId &&
+                            !(showDeviceForm && deviceNotice.kind === "error") && (
+                              <p
+                                role={deviceNotice.kind === "error" ? "alert" : "status"}
+                                className={`form-notice form-notice--${deviceNotice.kind} meter-list-notice`}
+                              >
+                                {deviceNotice.message}
+                              </p>
+                            )}
+                          {selectedDevices.length ? (
+                            <ul className="meter-list">
+                              {selectedDevices.map((device) => {
+                                const health = deviceHealth[device.id];
+                                const lastSeen = health?.last_seen_at ?? device.last_seen_at;
+                                const connected = health
+                                  ? health.connectivity === "online"
+                                  : lastSeen !== null &&
+                                    Date.now() - new Date(lastSeen).getTime() <=
+                                      device.expected_interval_seconds * 2 * 1000;
+                                const neverConnected =
+                                  health?.connectivity === "never_connected" ||
+                                  (!health && lastSeen === null);
+                                const reading = health?.latest_reading;
+                                return (
+                                  <li key={device.id} className="meter-row">
+                                    <strong className="meter-list-name">{device.name}</strong>
+                                    <small className="meter-list-reading">
                                       {reading
                                         ? `Última leitura ${formatDate(reading.recorded_at)}`
                                         : lastSeen
                                           ? `Último contato ${formatDate(lastSeen)}`
                                           : "Aguardando a primeira leitura"}
                                     </small>
-                                  </div>
-                                  <span
-                                    className={`meter-status${connected ? " meter-status--online" : " meter-status--offline"}`}
-                                  >
-                                    {connected
-                                      ? "Recebendo leituras"
-                                      : neverConnected
-                                        ? "Ainda sem leituras"
-                                        : "Sem comunicação"}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    className="alert-view-button meter-open-button"
-                                    onClick={() => openMeter(device)}
-                                  >
-                                    Ver detalhes <span aria-hidden="true">→</span>
-                                  </button>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        ) : (
-                          <div className="empty-meter">
-                            <strong>Ainda não há medidores nesta casa</strong>
-                            <span>Adicione um medidor para começar a acompanhar as leituras.</span>
-                          </div>
-                        )}
-                        {!showDeviceForm && (
-                          <button
-                            type="button"
-                            className="button button--primary add-meter-button add-meter-button--mobile"
-                            onClick={() => {
-                              setShowDeviceForm(true);
-                              requestAnimationFrame(() =>
-                                document
-                                  .getElementById("new-meter-form")
-                                  ?.scrollIntoView({ block: "center" }),
-                              );
-                            }}
+                                    <span
+                                      className={`meter-status ${!connected && !neverConnected ? "meter-status--offline" : "meter-status--online"}`}
+                                    >
+                                      {connected
+                                        ? "Recebendo leituras"
+                                        : neverConnected
+                                          ? "Ainda sem leituras"
+                                          : "Sem comunicação"}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="button button--quiet alert-view-button meter-open-button"
+                                      aria-label={`Ver detalhes de ${device.name}`}
+                                      onClick={() => openMeter(device)}
+                                    >
+                                      Ver detalhes
+                                    </button>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          ) : (
+                            <div className="empty-meter">
+                              <strong>Ainda não há medidores nesta casa</strong>
+                              <span>
+                                Adicione um medidor para começar a acompanhar as leituras.
+                              </span>
+                            </div>
+                          )}
+                          {!showDeviceForm && (
+                            <button
+                              type="button"
+                              className="button button--primary add-meter-button add-meter-button--mobile"
+                              onClick={() => {
+                                setShowDeviceForm(true);
+                                requestAnimationFrame(() =>
+                                  document
+                                    .getElementById("new-meter-form")
+                                    ?.scrollIntoView({ block: "center" }),
+                                );
+                              }}
+                            >
+                              Adicionar medidor
+                            </button>
+                          )}
+                          <form
+                            hidden={!showDeviceForm}
+                            id="new-meter-form"
+                            onSubmit={createDevice}
+                            className="surface settings-card meter-create-form"
+                            aria-labelledby="new-meter-title"
                           >
-                            Adicionar medidor
-                          </button>
-                        )}
-                        <form
-                          hidden={!showDeviceForm}
-                          id="new-meter-form"
-                          onSubmit={createDevice}
-                          className="device-form"
-                        >
-                          <h3>Adicionar medidor</h3>
-                          <p className="form-help">
-                            Cadastre o número de série do dispositivo que vai enviar as leituras.
-                          </p>
-                          <label className="field">
-                            <span className="sr-only">Nome do medidor</span>
-                            <input
-                              value={newDevice}
-                              onChange={(event) => setNewDevice(event.target.value)}
-                              placeholder="Nome do medidor"
-                              required
-                            />
-                          </label>
-                          <label className="field">
-                            <span className="sr-only">Número de série</span>
-                            <input
-                              value={newSerial}
-                              onChange={(event) => setNewSerial(event.target.value)}
-                              placeholder="Número de série"
-                              required
-                            />
-                          </label>
-                          <button disabled={provisioning} className="button button--outline">
-                            {provisioning ? "Adicionando medidor…" : "Adicionar medidor"}{" "}
-                            <span aria-hidden="true">→</span>
-                          </button>
-                          <button
-                            type="button"
-                            className="button button--quiet"
-                            disabled={provisioning}
-                            onClick={() => setShowDeviceForm(false)}
-                          >
-                            Cancelar
-                          </button>
-                        </form>
-                      </article>
-                    )}
-                  </section>
-                )}
-                {view === "meters" && provisioned && (
-                  <section className="provision-card">
-                    <div>
-                      <span className="eyebrow">Credencial do dispositivo</span>
-                      <h2>Medidor pronto para configurar</h2>
-                      <p>
-                        A chave é exibida apenas nesta sessão. Copie-a e configure no dispositivo.
-                      </p>
-                      <code>{provisioned.key}</code>
-                      <button
-                        onClick={() => void copyDeviceKey()}
-                        className="button button--quiet copy-key"
-                      >
-                        {copiedKey ? "Chave copiada" : "Copiar chave"}
-                      </button>
-                    </div>
-                  </section>
-                )}
+                            <h2 id="new-meter-title">Adicionar medidor</h2>
+                            <p className="section-subtitle">
+                              Dê um nome ao medidor e informe o número de série do equipamento.
+                            </p>
+                            <div className="settings-grid">
+                              <label className="field">
+                                Nome do medidor
+                                <input
+                                  value={newDevice}
+                                  onChange={(event) => setNewDevice(event.target.value)}
+                                  placeholder="Ex.: Medidor principal"
+                                  required
+                                />
+                              </label>
+                              <label className="field">
+                                Número de série
+                                <input
+                                  value={newSerial}
+                                  onChange={(event) => setNewSerial(event.target.value)}
+                                  required
+                                />
+                              </label>
+                            </div>
+                            {deviceNotice?.kind === "error" && (
+                              <p role="alert" className="form-notice form-notice--error">
+                                {deviceNotice.message}
+                              </p>
+                            )}
+                            <div className="settings-actions">
+                              <button
+                                type="button"
+                                className="button button--quiet"
+                                disabled={provisioning}
+                                onClick={() => {
+                                  setShowDeviceForm(false);
+                                  if (deviceNotice?.kind === "error") setDeviceNotice(null);
+                                }}
+                              >
+                                Cancelar
+                              </button>
+                              <button disabled={provisioning} className="button button--primary">
+                                {provisioning ? "Adicionando medidor…" : "Adicionar medidor"}
+                              </button>
+                            </div>
+                          </form>
+                          {!showDeviceForm && selectedDevices.length > 0 && (
+                            <aside className="list-guidance">
+                              <h2>Um medidor sem comunicação?</h2>
+                              <p>Confira a alimentação e a conexão do equipamento.</p>
+                            </aside>
+                          )}
+                        </article>
+                      )}
+                    </section>
+                  )}
                 {view === "alerts" &&
                   (selectedAlert ? (
                     <AlertDetail
@@ -1626,19 +1878,15 @@ export default function Dashboard() {
                           {alertNotice}
                         </p>
                       )}
-                      <div className="alert-filters" aria-label="Filtrar avisos">
+                      <div className="alert-filters" role="group" aria-label="Filtrar avisos">
                         {(
                           [
-                            ["open", "Ativos", openAlertCount],
-                            ["acknowledged", "Reconhecidos", acknowledgedAlertCount],
-                            [
-                              "resolved",
-                              "Resolvidos",
-                              alerts.filter((item) => item.status === "resolved").length,
-                            ],
-                            ["all", "Todos", alertsHasMore ? `${alerts.length}+` : alerts.length],
+                            ["open", `Ativos (${openAlertCount})`],
+                            ["acknowledged", "Reconhecidos"],
+                            ["resolved", "Resolvidos"],
+                            ["all", "Todos"],
                           ] as const
-                        ).map(([filter, label, count]) => (
+                        ).map(([filter, label]) => (
                           <button
                             key={filter}
                             type="button"
@@ -1649,7 +1897,7 @@ export default function Dashboard() {
                               setAlertVisibleLimit(5);
                             }}
                           >
-                            {label} <span>{count}</span>
+                            {label}
                           </button>
                         ))}
                       </div>
@@ -1668,10 +1916,7 @@ export default function Dashboard() {
                                     : alert.status === "false_positive"
                                       ? "Marcado como falso positivo"
                                       : null;
-                              const description =
-                                alert.detector_type === "ml_anomaly"
-                                  ? "A análise encontrou uma possível mudança no consumo. Confira as leituras para entender o que aconteceu."
-                                  : alert.reason;
+                              const description = alertListDescription(alert);
                               return (
                                 <li className="alert-row" key={alert.id}>
                                   <div className="alert-main">
@@ -1686,17 +1931,17 @@ export default function Dashboard() {
                                       )}
                                     </div>
                                     <p>{description}</p>
-                                    <small>
-                                      {deviceName} · {formatDate(alert.detected_at)}
-                                    </small>
                                   </div>
+                                  <small className="alert-list-meta">
+                                    {deviceName} · {formatDate(alert.detected_at)}
+                                  </small>
                                   <button
                                     type="button"
                                     className="button button--quiet alert-view-button"
                                     aria-label={`Ver aviso: ${alertTitle(alert.detector_type)}`}
                                     onClick={() => openAlert(alert)}
                                   >
-                                    Ver aviso <span aria-hidden="true">→</span>
+                                    Ver aviso
                                   </button>
                                 </li>
                               );
@@ -1719,9 +1964,18 @@ export default function Dashboard() {
                           <p>Quando houver algo para acompanhar, ele aparecerá aqui.</p>
                         </div>
                       )}
+                      {visibleAlerts.length > 0 && (
+                        <aside className="list-guidance">
+                          <h2>Os avisos ajudam a acompanhar sua casa</h2>
+                          <p>
+                            Uma mudança no consumo merece verificação. Ela, sozinha, não confirma um
+                            vazamento.
+                          </p>
+                        </aside>
+                      )}
                     </section>
                   ))}
-                {view === "overview" && (
+                {view === "overview" && selectedDevices.length > 0 && (
                   <details className="surface overview-insights">
                     <summary className="overview-insights-toggle">Detalhes do consumo</summary>
                     <div className="overview-insights-content">
@@ -1771,6 +2025,30 @@ function alertTitle(detectorType: string): string {
   if (detectorType === "device_offline") return "Medidor sem comunicação";
   if (detectorType === "ml_anomaly") return "Mudança no consumo";
   return "Aviso de consumo";
+}
+
+function alertListDescription(alert: Alert): string {
+  if (alert.detector_type === "continuous_flow")
+    return "Há água passando por mais tempo que o configurado.";
+  if (alert.detector_type === "device_offline")
+    return "O medidor está há mais tempo sem enviar leituras.";
+  if (alert.detector_type === "ml_anomaly")
+    return "O consumo pode ter mudado em relação ao padrão. Confira as leituras.";
+  return alert.reason;
+}
+
+function alertSeverityLabel(severity: Alert["severity"]): string {
+  if (severity === "high") return "Prioridade alta";
+  if (severity === "medium") return "Atenção";
+  return "Para verificar";
+}
+
+function formatObservedDuration(minutes: number): string {
+  if (minutes >= 60) {
+    const hours = minutes / 60;
+    return `${hours.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} ${hours === 1 ? "hora" : "horas"}`;
+  }
+  return `${minutes.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} min`;
 }
 
 function OverviewInsights({
@@ -2094,8 +2372,30 @@ function PropertySettingsForm({
   const [feedback, setFeedback] = useState<{ kind: "success" | "error"; message: string } | null>(
     null,
   );
+  useEffect(() => {
+    if (feedback?.kind !== "success") return;
+    const timer = window.setTimeout(() => {
+      setFeedback((current) => (current === feedback ? null : current));
+    }, SUCCESS_NOTICE_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [feedback]);
   const update = (field: keyof PropertySettingsDraft, value: string) =>
     setDraft((current) => ({ ...current, [field]: value }));
+  const flowDurationMinutes = Number(draft.flowDuration);
+  const showDurationInHours = flowDurationMinutes >= 60 && flowDurationMinutes % 60 === 0;
+  const timezoneGroups = useMemo(() => {
+    const brazil = [];
+    const other = [];
+    for (const value of timezoneOptions) {
+      const option = { value, label: timezoneLabel(value, timezoneOptionsLoaded) };
+      if (brazilianTimezoneNames.has(value)) brazil.push(option);
+      else other.push(option);
+    }
+    return [
+      ["Brasil", brazil],
+      ["Outros fusos", other],
+    ] as const;
+  }, [timezoneOptions, timezoneOptionsLoaded]);
 
   useEffect(() => {
     setTimezoneOptions(getTimezoneOptions(property.timezone));
@@ -2163,33 +2463,40 @@ function PropertySettingsForm({
             />
           </label>
           <label className="field">
-            Fuso horário
+            Horário local
             <select
               value={draft.timezone}
               onChange={(event) => update("timezone", event.target.value)}
               required
             >
               {!timezoneOptions.includes(draft.timezone) && (
-                <option value={draft.timezone}>{draft.timezone} (atual)</option>
-              )}
-              {timezoneOptions.map((timezone) => (
-                <option key={timezone} value={timezone}>
-                  {timezone}
-                  {timezoneOptionsLoaded && " (" + timezoneOffsetLabel(timezone) + ")"}
+                <option value={draft.timezone}>
+                  {timezoneLabel(draft.timezone, timezoneOptionsLoaded)}
                 </option>
-              ))}
+              )}
+              {timezoneGroups.map(
+                ([label, options]) =>
+                  options.length > 0 && (
+                    <optgroup key={label} label={label}>
+                      {options.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ),
+              )}
             </select>
             <span className="field-hint">
-              Define o horário local dos gráficos e do acompanhamento noturno.
+              Escolha a cidade que tem o mesmo horário da sua casa.
             </span>
           </label>
           <label className="field">
-            Unidade de volume
+            Unidade de consumo
             <input value="Litros (L)" readOnly aria-readonly="true" />
-            <span className="field-hint">O consumo é apresentado em litros.</span>
           </label>
           <label className="field">
-            Vazão mínima para acompanhamento (L/min)
+            Vazão mínima para gerar aviso (L/min)
             <input
               className="settings-number"
               type="number"
@@ -2201,11 +2508,12 @@ function PropertySettingsForm({
               required
             />
             <span className="field-hint">
-              Uma vazão acima deste valor é avaliada pela duração configurada ao lado.
+              É a quantidade de água que passa por minuto. O aviso considera valores acima desse
+              limite.
             </span>
           </label>
           <label className="field">
-            Avisar após quanto tempo?
+            Tempo de fluxo contínuo para avisar (minutos)
             <input
               className="settings-number"
               type="number"
@@ -2216,9 +2524,13 @@ function PropertySettingsForm({
               onChange={(event) => update("flowDuration", event.target.value)}
               required
             />
+            <span className="field-hint">
+              A água precisa passar sem parar, acima da vazão mínima, por esse tempo.
+              {showDurationInHours && ` Equivale a ${formatObservedDuration(flowDurationMinutes)}.`}
+            </span>
           </label>
           <label className="field">
-            Aceitar leituras anteriores (dias)
+            Prazo para aceitar leituras atrasadas (dias)
             <input
               className="settings-number"
               type="number"
@@ -2230,7 +2542,8 @@ function PropertySettingsForm({
               required
             />
             <span className="field-hint">
-              Por quanto tempo uma leitura enviada com atraso ainda pode ser considerada.
+              Leituras enviadas com atraso só são aceitas dentro desse prazo, contado desde o
+              registro.
             </span>
           </label>
         </div>
@@ -2326,10 +2639,10 @@ function AlertEvidence({ alert }: { alert: Alert }) {
       timeStyle: "short",
     }).format(new Date(value));
 
-  rows.push([
-    "Período observado",
-    `${formatDate(alert.window_start)} – ${formatDate(alert.window_end)}`,
-  ]);
+  const start = formatDate(alert.window_start);
+  const end = formatDate(alert.window_end);
+  rows.push(start === end ? ["Horário do aviso", end] : ["Período observado", `${start} – ${end}`]);
+  rows.push(["Prioridade", alertSeverityLabel(alert.severity)]);
   if (alert.detector_type === "ml_anomaly") {
     if (typeof evidence.anomaly_probability === "number") {
       rows.push([
@@ -2403,13 +2716,13 @@ function AlertEvidence({ alert }: { alert: Alert }) {
       rows.push(["Último contato registrado", formatDate(lastSeen)]);
     }
     addNumber("expected_interval_seconds", "Intervalo esperado", "s");
-    addNumber("offline_threshold_seconds", "Limite para considerar offline", "s");
+    addNumber("offline_threshold_seconds", "Tempo até gerar o aviso", "s");
     addNumber("seconds_since_last_seen", "Tempo sem comunicação", "s");
   }
 
   return (
     <details className="alert-evidence">
-      <summary>Entender este aviso</summary>
+      <summary>Detalhes técnicos</summary>
       <dl>
         {rows.map(([label, value]) => (
           <div key={label}>
@@ -2440,6 +2753,14 @@ function AlertDetail({
   onFalsePositive: () => void;
 }) {
   const evidence = alert.evidence;
+  const isOffline = alert.detector_type === "device_offline";
+  const offlineSeconds = evidence.seconds_since_last_seen;
+  const offlineDuration =
+    typeof offlineSeconds === "number" && Number.isFinite(offlineSeconds) && offlineSeconds >= 0
+      ? offlineSeconds >= 60
+        ? formatObservedDuration(Math.round(offlineSeconds / 60))
+        : `${Math.round(offlineSeconds)} s`
+      : null;
   const latestSignals = evidence.latest_signals;
   const signalFlow =
     typeof latestSignals === "object" && latestSignals !== null
@@ -2459,14 +2780,13 @@ function AlertDetail({
     alert.status === "open"
       ? "Precisa de atenção"
       : alert.status === "acknowledged"
-        ? "Aviso reconhecido"
+        ? "Aviso visto"
         : alert.status === "resolved"
           ? "Aviso resolvido"
-          : "Marcado como falso positivo";
-  const nextStep =
-    alert.detector_type === "device_offline"
-      ? "Confira se o medidor está ligado e se a conexão está funcionando."
-      : "Veja se alguma torneira ou equipamento estava em uso nesse período. O aviso merece verificação, mas sozinho não confirma um problema.";
+          : "Aviso marcado como incorreto";
+  const nextStep = isOffline
+    ? "Confira se o medidor está ligado e conectado à rede."
+    : "Confira se havia alguma torneira aberta ou algum equipamento em uso nesse horário.";
 
   return (
     <div className="alert-detail-page">
@@ -2484,11 +2804,19 @@ function AlertDetail({
         </span>
         <h2 id="alert-detail-title">O que aconteceu</h2>
         <p className="alert-detail-description">
-          {alert.detector_type === "ml_anomaly"
-            ? "A análise encontrou uma possível mudança no consumo. Confira as leituras do período para entender o que aconteceu."
-            : alert.reason}
+          {isOffline
+            ? "Quando este aviso foi criado, o medidor tinha parado de enviar leituras."
+            : alertListDescription(alert)}
         </p>
-        {(flowRate !== null || duration !== null) && (
+        {isOffline && offlineDuration && (
+          <div className="alert-detail-metrics">
+            <div>
+              <strong>{offlineDuration}</strong>
+              <span>Tempo aproximado sem comunicação ao gerar o aviso</span>
+            </div>
+          </div>
+        )}
+        {!isOffline && (flowRate !== null || duration !== null) && (
           <div className="alert-detail-metrics">
             {flowRate !== null && (
               <div>
@@ -2500,19 +2828,17 @@ function AlertDetail({
             )}
             {duration !== null && (
               <div>
-                <strong>
-                  {duration.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} min
-                </strong>
+                <strong>{formatObservedDuration(duration)}</strong>
                 <span>Duração observada</span>
               </div>
             )}
           </div>
         )}
         <div className="alert-detail-next-step">
-          <h3>{alert.detector_type === "device_offline" ? "Vale conferir" : "Vale verificar"}</h3>
+          <h3>Vale conferir</h3>
           <p>{nextStep}</p>
         </div>
-        <AlertEvidence alert={alert} />
+        <AlertEvidence key={alert.id} alert={alert} />
       </section>
       {(alert.status === "open" || alert.status === "acknowledged") && (
         <div className="alert-detail-actions">
@@ -2523,7 +2849,7 @@ function AlertDetail({
               disabled={busy}
               onClick={onAcknowledge}
             >
-              {busy ? "Salvando…" : "Reconhecer aviso"}
+              {busy ? "Salvando…" : "Marcar como visto"}
             </button>
           )}
           <button
@@ -2540,7 +2866,7 @@ function AlertDetail({
             disabled={busy}
             onClick={onFalsePositive}
           >
-            Marcar como falso positivo
+            Marcar como incorreto
           </button>
         </div>
       )}
