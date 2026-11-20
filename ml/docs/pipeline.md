@@ -29,13 +29,20 @@ A busca usa `TimeSeriesSplit` com três divisões dentro do bloco de treino. Cad
 
 | Arquivo | Conteúdo | Uso |
 | --- | --- | --- |
-| `features.csv` | Vazão, delta de volume, intervalo e codificações cíclicas de hora e dia | Entradas do classificador |
+| `features.csv` | Vazão, delta de volume, intervalo e codificações cíclicas de hora e dia | Contrato de entrada; o pipeline usa as três medições e exclui o calendário |
 | `labels.csv` | `scenario_label` e `anomaly_label`, alinhados por `event_id` | Alvo de treino e avaliação, não feature |
 | `metadata.csv` | `event_id`, timestamp UTC e série do dispositivo | Alinhamento e rastreabilidade, não feature |
 | `preparation_manifest.json` | Fuso e políticas de transformação | Conferência do preparo |
 | `eda_report.json` | Qualidade e estatísticas da origem | Inspeção do dataset |
 
 O preparo não preenche lacunas com zero ou interpolação. Uma lacuna continua visível no intervalo entre observações válidas. Vazão, delta e intervalo mantêm unidades; o scaler do KNN é ajustado dentro do pipeline de treino. A função `ml/feature_transforms.py` mantém as transformações cíclicas compartilhadas com a inferência.
+
+Os estimadores excluem as codificações cíclicas para reduzir a memorização do
+calendário simulado. A escala das medições é ajustada em cada fold. A busca
+prefere uma configuração simples dentro de um erro padrão do melhor resultado
+e mantém um intervalo de 12 amostras entre treino e validação. O ajuste final
+aceita apenas observações anteriores ao teste; o perfil deslocado padrão vem
+de agosto e o teste principal começa em 13 de setembro.
 
 ## Artefatos de treinamento e MLflow
 
@@ -45,6 +52,8 @@ O trainer salva em `data/ml/training-bench-v2/`:
 - `metrics.json`: comparação, métricas de validação e teste, limitações e diagnóstico heurístico de overfitting;
 - `split_manifest.json`: estratégia e limites temporais da divisão;
 - `training_report.md`: síntese textual do experimento.
+- `candidate-models/`: artefatos finais dos três classificadores, avaliados
+  depois da seleção, com métricas em `candidate_holdout_evaluation`.
 
 No Compose, MLflow persiste banco e artefatos em `data/ml/mlflow-server/` e é acessível em `http://localhost:5000`. A execução local fora do Compose usa o URI SQLite configurado pela CLI. Os relatórios não provam ausência de overfitting: dados sintéticos não estabelecem generalização para residências ou sensores reais.
 

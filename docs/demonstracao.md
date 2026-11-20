@@ -6,7 +6,7 @@ Este guia explica como iniciar o protótipo, observar o que cada processo está 
 
 - Docker Desktop instalado, aberto e com Docker Compose v2 disponível.
 - Memória suficiente para PostgreSQL, frontend, API, treinamento e Airflow. A primeira inicialização pode levar mais tempo porque imagens e artefatos de ML ainda precisam ser preparados.
-- Portas locais `3000`, `5000`, `5432`, `8000` e `8080` disponíveis. O broker MQTT fica apenas na rede interna do Compose.
+- Portas locais `3000`, `5000`, `5432`, `8000`, `8080` e `1883` disponíveis. O ESP32 acessa o broker MQTT pela porta `1883` no IP local do computador.
 
 Na raiz do repositório, opcionalmente copie `.env.example` para `.env` caso queira alterar senha do banco, JWT, conta demonstrativa ou credenciais MQTT. Os padrões são somente para desenvolvimento local.
 
@@ -71,10 +71,12 @@ O dashboard pode indicar que a análise do modelo ainda está indisponível dura
 1. Acione o DAG híbrido no Airflow e mostre as etapas de geração, análise, preparação e treino do candidato.
 2. Abra o experimento `aquaflow-hybrid-airflow` no MLflow e expanda uma execução por modelo para mostrar as tentativas de busca, as métricas por divisão temporal e a combinação escolhida.
 3. Selecione no dashboard a propriedade do ESP32. Passe água pelo sensor e confirme a chegada da leitura via MQTT e sua persistência pela API.
-4. Mantenha a coleta até fechar uma janela válida de cinco minutos com uma leitura anterior disponível como referência. Compare a última leitura na API com a seção **Inferências recentes**, que atualiza a cada 30 segundos.
+4. Mantenha a coleta até fechar uma janela válida de cinco minutos com uma leitura anterior disponível como referência. Consulte `GET /api/v1/properties/{property_id}/ml-inferences` com autenticação e compare os identificadores das leituras com os resultados. O dashboard atual mostra avisos gerados por previsões positivas.
 5. Apresente a diferença entre o desempenho no teste padrão e no perfil de estresse. Se usar um publicador de teste, identifique essa etapa como simulação e registre o ensaio físico como pendente.
 
 Os parâmetros e limites atuais estão em [Métricas e parâmetros](metricas-e-parametros.md), e uma execução de referência com métricas, hashes e interpretação está registrada em [Resultado do experimento](../ml/docs/resultado-experimento.md).
+
+As evidências da execução integrada de 20/11/2026 estão em [Validação da integração](validacao-integracao.md).
 
 Para abrir o notebook de exploração e gráficos, configure as dependências em [ml/README.md](../ml/README.md#notebook-de-exploração-e-avaliação-visual). A primeira parte gera e prepara sua própria série híbrida; a seção de avaliação precisa dos artefatos de treinamento acima.
 

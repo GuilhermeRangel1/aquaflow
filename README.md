@@ -135,7 +135,7 @@ O AquaFlow sinaliza comportamentos que merecem verificação. Não confirma nem 
 
 ## Experimento de machine learning
 
-O primeiro modelo é um classificador binário por leitura válida. O gerador cria períodos normais, fluxo contínuo, consumo noturno e lacunas; `anomaly_label` marca os cenários artificiais. As features representam vazão, delta do volume acumulado, duração do intervalo e horário cíclico local. Identificadores, dados de bateria/sinal e rótulos não são entradas do modelo.
+O modelo é um classificador binário por leitura válida. O gerador cria períodos normais, fluxo contínuo, consumo noturno e lacunas; `anomaly_label` marca os cenários artificiais. Os classificadores usam vazão, delta do volume acumulado e duração do intervalo. As codificações cíclicas de calendário são preservadas no contrato dos dados e excluídas dentro do pipeline para reduzir a memorização da agenda simulada.
 
 O treinamento padrão usa 16 dias simulados com vazões calibradas em bancada, partição cronológica de 8/4/4 dias, validação cruzada temporal e comparação entre KNN, Árvore de Decisão, Random Forest e um baseline de prevalência. A seleção considera average precision na validação temporal e num perfil simulado com rotina alterada. Um perfil de estresse fica separado para avaliação posterior.
 
@@ -143,7 +143,7 @@ O treinamento padrão usa 16 dias simulados com vazões calibradas em bancada, p
 
 O Dummy Classifier usa a prevalência do treino como referência para medir o ganho de modelos que usam as features. O MLflow guarda cada combinação da busca aleatória, suas métricas por divisão temporal e a combinação vencedora de cada modelo. A seleção final usa a média da AP na validação padrão e na validação com rotina alterada. O teste cronológico e o perfil de estresse ficam reservados para avaliação posterior.
 
-Na execução com a série híbrida, o Random Forest foi selecionado com AP média de **0,594** na validação. No teste cronológico, a AP foi **0,999**. No perfil de estresse, a AP caiu para **0,502** e o recall foi **5,6%** no limiar de 0,5. As métricas descrevem o desempenho em perfis simulados calibrados em bancada. O relatório da execução local está em `data/ml/training-bench-v2/training_report.md`.
+Na execução regularizada de 20/11/2026, o KNN foi selecionado com AP média de **0,937** na validação. No teste cronológico, a AP foi **0,994** e o recall **97,6%**. No perfil de estresse, a AP foi **0,929** e o recall **91,8%**, com limiar de 0,5. A vizinhança proporcional reduziu o desvio da AP entre folds para **0,017**. As métricas descrevem perfis simulados calibrados em bancada e não estabelecem ausência de sobreajuste em campo. O relatório local está em `data/ml/training-bench-v2/training_report.md`, e o histórico da revisão está em [Validação da integração](docs/validacao-integracao.md).
 
 O relatório mostra a diferença entre treino e validação e a variação da AP entre divisões temporais. A queda no perfil de estresse indica sensibilidade a mudanças de rotina simuladas. A generalização para residências depende de validação em campo.
 
