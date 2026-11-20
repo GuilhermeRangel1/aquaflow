@@ -12,7 +12,7 @@ O protótipo pode ser demonstrado com o histórico carregado pelo Compose ou com
 | Celio Pereira Dias Junior | [@CelioJr12](https://github.com/CelioJr12) |
 | Ester de Araujo Carvalho Menezes | [@ester-acm](https://github.com/ester-acm) |
 | Guilherme Vinícius Rangel Silva | [@GuilhermeRangel1](https://github.com/GuilhermeRangel1) |
-| João Pedro Moraes Barbosa | [@Joao-Vitor-Moraes](https://github.com/Joao-Vitor-Moraes) |
+| João Vitor Moraes Barbosa | [@Joao-Vitor-Moraes](https://github.com/Joao-Vitor-Moraes) |
 | Luana Lima Maynard de Arruda Falcão | [@lua-mf](https://github.com/lua-mf) |
 
 ## Navegação rápida
