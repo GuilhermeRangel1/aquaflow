@@ -24,14 +24,17 @@ services:
       JWT_SECRET: ${JWT_SECRET:-local-only-change-this-secret-before-deploy}
       CORS_ORIGINS: '["http://localhost:3000"]'
       DEMO_MODE: ${DEMO_MODE:-true}
-      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-demo@example.com}
-      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-AquaFlow-demo-123!}
+      DEMO_DATASET_PATH: /app/demo-data/readings.csv
+      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-admin@admin.com}
+      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:?defina DEMO_USER_PASSWORD no .env (veja .env.example)}
       MQTT_INGESTOR_HEALTH_URL: http://mqtt-ingestor:8081/health
       ML_WORKER_HEALTH_URL: http://ml-inference:8081/health
     command: >-
       sh -c "alembic upgrade head && python -m app.demo_seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - aquaflow-demo-data:/app/demo-data:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=3)"]
       interval: 5s
@@ -42,6 +45,16 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      demo-data:
+        condition: service_completed_successfully
+
+  demo-data:
+    build:
+      context: ./ml
+    command: ["python", "build_real_dataset.py", "--calibration", "--output", "/demo-data/readings.csv"]
+    volumes:
+      - aquaflow-demo-data:/demo-data
+    restart: "no"
 
   mqtt:
     build:
@@ -86,19 +99,6 @@ services:
       api:
         condition: service_healthy
     restart: unless-stopped
-
-  mqtt-publisher:
-    profiles: ["tools"]
-    build:
-      context: ./backend
-    command: python -m app.mqtt_publish
-    environment:
-      MQTT_HOST: mqtt
-      MQTT_PUBLISH_USER: aquaflow-publisher
-      MQTT_PUBLISH_PASSWORD: ${MQTT_PUBLISH_PASSWORD:-aquaflow-local-publisher}
-    depends_on:
-      mqtt:
-        condition: service_healthy
 
   ml-data-generator:
     profiles: ["tools"]
@@ -155,14 +155,14 @@ services:
       - -c
       - >-
         if [ "$$ML_RETRAIN_MODEL" != "true" ] &&
-        [ -s /app/data/ml/training/best_model.joblib ] &&
-        [ -s /app/data/ml/training/metrics.json ]; then
+        [ -s /app/data/ml/training-bench-v2/best_model.joblib ] &&
+        [ -s /app/data/ml/training-bench-v2/metrics.json ]; then
           echo "Modelo existente encontrado; treinamento automático ignorado. Defina ML_RETRAIN_MODEL=true para treinar novamente.";
         else
-          python generate_mock_data.py --output data/ml/compose/raw/mock_readings.csv --seed 42 --start 2026-09-01T00:00:00-03:00 --timezone America/Sao_Paulo --days 16 --interval-minutes 5 &&
-          python prepare_dataset.py analyze --input data/ml/compose/raw/mock_readings.csv --output-dir data/ml/compose/analysis --timezone America/Sao_Paulo &&
-          python prepare_dataset.py prepare --input data/ml/compose/raw/mock_readings.csv --output-dir data/ml/compose/prepared --timezone America/Sao_Paulo &&
-          python train_model.py --features data/ml/compose/prepared/features.csv --labels data/ml/compose/prepared/labels.csv --metadata data/ml/compose/prepared/metadata.csv --output-dir data/ml/training --timezone America/Sao_Paulo;
+          python build_real_dataset.py --calibration --output data/ml/compose/raw/household_readings.csv --seed 42 --start 2026-09-01T00:00:00-03:00 --timezone America/Sao_Paulo --days 16 --interval-minutes 5 &&
+          python prepare_dataset.py analyze --input data/ml/compose/raw/household_readings.csv --output-dir data/ml/compose/analysis --timezone America/Sao_Paulo &&
+          python prepare_dataset.py prepare --input data/ml/compose/raw/household_readings.csv --output-dir data/ml/compose/prepared --timezone America/Sao_Paulo &&
+          python train_model.py --features data/ml/compose/prepared/features.csv --labels data/ml/compose/prepared/labels.csv --metadata data/ml/compose/prepared/metadata.csv --output-dir data/ml/training-bench-v2 --bench-calibration collection/bench-calibration-v1.json --timezone America/Sao_Paulo;
         fi
     volumes:
       - ./data/ml:/app/data/ml
@@ -178,8 +178,8 @@ services:
     command: python inference_worker.py
     environment:
       DATABASE_URL: postgresql+asyncpg://aquaflow:${POSTGRES_PASSWORD:-aquaflow-local}@db:5432/aquaflow
-      ML_MODEL_PATH: /app/data/ml/training/best_model.joblib
-      ML_TRAINING_REPORT_PATH: /app/data/ml/training/metrics.json
+      ML_MODEL_PATH: /app/data/ml/training-bench-v2/best_model.joblib
+      ML_TRAINING_REPORT_PATH: /app/data/ml/training-bench-v2/metrics.json
       ML_POLL_SECONDS: ${ML_POLL_SECONDS:-5}
       ML_HEALTH_PORT: 8081
     volumes:
@@ -200,9 +200,12 @@ services:
     restart: unless-stopped
 
   ml-airflow:
-    image: apache/airflow:3.3.2-python3.12
+    build:
+      context: ./ml
+      dockerfile: Dockerfile.airflow
     command: standalone
     environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
       AIRFLOW__CORE__PARALLELISM: "2"
@@ -216,6 +219,9 @@ services:
       - ./ml/airflow/dags:/opt/airflow/dags:ro
       - ./ml:/opt/airflow/ml:ro
       - ./data/ml:/opt/airflow/data/ml
+    depends_on:
+      mlflow:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -246,6 +252,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  aquaflow-demo-data:
   aquaflow-postgres:
   aquaflow-mqtt:
   aquaflow-airflow:

@@ -32,6 +32,7 @@ class Property(Base):
     __tablename__ = "properties"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(120))
     address: Mapped[str | None] = mapped_column(String(300), nullable=True)

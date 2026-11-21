@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic import EmailStr, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -16,8 +18,10 @@ class Settings(BaseSettings):
     future_clock_skew_seconds: int = 300
     cors_origins: list[str] = ["http://localhost:3000"]
     demo_mode: bool = False
+    demo_dataset_path: Path | None = None
+    demo_cleanup_legacy: bool = False
     demo_user_email: EmailStr | None = None
-    demo_user_password: str = Field(default="AquaFlow-demo-123!", min_length=12, max_length=128)
+    demo_user_password: str = Field(default="AquaFlow-demo-123!", min_length=8, max_length=128)
     mqtt_ingestor_health_url: str | None = None
     ml_worker_health_url: str | None = None
 
@@ -29,6 +33,13 @@ class Settings(BaseSettings):
             raise ValueError("JWT_SECRET must contain at least 32 characters in production")
         if self.environment == "production" and self.demo_mode:
             raise ValueError("DEMO_MODE must be disabled in production")
+        if len(self.demo_user_password) < 12 and not (
+            self.environment == "local"
+            and self.demo_mode
+            and self.demo_dataset_path is not None
+            and self.demo_user_email == "admin@admin.com"
+        ):
+            raise ValueError("Short seed passwords are only allowed for the local hybrid account")
         return self
 
 

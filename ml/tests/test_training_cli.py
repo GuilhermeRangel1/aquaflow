@@ -19,8 +19,9 @@ def _run(*args: str) -> None:
         raise AssertionError(f"command failed: {' '.join(args)}\n{result.stdout}\n{result.stderr}")
 
 
+@pytest.mark.parametrize("future_profile", [False, True])
 def test_cli_compares_models_on_chronological_holdout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, future_profile: bool
 ) -> None:
     raw = tmp_path / "raw.csv"
     prepared = tmp_path / "prepared"
@@ -64,7 +65,11 @@ def test_cli_compares_models_on_chronological_holdout(
             "--seed",
             seed,
             "--start",
-            "2026-10-01T00:00:00-03:00",
+            (
+                "2026-08-01T00:00:00-03:00"
+                if profile == "shifted" and not future_profile
+                else "2026-11-01T00:00:00-03:00"
+            ),
             "--timezone",
             "America/Sao_Paulo",
             "--profile",
@@ -93,7 +98,7 @@ def test_cli_compares_models_on_chronological_holdout(
         "local_weekday_cos",
     ]
 
-    _run(
+    training_command = (
         "ml/train_model.py",
         "--features",
         str(prepared / "features.csv"),
@@ -120,14 +125,20 @@ def test_cli_compares_models_on_chronological_holdout(
         "--stress-test-metadata",
         str(stress_prepared / "metadata.csv"),
     )
+    if future_profile:
+        with pytest.raises(AssertionError, match="anteriores ao início do teste"):
+            _run(*training_command)
+        assert not (output / "best_model.joblib").exists()
+        return
+    _run(*training_command)
 
     report = json.loads((output / "metrics.json").read_text(encoding="utf-8"))
     assert report["task"] == "binary_classification"
     assert report["target"] == "anomaly_label"
     assert report["timezone"] == "America/Sao_Paulo"
     assert report["split_counts"] == {"train": 2255, "validation": 1128, "test": 1128}
-    assert len(report["candidates"]) == 4  # baseline plus three model families
-    assert report["selected_model"] in {"logistic_regression", "random_forest", "hist_gradient_boosting"}
+    assert set(report["candidates"]) == {"dummy_prior", "knn", "decision_tree", "random_forest"}
+    assert report["selected_model"] in {"knn", "decision_tree", "random_forest"}
     for candidate in report["candidates"].values():
         metrics = candidate["validation"]
         assert 0.0 <= metrics["average_precision"] <= 1.0
@@ -158,8 +169,75 @@ def test_cli_compares_models_on_chronological_holdout(
     }
     assert (output / "best_model.joblib").is_file()
     assert (output / "training_report.md").is_file()
-    assert "Hash combinado dos dados" in (output / "training_report.md").read_text(
-        encoding="utf-8"
-    )
+    assert "Hash combinado dos dados" in (output / "training_report.md").read_text(encoding="utf-8")
     assert (output / "split_manifest.json").is_file()
     assert (tmp_path / "mlflow.db").is_file()
+
+    from mlflow.tracking import MlflowClient
+
+    client = MlflowClient(tracking_uri=tracking)
+    runs = client.search_runs([report["mlflow_experiment_id"]])
+    summaries = {run.info.run_id: run.info.run_name for run in runs}
+    trials = [run for run in runs if "mlflow.parentRunId" in run.data.tags]
+    assert len(trials) == 3
+    for trial in trials:
+        parent_name = summaries[trial.data.tags["mlflow.parentRunId"]]
+        assert trial.data.params["model"] == parent_name
+        assert trial.data.params["data_sha256"] == report["training_data_sha256"]
+        assert trial.data.tags["selected_for_model"] == "true"
+        for partition in ("train", "validation"):
+            history = client.get_metric_history(
+                trial.info.run_id, f"cv_{partition}_average_precision"
+            )
+            assert sorted(metric.step for metric in history) == [1, 2, 3]
+
+
+def test_hybrid_candidates_generalize_without_a_large_training_gap(tmp_path: Path) -> None:
+    raw = tmp_path / "raw.csv"
+    prepared = tmp_path / "prepared"
+    output = tmp_path / "training"
+    _run(
+        "ml/build_real_dataset.py",
+        "--calibration",
+        "--output",
+        str(raw),
+        "--start",
+        "2026-09-01T00:00:00-03:00",
+        "--seed",
+        "42",
+    )
+    _run(
+        "ml/prepare_dataset.py",
+        "prepare",
+        "--input",
+        str(raw),
+        "--output-dir",
+        str(prepared),
+        "--timezone",
+        "America/Sao_Paulo",
+    )
+    _run(
+        "ml/train_model.py",
+        "--features",
+        str(prepared / "features.csv"),
+        "--labels",
+        str(prepared / "labels.csv"),
+        "--metadata",
+        str(prepared / "metadata.csv"),
+        "--output-dir",
+        str(output),
+        "--tracking-uri",
+        f"sqlite:///{(tmp_path / 'mlflow.db').resolve().as_posix()}",
+    )
+    report = json.loads((output / "metrics.json").read_text(encoding="utf-8"))
+    baseline_ap = report["candidates"]["dummy_prior"]["validation"]["average_precision"]
+    for name in ("knn", "random_forest", "decision_tree"):
+        candidate = report["candidates"][name]
+        assert candidate["cv_generalization_gap"] < 0.1, name
+        assert candidate["cv_validation_average_precision_std"] < 0.1, name
+        assert candidate["validation"]["average_precision"] > baseline_ap + 0.2, name
+        holdout = report["candidate_holdout_evaluation"][name]
+        assert holdout["stress"]["recall"] > 0.8, name
+        assert holdout["test"]["average_precision"] > 0.85, name
+        assert (output / "candidate-models" / f"{name}.joblib").is_file()
+    assert report["final_training_end"] < report["test_start"]

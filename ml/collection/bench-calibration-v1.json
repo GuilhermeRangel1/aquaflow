@@ -1,0 +1,12 @@
+{
+  "median_active_flow_liters_minute": {
+    "bench_features_01_ambos_abertos.csv": 4.13,
+    "bench_features_02_direita_fechada.csv": 4.8,
+    "bench_features_03_esquerda_fechada.csv": 5.33,
+    "bench_features_04_esquerda_pouco_aberta.csv": 1.0
+  },
+  "excluded_measurements": {
+    "bench_features_02_direita_fechada.csv": [602, 603, 604],
+    "bench_features_03_esquerda_fechada.csv": [91, 92, 93, 251, 260]
+  }
+}

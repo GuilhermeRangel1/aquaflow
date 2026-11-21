@@ -59,7 +59,11 @@ async def test_published_reading_is_visible_once_through_the_api() -> None:
         headers = {"Authorization": f"Bearer {login.json()['tokens']['access_token']}"}
         properties = await client.get("/api/v1/properties", headers=headers)
         assert properties.status_code == 200
-        property_id = properties.json()["items"][0]["id"]
+        property_id = next(
+            item["id"]
+            for item in properties.json()["items"]
+            if item["name"] == "Casa da Administração"
+        )
         provisioned = await client.post(
             "/api/v1/devices",
             headers=headers,
@@ -104,11 +108,16 @@ async def test_published_reading_is_visible_once_through_the_api() -> None:
     reason="requires Compose MQTT, PostgreSQL, API and a trained local model",
 )
 @pytest.mark.asyncio
-async def test_mqtt_ml_predictions_create_actionable_alerts() -> None:
+@pytest.mark.parametrize("cadence_seconds", [300, 30])
+async def test_mqtt_ml_predictions_create_actionable_alerts(cadence_seconds: int) -> None:
     base_url = os.environ["AQUAFLOW_API_URL"]
     serial = f"MQTT-ML-TEST-{uuid4().hex[:12]}"
     event_ids = [uuid4().hex for _ in range(5)]
     now = datetime.now(UTC)
+    # Exercise the hybrid model's daytime flow scenario at a stable local hour.
+    reference_time = now.replace(hour=15, minute=25, second=0, microsecond=0)
+    if reference_time > now:
+        reference_time -= timedelta(days=1)
     async with AsyncClient(base_url=base_url, timeout=10) as client:
         login = await client.post(
             "/api/v1/auth/login",
@@ -121,24 +130,49 @@ async def test_mqtt_ml_predictions_create_actionable_alerts() -> None:
         headers = {"Authorization": f"Bearer {login.json()['tokens']['access_token']}"}
         properties = await client.get("/api/v1/properties", headers=headers)
         assert properties.status_code == 200
-        property_id = properties.json()["items"][0]["id"]
+        property_id = next(
+            item["id"]
+            for item in properties.json()["items"]
+            if item["name"] == "Casa da Administração"
+        )
         provisioned = await client.post(
             "/api/v1/devices",
             headers=headers,
-            json={"property_id": property_id, "serial_number": serial, "name": "Teste ML MQTT"},
+            json={
+                "property_id": property_id,
+                "serial_number": serial,
+                "name": "Teste ML MQTT",
+                "expected_interval_seconds": cadence_seconds,
+            },
         )
         assert provisioned.status_code == 201
         device = provisioned.json()
         payloads = []
         cumulative_volume = 100.0
-        flows = [None, None, 0.08, 0.5, 0.5]
+        flows = [None, None, 0.0, 0.2, 0.2]
+        sent_ids = set(event_ids)
         for index, flow in enumerate(flows):
+            if cadence_seconds == 30:
+                for step in range(10):
+                    cumulative_volume += 0.1 if index >= 3 else 0
+                    event_id = event_ids[index] if step == 9 else uuid4().hex
+                    sent_ids.add(event_id)
+                    recorded_at = reference_time - timedelta(
+                        minutes=30 - 5 * index, seconds=-30 * step
+                    )
+                    payloads.append(json.dumps({
+                        "device_serial": serial,
+                        "event_id": event_id,
+                        "recorded_at": recorded_at.isoformat(),
+                        "cumulative_volume_liters": round(cumulative_volume, 3),
+                    }))
+                continue
             if index == 1:
                 cumulative_volume += 0.2
             payload = {
                 "device_serial": serial,
                 "event_id": event_ids[index],
-                "recorded_at": (now - timedelta(minutes=25 - 5 * index)).isoformat(),
+                "recorded_at": (reference_time - timedelta(minutes=25 - 5 * index)).isoformat(),
             }
             if index < 2:
                 payload["cumulative_volume_liters"] = cumulative_volume
@@ -149,9 +183,9 @@ async def test_mqtt_ml_predictions_create_actionable_alerts() -> None:
             for payload in payloads:
                 await asyncio.to_thread(_publish, serial, device["device_key"], payload)
 
-            expected_events = set(event_ids[1:])
+            expected_events = set(event_ids if cadence_seconds == 30 else event_ids[1:])
             inferences_by_event = {}
-            for _attempt in range(60):
+            for _attempt in range(120):
                 response = await client.get(
                     f"/api/v1/properties/{property_id}/ml-inferences?limit=100",
                     headers=headers,
@@ -160,12 +194,14 @@ async def test_mqtt_ml_predictions_create_actionable_alerts() -> None:
                 inferences_by_event = {
                     item["event_id"]: item
                     for item in response.json()["items"]
-                    if item["event_id"] in expected_events
+                    if item["event_id"] in (sent_ids if cadence_seconds == 30 else expected_events)
                 }
                 if set(inferences_by_event) == expected_events:
                     break
                 await asyncio.sleep(1)
             assert set(inferences_by_event) == expected_events
+            if cadence_seconds == 30:
+                assert inferences_by_event[event_ids[0]]["status"] == "skipped"
 
             cumulative_result = inferences_by_event[event_ids[1]]
             normal_result = inferences_by_event[event_ids[2]]
@@ -176,7 +212,10 @@ async def test_mqtt_ml_predictions_create_actionable_alerts() -> None:
             assert cumulative_result["status"] == "scored"
             assert (
                 cumulative_result["explanation"]["input_derivation"]
-                == "flow_rate_from_cumulative_volume"
+                == (
+                    "cumulative_volume_5min_window"
+                    if cadence_seconds == 30 else "flow_rate_from_cumulative_volume"
+                )
             )
             assert normal_result["predicted_anomaly"] is False
             for result in anomaly_results:
@@ -184,6 +223,10 @@ async def test_mqtt_ml_predictions_create_actionable_alerts() -> None:
                 assert result["predicted_anomaly"] is True
                 assert len(result["model_version"]) == 64
                 assert result["explanation"]["top_signals"]
+                if cadence_seconds == 30:
+                    assert result["feature_values"]["elapsed_minutes"] == 5
+                    assert result["feature_values"]["volume_delta_liters"] == 1
+                    assert result["feature_values"]["flow_rate_liters_minute"] == 0.2
 
             alerts = await client.get(
                 f"/api/v1/properties/{property_id}/alerts?limit=100",

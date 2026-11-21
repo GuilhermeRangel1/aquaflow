@@ -6,9 +6,10 @@ import hashlib
 import json
 import logging
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from itertools import pairwise
 from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
@@ -19,6 +20,7 @@ import numpy as np
 from feature_transforms import FEATURE_NAMES, transform_reading
 
 logger = logging.getLogger("aquaflow.ml.inference")
+MODEL_WINDOW_SECONDS = 300
 _health_lock = Lock()
 _health: dict[str, Any] = {
     "status": "starting",
@@ -235,13 +237,12 @@ async def _backfill_existing_ml_alerts(
     model_version: str,
     threshold: float,
 ) -> int:
-    async with pool.acquire() as connection:
-        async with connection.transaction():
-            return await _backfill_ml_alerts(
-                connection,
-                model_version=model_version,
-                threshold=threshold,
-            )
+    async with pool.acquire() as connection, connection.transaction():
+        return await _backfill_ml_alerts(
+            connection,
+            model_version=model_version,
+            threshold=threshold,
+        )
 
 
 def load_model(model_path: Path, report_path: Path) -> tuple[Any, dict[str, Any], str]:
@@ -272,6 +273,54 @@ def load_model(model_path: Path, report_path: Path) -> tuple[Any, dict[str, Any]
     return joblib.load(model_path), report, model_hash
 
 
+async def _aggregate_window(
+    connection: Any, reading: Any
+) -> tuple[dict[str, float] | None, str | None]:
+    end = reading["recorded_at"]
+    tolerance = timedelta(seconds=reading["expected_interval_seconds"] * 1.5)
+    window = timedelta(seconds=MODEL_WINDOW_SECONDS)
+    boundary = reading["window_start"]
+    coverage_tolerance = min(tolerance, timedelta(seconds=60))
+    history = await connection.fetch(
+        """
+        SELECT recorded_at, cumulative_volume_liters, quality
+        FROM telemetry_readings
+        WHERE device_id = $1 AND recorded_at >= $2 AND recorded_at < $3
+        ORDER BY recorded_at, id
+        """,
+        reading["device_id"], boundary - coverage_tolerance, end,
+    )
+    candidates = [
+        i for i, sample in enumerate(history)
+        if sample["recorded_at"] < boundary
+    ]
+    if not candidates or end - boundary < window - coverage_tolerance:
+        return None, "Cobertura insuficiente para a janela de cinco minutos."
+    # Reuse the previous bucket's last sample as the next volume baseline.
+    samples = [*history[candidates[-1]:], reading]
+    for before, after in pairwise(samples):
+        step = after["recorded_at"] - before["recorded_at"]
+        if not timedelta(0) < step <= tolerance:
+            return None, "Lacuna ou timestamp duplicado na janela de cinco minutos."
+    if any(
+        sample["quality"] != "valid" or sample["cumulative_volume_liters"] is None
+        for sample in samples
+    ):
+        return None, "Volume acumulado válido insuficiente na janela de cinco minutos."
+    volumes = [sample["cumulative_volume_liters"] for sample in samples]
+    if any(after < before for before, after in pairwise(volumes)):
+        return None, "O contador de volume diminuiu dentro da janela de cinco minutos."
+    elapsed = (end - samples[0]["recorded_at"]).total_seconds() / 60
+    delta = float(volumes[-1] - volumes[0])
+    return transform_reading(
+        flow_rate_liters_minute=delta / elapsed,
+        volume_delta_liters=delta,
+        elapsed_minutes=elapsed,
+        recorded_at=boundary + window,
+        timezone=reading["timezone"],
+    ), None
+
+
 async def run_batch(
     pool: Any,
     *,
@@ -284,14 +333,37 @@ async def run_batch(
     async with pool.acquire() as connection:
         readings = await connection.fetch(
             """
-            SELECT r.id, r.device_id, r.event_id, r.recorded_at,
+            SELECT r.id, r.device_id, r.event_id, r.recorded_at, r.quality,
                    r.cumulative_volume_liters, r.flow_rate_liters_minute,
                    d.name AS device_name, d.property_id, d.expected_interval_seconds,
-                   p.timezone
+                   p.timezone, bucket.window_start
             FROM telemetry_readings AS r
             JOIN devices AS d ON d.id = r.device_id
-            JOIN properties AS p ON p.id = d.property_id
+            JOIN properties AS p ON p.id = d.property_id AND p.archived_at IS NULL
+            CROSS JOIN LATERAL (
+                SELECT date_bin(interval '5 minutes', r.recorded_at,
+                                timestamptz '2000-01-01 00:00:00+00') AS window_start
+            ) AS bucket
             WHERE r.quality = 'valid'
+              AND (
+                d.expected_interval_seconds >= 300 OR (
+                  bucket.window_start + interval '5 minutes'
+                      + d.expected_interval_seconds * interval '1 second' <= now()
+                  AND NOT EXISTS (
+                    SELECT 1 FROM telemetry_readings AS later
+                    WHERE later.device_id = r.device_id AND later.quality = 'valid'
+                      AND later.recorded_at < bucket.window_start + interval '5 minutes'
+                      AND (later.recorded_at, later.id) > (r.recorded_at, r.id)
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM telemetry_readings AS earlier
+                    JOIN ml_inferences AS i ON i.reading_id = earlier.id
+                    WHERE earlier.device_id = r.device_id AND i.model_version = $1
+                      AND earlier.recorded_at >= bucket.window_start
+                      AND earlier.recorded_at < bucket.window_start + interval '5 minutes'
+                  )
+                )
+              )
               AND NOT EXISTS (
                   SELECT 1 FROM ml_inferences AS i
                   WHERE i.reading_id = r.id AND i.model_version = $1
@@ -308,6 +380,25 @@ async def run_batch(
         prepared: list[dict[str, Any]] = []
         pending: list[dict[str, Any]] = []
         for reading in readings:
+            if reading["expected_interval_seconds"] < MODEL_WINDOW_SECONDS:
+                if reading["timezone"] != report.get("timezone"):
+                    features, reason = None, (
+                        "Fuso da propriedade diferente do fuso usado no treinamento."
+                    )
+                else:
+                    features, reason = await _aggregate_window(connection, reading)
+                if features is not None:
+                    prepared.append({
+                        "reading": reading, "features": features,
+                        "derivation": "cumulative_volume_5min_window",
+                    })
+                else:
+                    pending.append({
+                        "reading": reading, "status": "skipped", "predicted_anomaly": None,
+                        "probability": None, "features": {},
+                        "explanation": {"method": "not_scored", "reason": reason}, "reason": reason,
+                    })
+                continue
             previous = await connection.fetchrow(
                 """
                 SELECT recorded_at, cumulative_volume_liters, quality
@@ -496,8 +587,10 @@ async def serve() -> None:
 
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
     database_url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
-    model_path = Path(os.getenv("ML_MODEL_PATH", "data/ml/training/best_model.joblib"))
-    report_path = Path(os.getenv("ML_TRAINING_REPORT_PATH", "data/ml/training/metrics.json"))
+    model_path = Path(os.getenv("ML_MODEL_PATH", "data/ml/training-bench-v2/best_model.joblib"))
+    report_path = Path(
+        os.getenv("ML_TRAINING_REPORT_PATH", "data/ml/training-bench-v2/metrics.json")
+    )
     poll_seconds = max(1, int(os.getenv("ML_POLL_SECONDS", "5")))
     model, report, version = load_model(model_path, report_path)
     pool = await asyncpg.create_pool(database_url, min_size=1, max_size=4)
@@ -560,8 +653,8 @@ def main() -> None:
 async def _run_once() -> None:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
     model, report, version = load_model(
-        Path(os.getenv("ML_MODEL_PATH", "data/ml/training/best_model.joblib")),
-        Path(os.getenv("ML_TRAINING_REPORT_PATH", "data/ml/training/metrics.json")),
+        Path(os.getenv("ML_MODEL_PATH", "data/ml/training-bench-v2/best_model.joblib")),
+        Path(os.getenv("ML_TRAINING_REPORT_PATH", "data/ml/training-bench-v2/metrics.json")),
     )
     import asyncpg
 

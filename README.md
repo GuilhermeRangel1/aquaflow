@@ -2,7 +2,7 @@
 
 **AquaFlow é um protótipo acadêmico de monitoramento do consumo de água.** Ele integra uma aplicação web, uma API, PostgreSQL, ingestão de telemetria por HTTP e MQTT, monitoramento por regras e um experimento de machine learning.
 
-O protótipo pode ser demonstrado sem medidores físicos. A conta de demonstração e o treinamento usam dados mockados gerados separadamente pelo projeto. Os rótulos do modelo representam cenários artificiais — não vazamentos observados. Ainda não há firmware ESP32/FreeRTOS implementado nem validação em uma instalação real.
+O protótipo pode ser demonstrado com o histórico carregado pelo Compose ou com um ESP32 físico. A demonstração e o treinamento usam uma rotina doméstica simulada com vazões calibradas por medições de bancada. Os rótulos representam cenários simulados. O firmware publica por MQTT e a detecção em uma instalação residencial ainda precisa ser validada.
 
 ## Integrantes
 
@@ -19,25 +19,20 @@ O protótipo pode ser demonstrado sem medidores físicos. A conta de demonstraç
 
 [Google Sites do projeto](https://sites.google.com/cesar.school/projetos6-gp14/in%C3%ADcio)
 
+[Ideação e definição do problema](https://sites.google.com/cesar.school/projetos6-gp14/sr1/defini%C3%A7%C3%A3o-do-problema)
+
 | Guia | O que você encontra |
 | --- | --- |
 | [Como executar](docs/demonstracao.md) | Inicialização com Docker Compose, conta de demonstração e comandos do fluxo principal. |
 | [Arquitetura](docs/arquitetura.md) | Serviços, caminhos de dados e decisões da integração. |
 | [Estado atual](docs/estado-do-projeto.md) | O que está implementado, o que é experimental e o que falta validar. |
 | [Métricas e parâmetros](docs/metricas-e-parametros.md) | Limites, valores padrão e métricas usados no projeto. |
-| [Resultado do experimento ML](ml/docs/resultado-experimento.md) | Execução de referência, comparação de modelos e limitações. |
-| [Dados e modelos](ml/README.md) | Geração mockada, pipeline, notebook, treinamento e inferência. |
+| [Avaliação do dataset híbrido](#resultado-de-referência) | Resultado atual e limites da avaliação. |
+| [Histórico do experimento sintético](ml/docs/resultado-experimento.md) | Execução anterior à calibração de bancada. |
+| [Dados e modelos](ml/README.md) | Série híbrida, pipeline, notebook, treinamento e inferência. |
 | [Contrato MQTT](docs/contrato-mqtt.md) | Tópicos, autenticação e payload aceito pelo broker local. |
 | [Especificação](especificacao-monitoramento-consumo-agua.md) | Requisitos e contratos de referência do produto e da API. |
 
-
-### Resumo do consumo
-
-![Resumo do consumo na visão geral do AquaFlow](docs/images/resumo-do-consumo.png)
-
-### Acompanhamento e análises
-
-![Acompanhamento e análises na visão geral do AquaFlow](docs/images/acompanhamento-e-analises.png)
 
 ## Visão geral
 
@@ -60,7 +55,7 @@ Esse desenho representa a integração de desenvolvimento local. O detalhe dos s
 
 ## O que o protótipo demonstra
 
-- Conta demonstrativa com propriedade, medidores, histórico sintético e exemplos de alertas.
+- Conta local de Administração com propriedade e histórico da série híbrida.
 - Cadastro e acompanhamento de medidores, ingestão HTTP e consulta de leituras.
 - Ingestão MQTT encaminhada para a mesma API HTTP de validação e persistência.
 - Cálculo de consumo entre leituras compatíveis, mantendo lacunas sem tratá-las como consumo zero.
@@ -76,15 +71,17 @@ Essas funções mostram o funcionamento integrado do protótipo. Elas não compr
 
 - Docker Desktop com Docker Compose v2.
 - Portas locais `3000`, `5000`, `5432`, `8000` e `8080` disponíveis.
+- Porta `1883` disponível para o broker MQTT local.
 - Memória suficiente para a aplicação, o Airflow e o treinamento inicial. A geração do modelo pode levar alguns minutos.
 
-Na raiz do repositório, inicie a solução completa:
+Na raiz do repositório, copie `.env.example` para `.env` (o Compose exige `DEMO_USER_PASSWORD`) e inicie a solução completa:
 
 ```powershell
+Copy-Item .env.example .env
 docker compose up --build
 ```
 
-Na primeira execução, o Compose constrói e inicia PostgreSQL, API, dashboard, broker MQTT, consumidor MQTT, Airflow e MLflow. A API aplica as migrations e popula a conta demonstrativa. Se o modelo ainda não existir, o serviço `ml-trainer` gera uma série sintética, executa análise e preparação, compara modelos e registra o experimento. O treinamento termina normalmente; depois dele, `ml-inference` inicia e processa leituras compatíveis. Nas próximas execuções, os artefatos locais existentes são reutilizados.
+Na primeira execução, o Compose inicia PostgreSQL, API, dashboard, broker MQTT, consumidor MQTT, Airflow e MLflow. O serviço `demo-data` gera a série híbrida e a API grava o histórico na conta local. Se o modelo ainda não existir, o serviço `ml-trainer` prepara a mesma série, compara os modelos e registra o experimento. O worker `ml-inference` inicia depois do treinamento. Nas próximas execuções, o modelo salvo é reutilizado.
 
 | Serviço | Endereço local |
 | --- | --- |
@@ -94,21 +91,28 @@ Na primeira execução, o Compose constrói e inicia PostgreSQL, API, dashboard,
 | Experimentos MLflow | [http://localhost:5000](http://localhost:5000) |
 | Interface Airflow | [http://localhost:8080](http://localhost:8080) |
 
-O acesso ao Airflow e ao MLflow é local. O broker MQTT não publica sua porta no computador. Esta configuração usa credenciais de desenvolvimento e não deve ser exposta à internet.
+O acesso ao Airflow e ao MLflow é local. O ESP32 acessa o broker pela porta `1883` no IP do computador que executa o Compose, na mesma rede. A API publica a porta `8000` apenas em `127.0.0.1`. Use essa configuração de desenvolvimento em uma rede local de confiança.
 
-### Conta de demonstração
+### Conta local de Administração
 
 ```text
-E-mail: demo@example.com
-Senha: AquaFlow-demo-123!
-Propriedade: Casa da demonstração
+E-mail: admin@admin.com
+Senha: admin123
+Propriedade: Casa da Administração
 ```
 
 Para mudar o e-mail ou a senha, copie `.env.example` para `.env` e altere `DEMO_USER_EMAIL` e `DEMO_USER_PASSWORD` antes de iniciar. Os valores padrão são destinados apenas à máquina local.
 
 ### O que você verá
 
-A conta demo contém três medidores ativos, leituras sintéticas, alertas de exemplo em estados diferentes e uma pequena sequência de leituras para mostrar a inferência. O seed é aditivo e preserva o histórico do banco ao reiniciar o serviço. Esses dados não vieram de sensores físicos.
+Na conta local de Administração, selecione **Casa da Administração** para ver o **Medidor da série híbrida**. O Compose carrega esse histórico no PostgreSQL na primeira execução. A série usa vazões calibradas por medições do sensor de bancada, com rotina e datas simuladas. O seed preserva a telemetria física e remove os medidores antigos identificados como exemplos, junto com seus alertas e leituras.
+
+### Demonstrar com o ESP32
+
+1. Em **Medidores**, cadastre um medidor para a placa e configure o intervalo esperado de **30 segundos**.
+2. Configure o serial, a chave do medidor e o IP do broker seguindo o [guia do firmware](firmware/aquaflow-esp32/README.md).
+3. Ligue a placa, passe água pelo sensor e atualize a aba **Medidores** depois da próxima publicação. A API salva as leituras no PostgreSQL automaticamente.
+4. Depois de uma janela completa de **cinco minutos** com dados suficientes, o worker avalia o consumo com o modelo já carregado. Se houver alerta experimental, ele aparece em **Acompanhamento** ao recarregar a página.
 
 Na aba de acompanhamento, alertas de regras e análises experimentais de ML aparecem separados. Uma previsão positiva pode abrir um alerta experimental tratável; isso não muda os detectores por regras. Resultados insuficientes indicam que faltam dados válidos para calcular as features necessárias, e não que o modelo previu comportamento normal. Veja [como executar e demonstrar](docs/demonstracao.md) para os passos de MQTT, Airflow, logs e reinicialização.
 
@@ -120,9 +124,9 @@ Um dispositivo provisionado envia a leitura à API com seu número de série, um
 
 ### MQTT
 
-O broker local recebe uma publicação no tópico do medidor. O consumidor valida a mensagem e encaminha a leitura para a API HTTP, que continua responsável por autenticação, validação, idempotência e armazenamento. Isso permite exercitar o fluxo sem hardware com o serviço `mqtt-publisher`.
+O broker local recebe uma publicação no tópico do medidor. O consumidor valida a mensagem e encaminha a leitura para a API HTTP, que continua responsável por autenticação, validação, idempotência e armazenamento. O teste automatizado MQTT usa um banco isolado.
 
-Para os tópicos, o corpo JSON e uma publicação de exemplo, consulte o [contrato MQTT](docs/contrato-mqtt.md). Ele não valida conexão física nem substitui o futuro firmware.
+Para os tópicos, o corpo JSON e uma publicação de exemplo, consulte o [contrato MQTT](docs/contrato-mqtt.md).
 
 ### Regras de monitoramento
 
@@ -132,19 +136,21 @@ O AquaFlow sinaliza comportamentos que merecem verificação. Não confirma nem 
 
 ## Experimento de machine learning
 
-O primeiro modelo é um classificador binário por leitura válida. O gerador cria períodos normais, fluxo contínuo, consumo noturno e lacunas; `anomaly_label` marca os cenários artificiais. As features representam vazão, delta do volume acumulado, duração do intervalo e horário cíclico local. Identificadores, dados de bateria/sinal e rótulos não são entradas do modelo.
+O modelo é um classificador binário por leitura válida. O gerador cria períodos normais, fluxo contínuo, consumo noturno e lacunas; `anomaly_label` marca os cenários artificiais. Os classificadores usam vazão, delta do volume acumulado e duração do intervalo. As codificações cíclicas de calendário são preservadas no contrato dos dados e excluídas dentro do pipeline para reduzir a memorização da agenda simulada.
 
-O treinamento usa 16 dias mockados, partição cronológica de 8/4/4 dias, validação cruzada temporal e comparação entre regressão logística, Random Forest, HistGradientBoosting e um baseline de prevalência. A seleção considera average precision na validação temporal e num perfil simulado com rotina alterada. Um perfil de estresse fica separado para avaliação posterior.
+O treinamento padrão usa 16 dias simulados com vazões calibradas em bancada, partição cronológica de 8/4/4 dias, validação cruzada temporal e comparação entre KNN, Árvore de Decisão, Random Forest e um baseline de prevalência. A seleção considera average precision na validação temporal e num perfil simulado com rotina alterada. Um perfil de estresse fica separado para avaliação posterior.
 
 ### Resultado de referência
 
-Na execução reproduzida para este projeto, o Random Forest foi selecionado. No teste temporal do mesmo perfil sintético, teve AP `1,000`, precisão `0,994`, recall `1,000` e F1 `0,997`. Esse resultado alto não se manteve nos perfis de distribuição alterada: AP `0,438` em `shifted` e `0,569` em `stress`.
+O Dummy Classifier usa a prevalência do treino como referência para medir o ganho de modelos que usam as features. O MLflow guarda cada combinação da busca aleatória, suas métricas por divisão temporal e a combinação vencedora de cada modelo. A seleção final usa a média da AP na validação padrão e na validação com rotina alterada. O teste cronológico e o perfil de estresse ficam reservados para avaliação posterior.
 
-Essa diferença é central para interpretar o experimento: o modelo reconhece muito bem o gerador padrão, mas sua resposta piora com outras rotinas simuladas. As métricas não estimam detecção real e não permitem afirmar ausência de overfitting. O relatório registra as matrizes de confusão, parâmetros, hashes, versões do ambiente e comandos de reprodução em [Resultado do experimento](ml/docs/resultado-experimento.md).
+Na execução regularizada de 20/11/2026, o KNN foi selecionado com AP média de **0,937** na validação. No teste cronológico, a AP foi **0,994** e o recall **97,6%**. No perfil de estresse, a AP foi **0,929** e o recall **91,8%**, com limiar de 0,5. A vizinhança proporcional reduziu o desvio da AP entre folds para **0,017**. As métricas descrevem perfis simulados calibrados em bancada e não estabelecem ausência de sobreajuste em campo. O relatório local está em `data/ml/training-bench-v2/training_report.md`, e o histórico da revisão está em [Validação da integração](docs/validacao-integracao.md).
+
+O relatório mostra a diferença entre treino e validação e a variação da AP entre divisões temporais. A queda no perfil de estresse indica sensibilidade a mudanças de rotina simuladas. A generalização para residências depende de validação em campo.
 
 ### Airflow, treinamento e notebook
 
-- **Airflow:** iniciado pelo Compose; o DAG deve ser habilitado e acionado manualmente. Ele gera, analisa e prepara uma série mockada, mas não inicia o treinamento.
+- **Airflow:** acione o DAG manualmente para gerar, analisar e preparar a série híbrida, treinar um modelo candidato com esses arquivos e registrar as execuções no MLflow. As saídas ficam em `data/ml/airflow/<execução>/`, separadas do modelo em uso.
 - **Treinamento do Compose:** executa automaticamente quando o artefato não existe ou pode ser forçado com o comando descrito em [Dados e modelos](ml/README.md).
 - **Notebook:** documenta a exploração e o preparo e gera gráficos de avaliação a partir do modelo treinado. Não substitui o pipeline nem envia seus gráficos ao dashboard.
 - **Inferência na aplicação:** o worker avalia leituras persistidas com dados suficientes e registra a versão do modelo. As regras permanecem ativas se o worker falhar.
@@ -172,7 +178,7 @@ Os padrões e os limites configuráveis são para desenvolvimento. Para não exp
 backend/          API FastAPI, domínio, persistência, migrations e testes
 frontend/         Interface Next.js, React, TypeScript e Recharts
 ml/               Dados sintéticos, preparação, modelos, inferência e notebook
-firmware/         Contratos e guia para o futuro ESP32/FreeRTOS
+firmware/         Firmware ESP32, guia de montagem e contrato de telemetria
 docs/             Arquitetura, parâmetros, estado, demonstração e contratos
 infrastructure/   Configuração local do broker MQTT
 docker-compose.yml
@@ -212,10 +218,10 @@ Para o ambiente do notebook e os comandos completos do pipeline, consulte [Dados
 
 ## Limites e próximos passos
 
-- Não há firmware ESP32/FreeRTOS, placa, sensor ou calibração definidos.
+- O firmware ESP32 publica por MQTT. Confira a calibração do sensor e a conexão da placa na rede usada na apresentação.
 - A ingestão MQTT foi exercitada com um publicador de teste na rede local do Compose; não há conexão física validada nem TLS para um dispositivo externo.
-- A conta de demonstração e as séries de ML são sintéticas e independentes entre si.
+- O histórico da demonstração e o treino partem da mesma série híbrida. A demonstração desloca as datas para perto do dia de instalação e preserva as lacunas e as medições da série.
 - O classificador foi avaliado somente com cenários artificiais. Dados reais precisarão de coleta, verificação de qualidade, decisão de rotulagem e teste temporal independente.
 - Airflow, MLflow, credenciais e serviços do Compose são configurados para apresentação local, não para produção.
 
-Veja [Estado atual do projeto](docs/estado-do-projeto.md) para os detalhes das limitações e [Integração ESP32](firmware/README.md) para o que precisa ser definido antes de implementar o firmware.
+Veja [Estado atual do projeto](docs/estado-do-projeto.md) para as limitações e o [guia do firmware ESP32](firmware/aquaflow-esp32/README.md) para montagem e configuração.

@@ -14,13 +14,15 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import joblib
 import mlflow
 import numpy as np
-from generate_mock_data import generate as generate_mock_data
+from build_real_dataset import DEFAULT_CALIBRATION
+from build_real_dataset import build as build_hybrid_dataset
+from estimators import ProportionalKNeighborsClassifier
 from mlflow import MlflowClient
 from prepare_dataset import prepare as prepare_dataset
 from sklearn.base import ClassifierMixin, clone
+from sklearn.compose import ColumnTransformer
 from sklearn.dummy import DummyClassifier
-from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -30,9 +32,10 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
 )
-from sklearn.model_selection import ParameterSampler, TimeSeriesSplit
+from sklearn.model_selection import ParameterGrid, ParameterSampler, TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.tree import DecisionTreeClassifier
 
 FEATURE_NAMES = (
     "flow_rate_liters_minute",
@@ -76,8 +79,7 @@ def _load_dataset(
     try:
         ZoneInfo(timezone)
         parsed_timestamps = [
-            datetime.fromisoformat(row["recorded_at"].replace("Z", "+00:00"))
-            for row in metadata
+            datetime.fromisoformat(row["recorded_at"].replace("Z", "+00:00")) for row in metadata
         ]
         if any(
             timestamp.tzinfo is None or timestamp.utcoffset() is None
@@ -131,25 +133,32 @@ def _split_indices(timestamps: list[datetime], timezone: str) -> dict[str, np.nd
 
 
 def _generate_evaluation_profiles(
-    timezone: str, seed: int, output_root: Path
+    timezone: str,
+    seed: int,
+    output_root: Path,
+    calibration: Path,
+    reference_start: datetime,
 ) -> tuple[tuple[Path, Path, Path], tuple[Path, Path, Path]]:
     profile_inputs: dict[str, tuple[Path, Path, Path]] = {}
+    origin = reference_start.astimezone(ZoneInfo(timezone)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
     for profile, profile_seed, start in (
-        ("shifted", seed + 57, "2026-10-01T00:00:00-03:00"),
-        ("stress", seed + 199, "2026-11-01T00:00:00-03:00"),
+        ("shifted", seed + 57, origin - timedelta(days=31)),
+        ("stress", seed + 199, origin + timedelta(days=61)),
     ):
         profile_dir = output_root / "generalization" / profile
         raw_path = profile_dir / "raw_readings.csv"
         prepared_dir = profile_dir / "prepared"
-        generate_mock_data(
-            raw_path,
-            seed=profile_seed,
-            start=datetime.fromisoformat(start),
-            days=16,
-            interval_minutes=5,
-            timezone=timezone,
-            profile=profile,
-        )
+        parameters = {
+            "seed": profile_seed,
+            "start": start,
+            "days": 16,
+            "interval_minutes": 5,
+            "timezone": timezone,
+            "profile": profile,
+        }
+        build_hybrid_dataset(None, raw_path, calibration=calibration, **parameters)
         prepare_dataset(raw_path, prepared_dir, timezone)
         profile_inputs[profile] = (
             prepared_dir / "features.csv",
@@ -160,36 +169,68 @@ def _generate_evaluation_profiles(
 
 
 def _models(seed: int) -> dict[str, tuple[ClassifierMixin, dict[str, list[Any]]]]:
+    # Preserve the seven-column input contract while preventing the classifiers
+    # from memorizing the simulator's calendar. Fit preprocessing inside each fold.
+    def measurements(estimator: ClassifierMixin) -> Pipeline:
+        return Pipeline(
+            [
+                (
+                    "measurements",
+                    ColumnTransformer(
+                        [
+                            ("scale", StandardScaler(), [0, 1, 2]),
+                        ],
+                        remainder="drop",
+                    ),
+                ),
+                ("model", estimator),
+            ]
+        )
+
     return {
-        "logistic_regression": (
-            Pipeline(
-                [
-                    ("scale", StandardScaler()),
-                    ("model", LogisticRegression(max_iter=1000, class_weight="balanced")),
-                ]
-            ),
-            {"model__C": [0.01, 0.1, 1.0], "model__class_weight": ["balanced", None]},
+        "knn": (
+            measurements(ProportionalKNeighborsClassifier()),
+            {"model__neighbor_fraction": [0.01, 0.015, 0.02, 0.025]},
         ),
         "random_forest": (
-            RandomForestClassifier(class_weight="balanced", random_state=seed, n_jobs=1),
+            measurements(
+                RandomForestClassifier(
+                    n_estimators=100,
+                    max_features=1.0,
+                    class_weight="balanced",
+                    random_state=seed,
+                    n_jobs=1,
+                )
+            ),
             {
-                "n_estimators": [100, 200],
-                "max_depth": [2, 4, 6],
-                "min_samples_leaf": [10, 20, 50],
-                "max_features": ["sqrt", 0.7],
+                "model__max_depth": [2, 3],
+                "model__min_samples_leaf": [20, 40],
             },
         ),
-        "hist_gradient_boosting": (
-            HistGradientBoostingClassifier(random_state=seed),
+        "decision_tree": (
+            measurements(DecisionTreeClassifier(class_weight="balanced", random_state=seed)),
             {
-                "learning_rate": [0.03, 0.05],
-                "max_iter": [30, 60],
-                "max_leaf_nodes": [3, 5],
-                "min_samples_leaf": [20, 40],
-                "l2_regularization": [1.0, 10.0],
+                "model__max_depth": [2, 3],
+                "model__min_samples_leaf": [20, 40],
             },
         ),
     }
+
+
+def _regularized_trial(trials: list[dict[str, Any]]) -> dict[str, Any]:
+    best = max(trials, key=lambda trial: float(np.mean(trial["validation_scores"])))
+    cutoff = float(np.mean(best["validation_scores"])) - float(
+        np.std(best["validation_scores"]) / math.sqrt(len(best["validation_scores"]))
+    )
+    eligible = [trial for trial in trials if float(np.mean(trial["validation_scores"])) >= cutoff]
+
+    def complexity(trial: dict[str, Any]) -> tuple[float, int]:
+        parameters = trial["parameters"]
+        if "model__neighbor_fraction" in parameters:
+            return (-parameters["model__neighbor_fraction"], 0)
+        return (parameters["model__max_depth"], -parameters["model__min_samples_leaf"])
+
+    return min(eligible, key=complexity)
 
 
 def _metrics(targets: np.ndarray, probabilities: np.ndarray) -> dict[str, Any]:
@@ -230,16 +271,15 @@ def train(
     shifted_values: np.ndarray | None = None
     shifted_targets: np.ndarray | None = None
     shifted_hash: str | None = None
+    shifted_timestamps: list[datetime] = []
     stress_values: np.ndarray | None = None
     stress_targets: np.ndarray | None = None
     stress_hash: str | None = None
     if generalization_validation_paths and stress_test_paths:
-        shifted_values, shifted_targets, _, shifted_hash = _load_dataset(
+        shifted_values, shifted_targets, shifted_timestamps, shifted_hash = _load_dataset(
             *generalization_validation_paths, timezone
         )
-        stress_values, stress_targets, _, stress_hash = _load_dataset(
-            *stress_test_paths, timezone
-        )
+        stress_values, stress_targets, _, stress_hash = _load_dataset(*stress_test_paths, timezone)
     splits = _split_indices(timestamps, timezone)
     if any(set(targets[indices]) != {0, 1} for indices in splits.values()):
         raise ValueError("cada partição temporal precisa conter as duas classes")
@@ -247,28 +287,37 @@ def train(
     train_indices = splits["train"]
     validation_indices = splits["validation"]
     test_indices = splits["test"]
-    cv = TimeSeriesSplit(n_splits=3)
+    test_start = timestamps[test_indices[0]]
+    if shifted_timestamps and max(shifted_timestamps) >= test_start:
+        raise ValueError("dados do ajuste final devem ser anteriores ao início do teste")
+    # Leave an hour between fit and validation for five-minute telemetry.
+    cv = TimeSeriesSplit(n_splits=3, gap=12)
     output_dir.mkdir(parents=True, exist_ok=True)
     artifact_dir = output_dir / "mlflow-artifacts"
     artifact_dir.mkdir(parents=True, exist_ok=True)
     mlflow.set_tracking_uri(tracking_uri)
     client = MlflowClient()
-    if mlflow.get_experiment_by_name(experiment_name) is None:
+    if not tracking_uri.startswith(("http://", "https://")) and (
+        mlflow.get_experiment_by_name(experiment_name) is None
+    ):
         client.create_experiment(experiment_name, artifact_location=artifact_dir.resolve().as_uri())
     mlflow.set_experiment(experiment_name)
 
     candidates: dict[str, dict[str, Any]] = {}
+    search_trials: dict[str, list[dict[str, Any]]] = {}
     specifications = _models(seed)
-    model_search_budget = len(specifications) * search_iterations * cv.n_splits
+    model_search_budget = 0
 
     for name, (estimator, parameter_space) in specifications.items():
+        search_trials[name] = []
         sampled_parameters = list(
-            ParameterSampler(parameter_space, n_iter=search_iterations, random_state=seed)
+            ParameterSampler(
+                parameter_space,
+                n_iter=min(search_iterations, len(ParameterGrid(parameter_space))),
+                random_state=seed,
+            )
         )
-        best_cv_score = -math.inf
-        best_cv_train_score = -math.inf
-        best_cv_std = 0.0
-        best_parameters: dict[str, Any] = {}
+        model_search_budget += len(sampled_parameters) * cv.n_splits
         for parameters in sampled_parameters:
             train_scores: list[float] = []
             validation_scores: list[float] = []
@@ -289,12 +338,18 @@ def train(
                         )
                     )
                 )
-            mean_validation = float(np.mean(validation_scores))
-            if mean_validation > best_cv_score:
-                best_cv_score = mean_validation
-                best_cv_train_score = float(np.mean(train_scores))
-                best_cv_std = float(np.std(validation_scores))
-                best_parameters = parameters
+            search_trials[name].append(
+                {
+                    "parameters": parameters,
+                    "train_scores": train_scores,
+                    "validation_scores": validation_scores,
+                }
+            )
+        chosen = _regularized_trial(search_trials[name])
+        best_cv_score = float(np.mean(chosen["validation_scores"]))
+        best_cv_train_score = float(np.mean(chosen["train_scores"]))
+        best_cv_std = float(np.std(chosen["validation_scores"]))
+        best_parameters = chosen["parameters"]
 
         tuned = clone(estimator).set_params(**best_parameters)
         tuned.fit(values[train_indices], targets[train_indices])
@@ -356,10 +411,10 @@ def train(
     if shifted_values is not None and shifted_targets is not None:
         final_train_values = np.concatenate((final_train_values, shifted_values))
         final_train_targets = np.concatenate((final_train_targets, shifted_targets))
-    final_training_fingerprint = hashlib.sha256(data_hash.encode("ascii"))
-    if shifted_hash is not None:
-        final_training_fingerprint.update(shifted_hash.encode("ascii"))
+    final_training_fingerprint = hashlib.sha256(final_train_values.tobytes())
+    final_training_fingerprint.update(final_train_targets.tobytes())
     final_training_data_hash = final_training_fingerprint.hexdigest()
+    final_training_end = max([timestamps[index] for index in train_validation] + shifted_timestamps)
     dummy_final = DummyClassifier(strategy="prior")
     dummy_final.fit(final_train_values, final_train_targets)
     dummy_test = _metrics(
@@ -374,6 +429,35 @@ def train(
         if stress_values is not None and stress_targets is not None
         else None
     )
+    candidate_holdout_evaluation: dict[str, dict[str, Any]] = {}
+    candidate_model_paths: dict[str, Path] = {}
+    candidate_model_dir = output_dir / "candidate-models"
+    candidate_model_dir.mkdir(exist_ok=True)
+    for name, (estimator, _) in specifications.items():
+        fitted = (
+            selected_final
+            if name == selected_model
+            else clone(estimator)
+            .set_params(**candidates[name]["best_parameters"])
+            .fit(final_train_values, final_train_targets)
+        )
+        candidate_holdout_evaluation[name] = {
+            "train": _metrics(final_train_targets, fitted.predict_proba(final_train_values)[:, 1]),
+            "test": _metrics(
+                targets[test_indices], fitted.predict_proba(values[test_indices])[:, 1]
+            ),
+            "stress": (
+                _metrics(stress_targets, fitted.predict_proba(stress_values)[:, 1])
+                if stress_values is not None and stress_targets is not None
+                else None
+            ),
+        }
+        if name == "knn":
+            candidate_holdout_evaluation[name]["effective_neighbors"] = fitted.named_steps[
+                "model"
+            ].n_neighbors_
+        candidate_model_paths[name] = candidate_model_dir / f"{name}.joblib"
+        joblib.dump(fitted, candidate_model_paths[name])
     selected_shifted_metrics = candidates[selected_model]["generalization_validation"]
     validation_domain_gap = (
         abs(
@@ -420,6 +504,10 @@ def train(
         "sample_unit": "valid_reading_after_a_predecessor_reading",
         "timezone": timezone,
         "feature_names": list(FEATURE_NAMES),
+        "estimator_feature_names": list(FEATURE_NAMES[:3]),
+        "feature_policy": "measurements_only_calendar_excluded",
+        "final_training_end": final_training_end.isoformat(),
+        "test_start": test_start.isoformat(),
         "explanation_reference": {
             name: float(value)
             for name, value in zip(
@@ -439,15 +527,19 @@ def train(
         "model_sha256": model_hash,
         "training_data_sha256": data_hash,
         "final_training_data_sha256": final_training_data_hash,
+        "final_training_hash_format": "float64_features_then_int8_targets",
         "search": {
             "strategy": "random_parameter_sampling_with_time_series_cross_validation",
             "iterations_per_model": search_iterations,
             "folds_per_candidate": cv.n_splits,
+            "gap_samples": cv.gap,
+            "parameter_selection": "simplest_within_one_standard_error",
             "total_candidate_fits": model_search_budget,
             "seed": seed,
         },
         "split_counts": split_counts,
         "candidates": candidates,
+        "candidate_holdout_evaluation": candidate_holdout_evaluation,
         "test_evaluation": {selected_model: selected_test, "dummy_prior": dummy_test},
         "generalization_validation": (
             {
@@ -455,8 +547,7 @@ def train(
                 "data_sha256": shifted_hash,
                 "sample_count": len(shifted_targets),
                 "candidates": {
-                    name: result["generalization_validation"]
-                    for name, result in candidates.items()
+                    name: result["generalization_validation"] for name, result in candidates.items()
                 },
             }
             if shifted_values is not None and shifted_targets is not None
@@ -482,6 +573,16 @@ def train(
             "cv_generalization_gap": cv_gap,
             "cv_validation_average_precision_std": cv_std,
             "temporal_cv_assessment": temporal_cv_assessment,
+            "overfitting_assessment": (
+                "large_training_validation_gap"
+                if cv_gap > 0.1
+                else "no_large_training_validation_gap_detected"
+            ),
+            "stability_assessment": (
+                "high_variation_between_temporal_folds"
+                if cv_std > 0.1
+                else "no_large_variation_detected"
+            ),
             "validation_domain_gap": validation_domain_gap,
             "stress_test_average_precision": stress_average_precision,
             "domain_shift_assessment": domain_shift_assessment,
@@ -508,8 +609,35 @@ def train(
     report_markdown_path = output_dir / "training_report.md"
     report_markdown_path.write_text(_training_report_markdown(report), encoding="utf-8")
 
+    airflow_run_id = os.environ.get("AQUAFLOW_AIRFLOW_RUN_ID")
+    run_tags = {"airflow_run_id": airflow_run_id} if airflow_run_id else None
     for name, result in candidates.items():
-        with mlflow.start_run(run_name=name):
+        with mlflow.start_run(run_name=name, tags=run_tags):
+            for index, trial in enumerate(search_trials.get(name, []), start=1):
+                with mlflow.start_run(run_name=f"{name}-trial-{index:02d}", nested=True):
+                    mlflow.log_params(
+                        {
+                            **trial["parameters"],
+                            "model": name,
+                            "seed": seed,
+                            "data_sha256": data_hash,
+                            "strategy": "random_search",
+                        }
+                    )
+                    mlflow.set_tag(
+                        "selected_for_model",
+                        str(trial["parameters"] == result["best_parameters"]).lower(),
+                    )
+                    for partition in ("train", "validation"):
+                        scores = trial[f"{partition}_scores"]
+                        for fold, score in enumerate(scores, start=1):
+                            mlflow.log_metric(f"cv_{partition}_average_precision", score, step=fold)
+                        mlflow.log_metrics(
+                            {
+                                f"cv_mean_{partition}_average_precision": float(np.mean(scores)),
+                                f"cv_std_{partition}_average_precision": float(np.std(scores)),
+                            }
+                        )
             mlflow.log_params(
                 {
                     "model": name,
@@ -533,6 +661,15 @@ def train(
                 split_results["test"] = selected_test
             elif name == "dummy_prior":
                 split_results["test"] = dummy_test
+            else:
+                split_results["test"] = candidate_holdout_evaluation[name]["test"]
+            if name in candidate_holdout_evaluation:
+                split_results["train"] = candidate_holdout_evaluation[name]["train"]
+                if candidate_holdout_evaluation[name]["stress"] is not None:
+                    split_results["stress"] = candidate_holdout_evaluation[name]["stress"]
+                mlflow.log_artifact(
+                    str(candidate_model_paths[name]), artifact_path="candidate-model"
+                )
             for split_name, metrics in split_results.items():
                 for metric_name, value in metrics.items():
                     if metric_name != "confusion_matrix":
@@ -596,11 +733,27 @@ def _training_report_markdown(report: dict[str, Any]) -> str:
         f"- Hash dos dados da série principal: `{report['training_data_sha256']}`.",
         f"- Hash combinado dos dados usados no ajuste final: `{report['final_training_data_sha256']}`.",
         f"- Hiperparâmetros escolhidos: `{report['candidates'][selected]['best_parameters']}`.",
+        f"- Última observação do ajuste final: {report['final_training_end']}.",
+        f"- Primeira observação do teste: {report['test_start']}.",
+        "- As métricas de teste e estresse de todos os modelos são calculadas após a seleção.",
         "",
         "## Como foi avaliado",
         "",
         (
+            "A busca usa três divisões do TimeSeriesSplit dentro do bloco de treino. "
+            "Cada divisão ajusta o modelo com leituras mais antigas e valida em leituras posteriores. "
+            "K-fold convencional, k-fold estratificado e Leave-One-Out podem colocar leituras futuras "
+            "ou vizinhas no treino ao avaliar uma leitura anterior. Isso causa vazamento temporal e "
+            "pode superestimar o desempenho numa série em que leituras próximas são correlacionadas. "
+            "As divisões têm um intervalo de 12 amostras. Os classificadores usam apenas "
+            "vazão, delta de volume e duração, com escala ajustada no treino de cada divisão. "
+            "As codificações de calendário são preservadas no contrato de entrada, mas excluídas dos estimadores."
+        ),
+        "",
+        (
             "A seleção usa average precision média entre a validação temporal e a validação com perfil deslocado. "
+            "A busca prefere a configuração mais simples dentro de um erro padrão do melhor resultado. "
+            "O perfil deslocado entra no ajuste final e precisa anteceder o teste. "
             "O perfil de estresse só é avaliado depois da seleção e não participa do ajuste dos hiperparâmetros."
         ),
         "",
@@ -674,7 +827,7 @@ def main() -> None:
     parser.add_argument("--features", type=Path, default=Path("data/ml/prepared/features.csv"))
     parser.add_argument("--labels", type=Path, default=Path("data/ml/prepared/labels.csv"))
     parser.add_argument("--metadata", type=Path, default=Path("data/ml/prepared/metadata.csv"))
-    parser.add_argument("--output-dir", type=Path, default=Path("data/ml/training"))
+    parser.add_argument("--output-dir", type=Path, default=Path("data/ml/training-bench-v2"))
     parser.add_argument(
         "--tracking-uri",
         default=os.environ.get(
@@ -686,6 +839,7 @@ def main() -> None:
     parser.add_argument("--timezone", default=DEFAULT_TIMEZONE)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--search-iterations", type=int, default=4)
+    parser.add_argument("--bench-calibration", type=Path, default=DEFAULT_CALIBRATION)
     parser.add_argument("--generalization-validation-features", type=Path)
     parser.add_argument("--generalization-validation-labels", type=Path)
     parser.add_argument("--generalization-validation-metadata", type=Path)
@@ -711,11 +865,23 @@ def main() -> None:
         path is not None for path in stress_paths
     ):
         parser.error("informe os três arquivos de stress test juntos")
-    shifted_input = tuple(shifted_paths) if all(path is not None for path in shifted_paths) else None
+    shifted_input = (
+        tuple(shifted_paths) if all(path is not None for path in shifted_paths) else None
+    )
     stress_input = tuple(stress_paths) if all(path is not None for path in stress_paths) else None
     if shifted_input is None and stress_input is None:
+        metadata = _read_csv(args.metadata)
+        if not metadata:
+            parser.error("metadata não pode estar vazio")
+        reference_start = datetime.fromisoformat(metadata[0]["recorded_at"].replace("Z", "+00:00"))
+        if reference_start.tzinfo is None or reference_start.utcoffset() is None:
+            parser.error("recorded_at deve incluir fuso horário")
         shifted_input, stress_input = _generate_evaluation_profiles(
-            args.timezone, args.seed, args.output_dir.parent
+            args.timezone,
+            args.seed,
+            args.output_dir.parent,
+            args.bench_calibration,
+            reference_start,
         )
     train(
         args.features,

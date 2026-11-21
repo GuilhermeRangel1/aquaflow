@@ -1,25 +1,34 @@
-"""Create synthetic local data so the AquaFlow MVP can be explored immediately."""
+"""Populate the local demonstration with the calibrated hybrid dataset."""
 
 import asyncio
+import csv
+import re
 import secrets
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.core.security import hash_device_key, hash_password
-from app.db.models import Alert, AnomalyEvent, Device, Property, TelemetryReading, User
+from app.db.models import Alert, AnomalyEvent, Device, MLInference, Property, TelemetryReading, User
 from app.db.session import create_session_factory
-from app.services.anomaly_detection import evaluate_continuous_flow
 from app.services.audit import add_audit_entry
 
 DEMO_EMAIL = "demo@example.com"
+ADMIN_EMAIL = "admin@admin.com"
+LEGACY_ADMIN_EMAIL = "admin@example.com"
 LEGACY_DEMO_EMAIL = "demo@aquaflow.local"
 PROPERTY_TIMEZONE = "America/Sao_Paulo"
+LEGACY_SERIALS = {"AF-DEMO-001", "AF-DEMO-002", "AF-DEMO-003", "AF-DEMO-004", "AF-DEMO-ML-001"}
+LEGACY_EVENT = re.compile(
+    r"demo-(?:history-\d{8}-.+|\d{8}-.+|irrigation-\d{8}-\d+|flow-\d{12}|"
+    r"health-AF-DEMO-[\w-]+-\d{12}|ml-showcase-(?:baseline|normal|peak-[12]))"
+)
 
 
 async def seed_demo_data(
@@ -27,22 +36,39 @@ async def seed_demo_data(
     *,
     password: str,
     email: str | None = None,
+    dataset_path: Path,
+    cleanup_legacy: bool = False,
 ) -> bool:
-    """Add demo fixtures and retire replaced meters without deleting their history."""
-    configured_email = email or DEMO_EMAIL
+    """Populate the hybrid history; legacy fixtures are only migrated/removed on request."""
+    configured_email = email or ADMIN_EMAIL
     async with session_factory() as session:
         now = datetime.now(UTC).replace(second=0, microsecond=0)
         user = await session.scalar(select(User).where(User.email == configured_email))
-        if user is None:
+        if user is None and cleanup_legacy and configured_email == ADMIN_EMAIL:
+            user = await session.scalar(
+                select(User)
+                .join(Property, Property.owner_id == User.id)
+                .join(Device, Device.property_id == Property.id)
+                .where(
+                    User.email.in_((LEGACY_ADMIN_EMAIL, DEMO_EMAIL, LEGACY_DEMO_EMAIL)),
+                    Device.serial_number == "AF-DEMO-HIBRIDO-001",
+                )
+            )
+        if user is None and cleanup_legacy:
             user = await session.scalar(select(User).where(User.email == DEMO_EMAIL))
-        if user is None:
+        if user is None and cleanup_legacy:
             user = await session.scalar(select(User).where(User.email == LEGACY_DEMO_EMAIL))
         if user is not None and user.email != configured_email:
+            if configured_email == ADMIN_EMAIL and user.name in (
+                "Administração",
+                "Conta de demonstração",
+            ):
+                user.password_hash = hash_password(password)
             user.email = configured_email
         created = user is None
         if user is None:
             user = User(
-                name="Conta de demonstração",
+                name="Administração",
                 email=configured_email,
                 password_hash=hash_password(password),
                 created_at=now,
@@ -50,87 +76,96 @@ async def seed_demo_data(
             session.add(user)
             await session.flush()
 
-        property_row = await session.scalar(
-            select(Property).where(
-                Property.owner_id == user.id,
-                Property.name == "Casa da demonstração",
-            )
-        )
-        if property_row is None:
-            property_row = Property(
-                owner_id=user.id,
-                name="Casa da demonstração",
-                timezone=PROPERTY_TIMEZONE,
-                volume_unit="L",
-                continuous_flow_threshold_liters_minute=Decimal("0.1"),
-                continuous_flow_duration_minutes=360,
-                late_reading_window_days=7,
-                created_at=now,
-            )
-            session.add(property_row)
-            await session.flush()
-            created = True
-
-        device_specs = (
-            ("AF-DEMO-001", "Medidor principal", now),
-            ("AF-DEMO-002", "Irrigação externa", now),
-            ("AF-DEMO-ML-001", "Demonstração ML", now),
-        )
-        devices: dict[str, Device] = {}
-        for serial, name, last_seen in device_specs:
-            device = await session.scalar(select(Device).where(Device.serial_number == serial))
-            if device is None:
-                device = _device(property_row.id, serial, name, now, last_seen_at=last_seen)
-                session.add(device)
-                created = True
-            elif device.property_id != property_row.id:
-                raise RuntimeError(
-                    f"Dispositivo demonstrativo {serial} pertence a outra propriedade."
-                )
-            else:
-                # Demo meters represent synthetic heartbeats, refreshed at seed time.
-                device.last_seen_at = last_seen
-            devices[serial] = device
-        await session.flush()
-        created = await _retire_legacy_demo_devices(session, user, now) or created
-
-        existing_event_ids = set(
-            (
-                await session.scalars(
-                    select(TelemetryReading.event_id).where(
-                        TelemetryReading.device_id.in_([d.id for d in devices.values()])
-                    )
-                )
-            ).all()
-        )
-        samples = (
-            _daily_readings(devices["AF-DEMO-001"], now)
-            + _continuous_flow_readings(devices["AF-DEMO-002"], now)
-            + _irrigation_readings(devices["AF-DEMO-002"], now)
-            + _ml_showcase_readings(devices["AF-DEMO-ML-001"], now)
-            + _health_readings(devices, now)
-        )
-        missing = [sample for sample in samples if sample.event_id not in existing_event_ids]
-        if missing:
-            session.add_all(missing)
-            await session.flush()
-            created = True
-            await evaluate_continuous_flow(
-                session,
-                device=devices["AF-DEMO-002"],
-                property_row=property_row,
-                through=now,
-            )
-
-        if await _add_sample_alerts(
-            session,
-            property_row,
-            devices["AF-DEMO-002"],
-            now,
-        ):
-            created = True
+        if user.name == "Conta de demonstração":
+            user.name = "Administração"
+        populated = await _seed_hybrid_property(session, user, dataset_path, now)
+        removed = await _remove_legacy_fixtures(session, user) if cleanup_legacy else False
         await session.commit()
-        return created
+        return populated or removed or created
+
+
+async def _seed_hybrid_property(
+    session: AsyncSession, user: User, dataset_path: Path, now: datetime
+) -> bool:
+    name = "Casa da Administração"
+    serial = "AF-DEMO-HIBRIDO-001"
+    property_row = await session.scalar(
+        select(Property).where(Property.owner_id == user.id, Property.name == name)
+    )
+    device = await session.scalar(select(Device).where(Device.serial_number == serial))
+    if device is not None:
+        if property_row is None:
+            property_row = await session.scalar(
+                select(Property).where(
+                    Property.id == device.property_id,
+                    Property.owner_id == user.id,
+                    Property.name == "Casa da demonstração híbrida",
+                )
+            )
+            if property_row is not None:
+                property_row.name = name
+        if property_row is None or device.property_id != property_row.id:
+            raise RuntimeError("Dispositivo híbrido pertence a outra propriedade.")
+        if await session.scalar(
+            select(TelemetryReading.id)
+            .where(
+                TelemetryReading.device_id == device.id,
+                TelemetryReading.event_id.like("demo-hybrid-v1-%"),
+            )
+            .limit(1)
+        ):
+            return False
+    with dataset_path.open(newline="", encoding="utf-8") as source:
+        rows = [
+            (datetime.fromisoformat(row["recorded_at"]), row)
+            for row in csv.DictReader(source)
+            if row["reading_present"] == "1"
+        ]
+    if not rows:
+        raise ValueError("Dataset da demonstração híbrida sem leituras.")
+    zone = ZoneInfo(PROPERTY_TIMEZONE)
+    shift = now.astimezone(zone).date() - rows[-1][0].astimezone(zone).date()
+    readings = [(timestamp + shift, row) for timestamp, row in rows if timestamp + shift <= now]
+    if not readings:
+        raise ValueError("Dataset da demonstração híbrida sem leituras até o horário atual.")
+    if property_row is None:
+        property_row = Property(
+            owner_id=user.id,
+            name=name,
+            timezone=PROPERTY_TIMEZONE,
+            volume_unit="L",
+            created_at=now,
+        )
+        session.add(property_row)
+        await session.flush()
+    if device is None:
+        device = _device(
+            property_row.id,
+            serial,
+            "Medidor da série híbrida",
+            now,
+            last_seen_at=readings[-1][0],
+        )
+        session.add(device)
+        await session.flush()
+    session.add_all(
+        [
+            TelemetryReading(
+                device_id=device.id,
+                event_id=f"demo-hybrid-v1-{row['event_id']}",
+                recorded_at=timestamp,
+                received_at=now,
+                cumulative_volume_liters=Decimal(row["cumulative_volume_liters"]),
+                flow_rate_liters_minute=Decimal(row["flow_rate_liters_minute"]),
+                quality="valid",
+                battery_percent=int(row["battery_percent"]),
+                signal_dbm=int(row["signal_dbm"]),
+                firmware_version=row["firmware_version"],
+            )
+            for timestamp, row in readings
+        ]
+    )
+    return True
 
 
 def _device(
@@ -152,394 +187,69 @@ def _device(
     )
 
 
-async def _retire_legacy_demo_devices(
-    session: AsyncSession,
-    user: User,
-    now: datetime,
-) -> bool:
-    """Retire superseded demo meters without deleting their telemetry or history."""
-    devices = list(
-        (
-            await session.scalars(
-                select(Device)
-                .join(Property, Device.property_id == Property.id)
-                .where(
-                    Property.owner_id == user.id,
-                    Device.serial_number.in_(("AF-DEMO-003", "AF-DEMO-004")),
-                    Device.is_active.is_(True),
-                )
-            )
-        ).all()
+async def _remove_legacy_fixtures(session: AsyncSession, user: User) -> bool:
+    legacy = await session.scalar(
+        select(Property).where(
+            Property.owner_id == user.id,
+            Property.name == "Casa da demonstração",
+        )
     )
-    changed = bool(devices)
+    if legacy is None:
+        return False
+    devices = list(await session.scalars(select(Device).where(Device.property_id == legacy.id)))
+    removed = 0
     for device in devices:
-        device.is_active = False
+        if device.serial_number not in LEGACY_SERIALS:
+            continue
+        ids = await session.scalars(
+            select(TelemetryReading.event_id).where(
+                TelemetryReading.device_id == device.id,
+            )
+        )
+        if any(not LEGACY_EVENT.fullmatch(event_id) for event_id in ids):
+            continue
+        readings = select(TelemetryReading.id).where(TelemetryReading.device_id == device.id)
+        anomalies = select(AnomalyEvent.id).where(AnomalyEvent.device_id == device.id)
+        await session.execute(delete(MLInference).where(MLInference.reading_id.in_(readings)))
+        await session.execute(delete(Alert).where(Alert.anomaly_id.in_(anomalies)))
+        await session.execute(delete(AnomalyEvent).where(AnomalyEvent.device_id == device.id))
+        await session.execute(
+            delete(TelemetryReading).where(TelemetryReading.device_id == device.id)
+        )
         add_audit_entry(
             session,
             actor_id=user.id,
-            action="device.retired",
+            action="device.deleted",
             resource_type="device",
             resource_id=device.id,
-            metadata={"is_active": False, "reason": "demo_seed_refresh"},
+            metadata={"reason": "legacy_demo_fixtures_removed"},
         )
-        offline_alerts = list(
-            (
-                await session.execute(
-                    select(Alert, AnomalyEvent)
-                    .join(AnomalyEvent, AnomalyEvent.id == Alert.anomaly_id)
-                    .where(
-                        AnomalyEvent.device_id == device.id,
-                        AnomalyEvent.detector_type == "device_offline",
-                        Alert.status.in_(("open", "acknowledged")),
-                    )
-                )
-            ).all()
-        )
-        for alert, anomaly in offline_alerts:
-            previous_status = alert.status
-            alert.status = "resolved"
-            alert.resolved_at = now
-            anomaly.window_end = now
-            anomaly.evidence = {
-                **anomaly.evidence,
-                "device_retired_at": now.isoformat(),
-            }
-            add_audit_entry(
-                session,
-                actor_id=user.id,
-                action="alert.resolved",
-                resource_type="alert",
-                resource_id=alert.id,
-                metadata={
-                    "from": previous_status,
-                    "to": "resolved",
-                    "reason": "demo_device_retired",
-                },
-            )
-    return changed
-
-
-def _ml_showcase_readings(device: Device, now: datetime) -> list[TelemetryReading]:
-    """Create one normal point followed by two consecutive synthetic ML positives."""
-    aligned_now = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0)
-    start = aligned_now - timedelta(minutes=20)
-    points = (
-        ("baseline", Decimal("2000.000"), Decimal("0.05")),
-        ("normal", Decimal("2000.250"), Decimal("0.05")),
-        ("peak-1", Decimal("2002.750"), Decimal("0.50")),
-        ("peak-2", Decimal("2005.250"), Decimal("0.50")),
-    )
-    return [
-        TelemetryReading(
-            device_id=device.id,
-            event_id=f"demo-ml-showcase-{suffix}",
-            recorded_at=start + timedelta(minutes=5 * index),
-            received_at=now,
-            cumulative_volume_liters=volume,
-            flow_rate_liters_minute=flow,
-            quality="valid",
-            battery_percent=88,
-            signal_dbm=-55,
-            firmware_version="0.4.2-demo",
-        )
-        for index, (suffix, volume, flow) in enumerate(points)
-    ]
-
-
-def _daily_readings(device: Device, now: datetime) -> list[TelemetryReading]:
-    zone = ZoneInfo(PROPERTY_TIMEZONE)
-    today = now.astimezone(zone).date()
-    readings: list[TelemetryReading] = []
-    total = Decimal("1200")
-    for days_ago in range(89, -1, -1):
-        day: date = today - timedelta(days=days_ago)
-        if days_ago > 6:
-            # Backfill a three-month household baseline with variable, plausible
-            # usage. Flow-rate samples avoid inventing a cumulative counter before
-            # the older seven-day fixture already present in local databases.
-            historical_sessions = (
-                ("manha", 7, Decimal("18.4")),
-                ("almoco", 12, Decimal("9.2")),
-                ("pausa", 14, Decimal("6.7")),
-                ("tarde", 16, Decimal("13.8")),
-                ("noite", 19, Decimal("27.6")),
-            )
-            for session_index, (session_name, hour, baseline_liters) in enumerate(
-                historical_sessions
-            ):
-                weekend_factor = Decimal("1.10") if day.weekday() >= 5 else Decimal("1.00")
-                variation = Decimal(85 + ((day.toordinal() * 7 + session_index * 13) % 31)) / 100
-                liters = baseline_liters * weekend_factor * variation
-                average_rate = (liters / Decimal(5)).quantize(Decimal("0.001"))
-                local_start = datetime.combine(day, time(hour, 30), tzinfo=zone)
-                start = local_start.astimezone(UTC)
-                end = start + timedelta(minutes=5)
-                if end >= now:
-                    continue
-                battery = max(55, 96 - (90 - days_ago) // 8)
-                signal = -48 - ((day.toordinal() + session_index * 5) % 19)
-                for suffix, recorded_at, rate in (
-                    ("inicio", start, average_rate * Decimal("0.85")),
-                    ("fim", end, average_rate * Decimal("1.15")),
-                ):
-                    readings.append(
-                        TelemetryReading(
-                            device_id=device.id,
-                            event_id=f"demo-history-{day:%Y%m%d}-{session_name}-{suffix}",
-                            recorded_at=recorded_at,
-                            received_at=now,
-                            flow_rate_liters_minute=rate.quantize(Decimal("0.001")),
-                            quality="valid",
-                            battery_percent=battery,
-                            signal_dbm=signal,
-                            firmware_version="0.4.2-demo",
-                        )
-                    )
-            continue
-        sessions_for_day = (
-            ("manha", 7, Decimal("18.4")),
-            ("almoco", 12, Decimal("9.2")),
-            ("pausa", 14, Decimal("6.7")),
-            ("tarde", 16, Decimal("13.8")),
-            ("noite", 19, Decimal("27.6")),
-        )
-        for session_name, hour, liters in sessions_for_day:
-            local_start = datetime.combine(day, time(hour, 30), tzinfo=zone)
-            start = local_start.astimezone(UTC)
-            end = start + timedelta(minutes=5)
-            if end >= now:
-                continue
-            first_volume = total
-            total += liters
-            for suffix, recorded_at, volume in (
-                ("inicio", start, first_volume),
-                ("fim", end, total),
-            ):
-                readings.append(
-                    TelemetryReading(
-                        device_id=device.id,
-                        event_id=f"demo-{day:%Y%m%d}-{session_name}-{suffix}",
-                        recorded_at=recorded_at,
-                        received_at=now,
-                        cumulative_volume_liters=volume,
-                        quality="valid",
-                    )
-                )
-    return readings
-
-
-def _irrigation_readings(device: Device, now: datetime) -> list[TelemetryReading]:
-    """Model short scheduled watering sessions alongside the recent anomaly."""
-    zone = ZoneInfo(PROPERTY_TIMEZONE)
-    today = now.astimezone(zone).date()
-    readings: list[TelemetryReading] = []
-    for days_ago in range(89, -1, -1):
-        day = today - timedelta(days=days_ago)
-        if day.weekday() not in {0, 3, 6}:
-            continue
-        start = datetime.combine(day, time(6, 0), tzinfo=zone).astimezone(UTC)
-        variation = Decimal(90 + (day.toordinal() % 21)) / 100
-        rate = (Decimal("0.6") * variation).quantize(Decimal("0.001"))
-        for sample_index in range(7):
-            recorded_at = start + timedelta(minutes=5 * sample_index)
-            if recorded_at >= now:
-                continue
-            readings.append(
-                TelemetryReading(
-                    device_id=device.id,
-                    event_id=f"demo-irrigation-{day:%Y%m%d}-{sample_index:02d}",
-                    recorded_at=recorded_at,
-                    received_at=now,
-                    flow_rate_liters_minute=rate,
-                    quality="valid",
-                    battery_percent=84,
-                    signal_dbm=-63 - (day.toordinal() % 10),
-                    firmware_version="0.4.2-demo",
-                )
-            )
-    return readings
-
-
-async def _add_sample_alerts(
-    session: AsyncSession,
-    property_row: Property,
-    device: Device,
-    now: datetime,
-) -> bool:
-    existing = list(
-        (
-            await session.scalars(
-                select(AnomalyEvent).where(AnomalyEvent.property_id == property_row.id)
-            )
-        ).all()
-    )
-    existing_keys = {
-        event.evidence.get("demo_fixture_key")
-        for event in existing
-        if isinstance(event.evidence, dict)
-    }
-    sample_time = now - timedelta(days=2)
-    zone = ZoneInfo(property_row.timezone)
-    night_start = datetime.combine(
-        sample_time.astimezone(zone).date() - timedelta(days=1), time(22), tzinfo=zone
-    ).astimezone(UTC)
-    night_end = night_start + timedelta(minutes=15)
-    fixtures: tuple[
-        tuple[str, str, str, str, Device, datetime, datetime, dict[str, str | int | float]], ...
-    ] = (
-        (
-            "acknowledged",
-            "night_consumption",
-            "Consumo noturno acima do padrão",
-            "demo-alert-night",
-            device,
-            night_start,
-            night_end,
-            {
-                "baseline_daytime_median_liters_minute": 0.05,
-                "minimum_increase_liters_minute": 0.1,
-                "threshold_liters_minute": 0.15,
-                "observed_flow_rate_liters_minute": 0.18,
-                "required_duration_minutes": 15,
-                "observed_duration_minutes": 15,
-                "measured_interval_count": 3,
-                "max_sample_gap_seconds": 300,
-                "night_window": "22:00-06:00",
-                "timezone": property_row.timezone,
-                "baseline_interval_count": 24,
-            },
-        ),
-        (
-            "resolved",
-            "demo_sample",
-            "Pico de consumo já normalizado",
-            "demo-alert-resolved",
-            device,
-            sample_time,
-            sample_time + timedelta(hours=1),
-            {},
-        ),
-        (
-            "false_positive",
-            "demo_sample",
-            "Leitura compatível com uso planejado",
-            "demo-alert-false-positive",
-            device,
-            sample_time,
-            sample_time + timedelta(hours=1),
-            {},
-        ),
-    )
-    added = False
-    for (
-        status,
-        detector_type,
-        reason,
-        fixture_key,
-        sample_device,
-        window_start,
-        window_end,
-        evidence,
-    ) in fixtures:
-        if fixture_key in existing_keys:
-            continue
-        anomaly = AnomalyEvent(
-            property_id=property_row.id,
-            device_id=sample_device.id,
-            detector_type=detector_type,
-            score=Decimal("0.650"),
-            severity="medium",
-            reason=f"Amostra demonstrativa: {reason}",
-            window_start=window_start,
-            window_end=window_end,
-            evidence={
-                **evidence,
-                "is_demo_sample": True,
-                "demo_fixture_key": fixture_key,
-            },
-            detected_at=window_end,
-        )
-        session.add(anomaly)
+        await session.delete(device)
+        removed += 1
+    if removed and removed == len(devices):
         await session.flush()
-        acknowledged = anomaly.detected_at + timedelta(minutes=10) if status != "open" else None
-        resolved = (
-            anomaly.detected_at + timedelta(minutes=30)
-            if status in {"resolved", "false_positive"}
-            else None
-        )
-        session.add(
-            Alert(
-                anomaly_id=anomaly.id,
-                status=status,
-                channel="dashboard",
-                created_at=anomaly.detected_at,
-                acknowledged_at=acknowledged,
-                resolved_at=resolved,
-            )
-        )
-        added = True
-    return added
-
-
-def _continuous_flow_readings(device: Device, now: datetime) -> list[TelemetryReading]:
-    aligned_now = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0)
-    start = aligned_now - timedelta(hours=6)
-    readings: list[TelemetryReading] = []
-    for index in range(73):
-        recorded_at = start + timedelta(minutes=5 * index)
-        readings.append(
-            TelemetryReading(
-                device_id=device.id,
-                event_id=f"demo-flow-{recorded_at:%Y%m%d%H%M}",
-                recorded_at=recorded_at,
-                received_at=now,
-                flow_rate_liters_minute=Decimal("0.2"),
-                quality="valid",
-                battery_percent=83,
-                signal_dbm=-61,
-                firmware_version="0.4.2-demo",
-            )
-        )
-    return readings
-
-
-def _health_readings(devices: dict[str, Device], now: datetime) -> list[TelemetryReading]:
-    """Add one zero-flow heartbeat per five-minute slot for active demo meters."""
-    recorded_at = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0)
-    return [
-        TelemetryReading(
-            device_id=devices[serial].id,
-            event_id=f"demo-health-{serial}-{recorded_at:%Y%m%d%H%M}",
-            recorded_at=recorded_at,
-            received_at=now,
-            flow_rate_liters_minute=Decimal("0"),
-            quality="valid",
-            battery_percent=battery,
-            signal_dbm=signal,
-            firmware_version="0.4.2-demo",
-        )
-        for serial, battery, signal in (
-            ("AF-DEMO-001", 92, -52),
-            ("AF-DEMO-002", 84, -63),
-            ("AF-DEMO-ML-001", 88, -55),
-        )
-    ]
+        await session.delete(legacy)
+    return bool(removed)
 
 
 async def main() -> None:
     if not settings.demo_mode:
         return
+    if settings.demo_dataset_path is None:
+        raise RuntimeError("Configure DEMO_DATASET_PATH com a série híbrida.")
     factory = create_session_factory(settings)
     try:
         created = await seed_demo_data(
             factory,
             password=settings.demo_user_password,
-            email=settings.demo_user_email,
+            email=settings.demo_user_email or ADMIN_EMAIL,
+            dataset_path=settings.demo_dataset_path,
+            cleanup_legacy=settings.demo_cleanup_legacy,
         )
         if created:
-            print("Dados sintéticos de demonstração preparados.")
+            print("Histórico híbrido preparado.")
         else:
-            print("Dados sintéticos já estão atualizados; nada foi alterado.")
+            print("Histórico híbrido já está atualizado.")
     finally:
         bind = factory.kw.get("bind")
         if bind is not None:

@@ -16,15 +16,81 @@ features. As métricas resultantes não comprovam detecção de vazamento real.
 import argparse
 import csv
 import json
+import math
 import random
 import tempfile
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
+from statistics import median
+from zoneinfo import ZoneInfo
 
 import generate_mock_data as mock
 
 VALID_QUALITY = {"valid"}
 BASE_VOLUME_LITERS = 1000.0
+DEFAULT_CALIBRATION = Path(__file__).parent / "collection" / "bench-calibration-v1.json"
+
+
+def load_bench_rates(directory: Path, exclude_flows: list[float]) -> dict[str, float]:
+    """Use the median positive reading from each run as an active-use rate."""
+    rates = {}
+    for path in sorted(directory.glob("bench_features_*.csv")):
+        with path.open(newline="", encoding="utf-8-sig") as source:
+            values = [
+                float(row["flow_rate_liters_minute"])
+                for row in csv.DictReader(source)
+            ]
+        valid = [
+            value for value in values
+            if math.isfinite(value) and value > 0 and value not in exclude_flows
+        ]
+        if not valid:
+            raise ValueError(f"corrida sem vazão positiva aproveitável: {path.name}")
+        rates[path.name] = median(valid)
+    if not rates:
+        raise ValueError(f"nenhum CSV bench_features encontrado em {directory}")
+    return rates
+
+
+def simulate_household(
+    rows: list[dict[str, str]],
+    rates: list[float],
+    *,
+    seed: int,
+    interval_minutes: int,
+    timezone: str,
+    profile: str,
+) -> list[dict[str, str]]:
+    """Simulate intermittent use and retain the mock's labelled scenarios."""
+    rng = random.Random(seed)
+    local_zone = ZoneInfo(timezone)
+    cumulative = BASE_VOLUME_LITERS
+    increment = mock.ANOMALY_INCREMENT[profile]
+    for row in rows:
+        local = datetime.fromisoformat(row["recorded_at"]).astimezone(local_zone)
+        present = row["reading_present"] == "1"
+        anomalous = row["scenario_label"] in {"continuous_flow", "night_consumption"}
+        background = (
+            max(0.0, float(row["flow_rate_liters_minute"]) - (increment if anomalous else 0))
+            if present else mock._flow(local.hour, rng, profile)
+        )
+        if local.weekday() >= 5 and 8 <= local.hour < 18:
+            background *= 1.2
+        rate = rng.choice(rates)
+        # Average one synthetic use event over the entire reporting interval.
+        active_fraction = rng.uniform(0.1, 1)
+        probability = min(1.0, background / (rate * 0.55))
+        flow = rate * active_fraction if rng.random() < probability else 0.0
+        if anomalous:
+            flow += increment
+        flow = round(flow, 3)
+        cumulative = round(cumulative + flow * interval_minutes, 3)
+        if present:
+            row["flow_rate_liters_minute"] = f"{flow:.3f}"
+            row["cumulative_volume_liters"] = f"{cumulative:.3f}"
+            row["firmware_version"] = "bench-sim-1"
+    return rows
 
 
 def load_real_pools(real_csv: Path) -> dict[str, list[float]]:
@@ -86,7 +152,7 @@ def inject(
 
 
 def build(
-    real_csv: Path,
+    real_csv: Path | None,
     output: Path,
     *,
     seed: int,
@@ -95,9 +161,21 @@ def build(
     interval_minutes: int,
     timezone: str,
     profile: str = "standard",
+    bench_dir: Path | None = None,
+    exclude_flows: list[float] | None = None,
+    calibration: Path | None = None,
 ) -> dict[str, object]:
     """Gera o esqueleto do mock e injeta a vazão real; grava o CSV e o manifesto."""
-    pools = load_real_pools(real_csv)
+    if sum(source is not None for source in (real_csv, bench_dir, calibration)) != 1:
+        raise ValueError("informe exatamente uma fonte de vazão")
+    exclusions = exclude_flows or []
+    pools = load_real_pools(real_csv) if real_csv is not None else {}
+    bench_rates = load_bench_rates(bench_dir, exclusions) if bench_dir is not None else {}
+    if calibration is not None:
+        calibration_data = json.loads(calibration.read_text(encoding="utf-8"))
+        bench_rates = calibration_data["median_active_flow_liters_minute"]
+        if not bench_rates or any(not math.isfinite(rate) or rate <= 0 for rate in bench_rates.values()):
+            raise ValueError("calibração sem vazões positivas e finitas")
     with tempfile.TemporaryDirectory() as tmp:
         skeleton_path = Path(tmp) / "skeleton.csv"
         mock.generate(
@@ -112,7 +190,14 @@ def build(
         with skeleton_path.open(newline="", encoding="utf-8") as source:
             skeleton_rows = list(csv.DictReader(source))
 
-    rows = inject(skeleton_rows, pools, seed=seed, interval_minutes=interval_minutes)
+    rows = (
+        simulate_household(
+            skeleton_rows, list(bench_rates.values()), seed=seed,
+            interval_minutes=interval_minutes, timezone=timezone, profile=profile,
+        )
+        if bench_rates
+        else inject(skeleton_rows, pools, seed=seed, interval_minutes=interval_minutes)
+    )
 
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -143,6 +228,23 @@ def build(
             "não são features. Não comprova detecção de vazamento real."
         ),
     }
+    if bench_rates:
+        manifest.update(
+            source_real_csv=None,
+            source_bench_dir=str(bench_dir) if bench_dir is not None else None,
+            median_active_flow_liters_minute=bench_rates,
+            excluded_flow_values=exclusions,
+            weekend_daytime_background_multiplier=1.2,
+            policy=(
+                "Série híbrida: medianas de vazão positiva por corrida calibram os eventos "
+                "de uso. Duração, frequência, calendário, rótulos e fluxo anômalo adicional "
+                "são simulados. A condição da bancada não define o rótulo. A exclusão por "
+                "valor não identifica todos os sopros. Não valida detecção em campo."
+            ),
+        )
+    if calibration is not None:
+        manifest["source_calibration"] = calibration.name
+        manifest["excluded_measurements"] = calibration_data["excluded_measurements"]
     (output.parent / "build_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -152,9 +254,11 @@ def build(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--real", type=Path, default=Path("data/ml/real/readings_rotulados.csv")
-    )
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--real", type=Path)
+    source.add_argument("--bench-dir", type=Path)
+    source.add_argument("--calibration", type=Path, nargs="?", const=DEFAULT_CALIBRATION)
+    parser.add_argument("--exclude-flow", type=float, action="append", default=[])
     parser.add_argument("--output", type=Path, default=Path("data/ml/real/readings.csv"))
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--start", type=mock._start, default=mock._start("2026-09-01T00:00:00-03:00"))
@@ -164,7 +268,8 @@ def main() -> None:
     parser.add_argument("--profile", choices=("standard", "shifted", "stress"), default="standard")
     args = parser.parse_args()
     manifest = build(
-        args.real,
+        None if args.bench_dir or args.calibration
+        else args.real or Path("data/ml/real/readings_rotulados.csv"),
         args.output,
         seed=args.seed,
         start=args.start,
@@ -172,6 +277,9 @@ def main() -> None:
         interval_minutes=args.interval_minutes,
         timezone=args.timezone,
         profile=args.profile,
+        bench_dir=args.bench_dir,
+        exclude_flows=args.exclude_flow,
+        calibration=args.calibration,
     )
     print(json.dumps(manifest, ensure_ascii=False, sort_keys=True))
 

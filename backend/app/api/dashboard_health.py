@@ -40,7 +40,9 @@ async def get_dashboard_health(
     session: AsyncSession = Depends(get_session),
 ) -> DashboardHealth:
     property_exists = await session.scalar(
-        select(Property.id).where(Property.id == property_id, Property.owner_id == user.id)
+        select(Property.id).where(
+            Property.id == property_id, Property.owner_id == user.id, Property.archived_at.is_(None)
+        )
     )
     if property_exists is None:
         raise HTTPException(
@@ -52,8 +54,9 @@ async def get_dashboard_health(
     since = now - timedelta(hours=24)
     devices = select(Device.id).where(Device.property_id == property_id)
     readings_count = await session.scalar(
-        select(func.count(TelemetryReading.id))
-        .where(TelemetryReading.device_id.in_(devices), TelemetryReading.received_at >= since)
+        select(func.count(TelemetryReading.id)).where(
+            TelemetryReading.device_id.in_(devices), TelemetryReading.received_at >= since
+        )
     )
     last_reading = await session.scalar(
         select(func.max(TelemetryReading.received_at)).where(
@@ -63,11 +66,10 @@ async def get_dashboard_health(
 
     inference_rows = (
         await session.execute(
-            select(MLInference.status, MLInference.predicted_anomaly).join(
-                TelemetryReading, TelemetryReading.id == MLInference.reading_id
-            ).join(Device, Device.id == TelemetryReading.device_id).where(
-                Device.property_id == property_id, MLInference.inferred_at >= since
-            )
+            select(MLInference.status, MLInference.predicted_anomaly)
+            .join(TelemetryReading, TelemetryReading.id == MLInference.reading_id)
+            .join(Device, Device.id == TelemetryReading.device_id)
+            .where(Device.property_id == property_id, MLInference.inferred_at >= since)
         )
     ).all()
     scored = sum(status == "scored" for status, _ in inference_rows)

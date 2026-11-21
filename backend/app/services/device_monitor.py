@@ -21,7 +21,11 @@ async def scan_offline_devices(session: AsyncSession, *, now: datetime | None = 
             await session.execute(
                 select(Device, Property)
                 .join(Property, Property.id == Device.property_id)
-                .where(Device.last_seen_at.is_not(None), Device.is_active.is_(True))
+                .where(
+                    Device.last_seen_at.is_not(None),
+                    Device.is_active.is_(True),
+                    Property.archived_at.is_(None),
+                )
             )
         ).all()
     )

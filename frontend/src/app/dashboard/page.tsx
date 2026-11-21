@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Area,
@@ -216,7 +216,6 @@ export default function Dashboard() {
   const [retiringDeviceId, setRetiringDeviceId] = useState("");
   const [alertActionId, setAlertActionId] = useState("");
   const [alertNotice, setAlertNotice] = useState("");
-  const [simulating, setSimulating] = useState(false);
   const selected = properties.find((item) => item.id === selectedId);
   const selectedDevices = useMemo(
     () => devices.filter((item) => item.property_id === selectedId),
@@ -226,38 +225,31 @@ export default function Dashboard() {
   const acknowledgedAlertCount = alerts.filter((alert) => alert.status === "acknowledged").length;
   const activeAlertCount = openAlertCount + acknowledgedAlertCount;
 
-  const load = useCallback(
-    async (propertyId?: string) => {
-      setLoading(true);
-      setError("");
-      try {
-        const [propertyResult, deviceResult] = await Promise.all([
-          api<{ items: Property[] }>("properties"),
-          api<{ items: Device[] }>("devices"),
-        ]);
-        setProperties(propertyResult.items);
-        setDevices(deviceResult.items);
-        const activeId = resolveActivePropertyId(
-          propertyId,
-          selectedId,
-          propertyResult.items.map((property) => property.id),
-        );
-        setSelectedId(activeId);
-        if (!activeId) {
-          setConsumption(null);
-          setAlerts([]);
-          setAlertVisibleLimit(5);
-          setAlertsCursor(null);
-          setAlertsHasMore(false);
-        }
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "Falha ao carregar os dados.");
-      } finally {
-        setLoading(false);
+  const load = useCallback(async (propertyId?: string) => {
+    setLoading(true);
+    setError("");
+    try {
+      const [propertyResult, deviceResult] = await Promise.all([
+        api<{ items: Property[] }>("properties"),
+        api<{ items: Device[] }>("devices"),
+      ]);
+      setProperties(propertyResult.items);
+      setDevices(deviceResult.items);
+      const availableIds = propertyResult.items.map((property) => property.id);
+      setSelectedId((currentId) => resolveActivePropertyId(propertyId, currentId, availableIds));
+      if (availableIds.length === 0) {
+        setConsumption(null);
+        setAlerts([]);
+        setAlertVisibleLimit(5);
+        setAlertsCursor(null);
+        setAlertsHasMore(false);
       }
-    },
-    [selectedId],
-  );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Falha ao carregar os dados.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     const syncView = () =>
@@ -567,45 +559,6 @@ export default function Dashboard() {
     }
   }
 
-  async function simulateReadings() {
-    if (!provisioned) return;
-    setSimulating(true);
-    setError("");
-    setDeviceNotice(null);
-    try {
-      const now = Date.now();
-      const points = [
-        { minutesAgo: 10, liters: 1000 },
-        { minutesAgo: 5, liters: 1002 },
-        { minutesAgo: 0, liters: 1006 },
-      ];
-      for (const point of points) {
-        await api("ingestion/telemetry", {
-          method: "POST",
-          headers: { "X-Device-Key": provisioned.key },
-          body: JSON.stringify({
-            device_serial: provisioned.serial,
-            event_id: `demo-${now}-${point.minutesAgo}`,
-            recorded_at: new Date(now - point.minutesAgo * 60_000).toISOString(),
-            cumulative_volume_liters: point.liters,
-          }),
-        });
-      }
-      await load(selectedId);
-      setDeviceNotice({
-        kind: "success",
-        message: "Leituras de demonstração enviadas; o painel foi atualizado.",
-      });
-    } catch (caught) {
-      setDeviceNotice({
-        kind: "error",
-        message: caught instanceof Error ? caught.message : "Não foi possível enviar as leituras.",
-      });
-    } finally {
-      setSimulating(false);
-    }
-  }
-
   async function copyDeviceKey() {
     if (!provisioned) return;
     try {
@@ -625,6 +578,12 @@ export default function Dashboard() {
     } finally {
       router.replace("/");
     }
+  }
+
+  async function archiveSelectedProperty() {
+    if (!selected) return;
+    await api(`properties/${selected.id}`, { method: "DELETE" });
+    await load();
   }
 
   async function savePropertySettings(patch: PropertyPatch) {
@@ -696,6 +655,23 @@ export default function Dashboard() {
     }
     return [...totals].map(([reason, count]) => ({ reason, count }));
   }, [alerts, dashboardHealth]);
+
+  const propertyCreationForm = (
+    <form onSubmit={createProperty} className="inline-form">
+      <label className="field">
+        Nome da propriedade
+        <input
+          value={newProperty}
+          onChange={(event) => setNewProperty(event.target.value)}
+          placeholder="Ex.: Minha casa"
+          required
+        />
+      </label>
+      <button className="button button--primary">
+        Criar propriedade <span aria-hidden="true">→</span>
+      </button>
+    </form>
+  );
 
   return (
     <main className="dashboard-page">
@@ -795,20 +771,7 @@ export default function Dashboard() {
                 Organize medidores e leituras por local. Depois, você pode conectar um dispositivo e
                 acompanhar o consumo aqui.
               </p>
-              <form onSubmit={createProperty} className="inline-form">
-                <label className="field">
-                  Nome da propriedade
-                  <input
-                    value={newProperty}
-                    onChange={(event) => setNewProperty(event.target.value)}
-                    placeholder="Ex.: Minha casa"
-                    required
-                  />
-                </label>
-                <button className="button button--primary">
-                  Criar propriedade <span aria-hidden="true">→</span>
-                </button>
-              </form>
+              {propertyCreationForm}
             </div>
           </section>
         ) : loading && properties.length === 0 ? (
@@ -820,7 +783,17 @@ export default function Dashboard() {
                 key={selected.id}
                 property={selected}
                 onSave={savePropertySettings}
+                onArchive={archiveSelectedProperty}
               />
+            )}
+            {view === "settings" && (
+              <section
+                className="surface settings-card property-create-card"
+                aria-labelledby="new-property-title"
+              >
+                <h2 id="new-property-title">Adicionar propriedade</h2>
+                {propertyCreationForm}
+              </section>
             )}
             {view === "overview" && (
               <section className="metrics-grid" aria-label="Resumo de consumo">
@@ -1078,8 +1051,8 @@ export default function Dashboard() {
                                     <strong>{device.name}</strong>
                                     <small>
                                       {device.serial_number} ·{" "}
-                                      {device.serial_number.startsWith("AF-DEMO-")
-                                        ? "Demonstração"
+                                      {device.serial_number === "AF-DEMO-HIBRIDO-001"
+                                        ? "Histórico híbrido"
                                         : "Dispositivo cadastrado"}
                                     </small>
                                     {reading && (
@@ -1177,9 +1150,9 @@ export default function Dashboard() {
                       <div className="empty-meter">Nenhum medidor conectado ainda.</div>
                     )}
                     <form onSubmit={createDevice} className="device-form">
-                      <h3>Adicionar medidor de teste</h3>
+                      <h3>Adicionar medidor</h3>
                       <p className="form-help">
-                        Experimente o acompanhamento com leituras simuladas.
+                        Cadastre o número de série do dispositivo que vai enviar as leituras.
                       </p>
                       <label className="field">
                         <span className="sr-only">Nome do medidor</span>
@@ -1222,13 +1195,6 @@ export default function Dashboard() {
                     {copiedKey ? "Chave copiada" : "Copiar chave"}
                   </button>
                 </div>
-                <button
-                  disabled={simulating}
-                  onClick={() => void simulateReadings()}
-                  className="button button--primary"
-                >
-                  {simulating ? "Enviando leituras…" : "Simular leituras"}
-                </button>
               </section>
             )}
             {view === "alerts" && (
@@ -1258,7 +1224,6 @@ export default function Dashboard() {
                         {alerts.slice(0, alertVisibleLimit).map((alert) => {
                           const observedRate = alert.evidence.observed_flow_rate_liters_minute;
                           const observedDuration = alert.evidence.observed_duration_minutes;
-                          const isDemoSample = alert.evidence.is_demo_sample === true;
                           const detectorLabel =
                             alert.detector_type === "continuous_flow"
                               ? "Fluxo contínuo"
@@ -1268,9 +1233,7 @@ export default function Dashboard() {
                                   ? "Medidor sem comunicação"
                                   : alert.detector_type === "ml_anomaly"
                                     ? "Possível mudança de consumo"
-                                    : alert.detector_type === "demo_sample"
-                                      ? "Alerta demonstrativo"
-                                      : alert.detector_type;
+                                    : alert.detector_type;
                           return (
                             <li className="alert-row" key={alert.id}>
                               <div className="alert-main">
@@ -1294,7 +1257,6 @@ export default function Dashboard() {
                                           ? "Resolvido"
                                           : "Falso positivo"}
                                   </span>
-                                  {isDemoSample && <span className="demo-badge">Simulado</span>}
                                   {alert.detector_type === "ml_anomaly" && (
                                     <span className="demo-badge">Experimental</span>
                                   )}
@@ -1827,10 +1789,38 @@ function toSettingsDraft(property: Property): PropertySettingsDraft {
 function PropertySettingsForm({
   property,
   onSave,
+  onArchive,
 }: {
   property: Property;
+  onArchive?: () => Promise<void>;
   onSave: (patch: PropertyPatch) => Promise<Property>;
 }) {
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const archiveDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (confirmArchive) archiveDialog.current?.showModal();
+    else archiveDialog.current?.close();
+  }, [confirmArchive]);
+  const [archiving, setArchiving] = useState(false);
+
+  async function archive() {
+    if (!onArchive || archiving) return;
+    setFeedback(null);
+    setArchiving(true);
+    try {
+      await onArchive();
+      setConfirmArchive(false);
+    } catch (caught) {
+      setFeedback({
+        kind: "error",
+        message:
+          caught instanceof Error ? caught.message : "Não foi possível arquivar a propriedade.",
+      });
+    } finally {
+      setArchiving(false);
+    }
+  }
+
   const [draft, setDraft] = useState(() => toSettingsDraft(property));
   const [timezoneOptions, setTimezoneOptions] = useState([property.timezone]);
   const [timezoneOptionsLoaded, setTimezoneOptionsLoaded] = useState(false);
@@ -1985,10 +1975,22 @@ function PropertySettingsForm({
           </label>
         </div>
         <div className="settings-actions">
+          {onArchive && (
+            <button
+              type="button"
+              className="button button--quiet"
+              disabled={saving || archiving}
+              aria-expanded={confirmArchive}
+              aria-controls={confirmArchive ? "property-archive-confirm" : undefined}
+              onClick={() => setConfirmArchive(true)}
+            >
+              Arquivar propriedade
+            </button>
+          )}
           <button
             type="button"
             className="button button--quiet"
-            disabled={saving}
+            disabled={saving || archiving}
             onClick={() => {
               setDraft(toSettingsDraft(property));
               setFeedback(null);
@@ -1996,12 +1998,51 @@ function PropertySettingsForm({
           >
             Descartar alterações
           </button>
-          <button type="submit" className="button button--primary" disabled={saving}>
+          <button type="submit" className="button button--primary" disabled={saving || archiving}>
             {saving ? "Salvando…" : "Salvar configurações"}
             <span aria-hidden="true">→</span>
           </button>
         </div>
       </form>
+      {onArchive && (
+        <dialog
+          ref={archiveDialog}
+          onCancel={(event) => {
+            if (archiving) event.preventDefault();
+            else setConfirmArchive(false);
+          }}
+          onClose={() => setConfirmArchive(false)}
+          id="property-archive-confirm"
+          className="property-archive-dialog"
+          aria-labelledby="property-archive-title"
+          aria-describedby="property-archive-question"
+        >
+          <h2 id="property-archive-title">Arquivar propriedade?</h2>
+          <p id="property-archive-question">
+            <strong>{property.name}</strong> deixará de aparecer na lista de propriedades. O
+            histórico será preservado.
+          </p>
+          <div className="property-archive-dialog-actions">
+            <button
+              type="button"
+              className="button button--quiet"
+              autoFocus
+              disabled={archiving}
+              onClick={() => setConfirmArchive(false)}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="button property-archive-confirm"
+              disabled={archiving || saving}
+              onClick={() => void archive()}
+            >
+              {archiving ? "Arquivando…" : "Confirmar arquivamento"}
+            </button>
+          </div>
+        </dialog>
+      )}
     </section>
   );
 }
@@ -2070,11 +2111,13 @@ function AlertEvidence({ alert }: { alert: Alert }) {
       if (typeof derivation === "string") {
         rows.push([
           "Origem da vazão",
-          derivation === "flow_rate_from_cumulative_volume"
-            ? "Calculada pela variação do volume acumulado"
-            : derivation === "cumulative_volume"
-              ? "Informada pelo medidor"
-              : "Estimativa a partir da vazão informada",
+          derivation === "cumulative_volume_5min_window"
+            ? "Vazão média na janela de cinco minutos"
+            : derivation === "flow_rate_from_cumulative_volume"
+              ? "Calculada pela variação do volume acumulado"
+              : derivation === "cumulative_volume"
+                ? "Informada pelo medidor"
+                : "Estimativa a partir da vazão informada",
         ]);
       }
     }

@@ -1,10 +1,9 @@
 """Tests for the real-telemetry training exporter."""
 
 from collections.abc import AsyncIterator, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -14,8 +13,8 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.models import Device, Property, TelemetryReading, User
 from app.export_training_data import (
-    load_label_sheet,
     export,
+    load_label_sheet,
 )
 
 SAO_PAULO = "America/Sao_Paulo"

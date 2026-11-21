@@ -27,18 +27,9 @@ O campo `device_serial` do JSON deve corresponder ao serial do tópico. O corpo 
 
 Reenvie o mesmo `event_id` e conteúdo em caso de dúvida sobre a entrega. O consumidor confirma uma mensagem QoS 1 após a API responder `202`; `accepted` e `duplicate` são ambos sucessos. Mensagens inválidas e erros HTTP 4xx são descartados com registro do motivo sem payload ou credencial. Falhas de rede ou HTTP 5xx deixam a mensagem sem confirmação para nova tentativa. A restrição única de `device_id` e `event_id` no banco evita duplicidade.
 
-## Demonstração sem hardware
+## Ensaio e teste de integração
 
-1. Inicie `docker compose up --build` e entre na conta de demonstração.
-2. Em **Medidores**, crie um medidor com série exclusiva e copie a chave exibida uma única vez.
-3. No PowerShell, publique uma leitura com os valores correspondentes:
-
-```powershell
-docker compose run --rm -e DEVICE_SERIAL=AF-MQTT-001 -e DEVICE_KEY=COLE_A_CHAVE -e CUMULATIVE_VOLUME_LITERS=1000 mqtt-publisher
-```
-
-4. Publique outra leitura com `CUMULATIVE_VOLUME_LITERS=1000.5`. Confira as leituras e a última comunicação em **Medidores**; a diferença aparece como consumo calculado.
-5. Para conferir o percurso automaticamente em um projeto Compose isolado, com API e PostgreSQL de teste:
+Para demonstrar com o sensor, siga o [guia de firmware do ESP32](../firmware/aquaflow-esp32/README.md). O teste de integração publica em um banco separado do painel:
 
 ```powershell
 docker compose -p aquaflow-mqtt-test -f docker-compose.yml -f docker-compose.test.yml --profile test run --build --rm mqtt-e2e
