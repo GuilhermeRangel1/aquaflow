@@ -1,0 +1,113 @@
+\documentclass[12pt]{article}
+\usepackage{sbc-template}
+\usepackage{graphicx,url}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english,brazil]{babel}
+\sloppy
+
+\title{AquaFlow: monitoramento de consumo de água e detecção de anomalias em telemetria residencial}
+\author{Caio Almeida Amaral\inst{1}, Celio Pereira Dias Junior\inst{1},\\
+Ester de Araujo Carvalho Menezes\inst{1}, Guilherme Vinícius Rangel Silva\inst{1},\\
+João Vitor Moraes Barbosa\inst{1}, Luana Lima Maynard de Arruda Falcão\inst{1}}
+\address{CESAR School -- Recife -- PE -- Brasil}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+AquaFlow is an academic prototype that combines water-meter telemetry, consumption monitoring and anomaly detection. The system ingests MQTT events, stores readings and presents rule-based alerts and experimental machine-learning predictions. A benchmark calibrated with physical bench measurements was used to compare three classifiers against a prevalence baseline. The selected KNN reached 0.994 average precision and 97.6\% recall on the chronological test, with 91.8\% recall under simulated stress. These results characterize the simulated benchmark. Validation with independent household measurements remains pending.
+\keywords{water consumption, telemetry, anomaly detection}
+\end{abstract}
+
+\begin{resumo}
+O AquaFlow é um protótipo acadêmico que combina telemetria de medidores, acompanhamento do consumo de água e detecção de anomalias. O sistema recebe eventos MQTT, armazena leituras e exibe alertas por regras e inferências experimentais. Três classificadores foram comparados a uma referência por prevalência em uma série simulada calibrada com medições de bancada. O KNN selecionado obteve AP de 0,994 e revocação de 97,6\% no teste cronológico, e revocação de 91,8\% sob estresse simulado. A validação com dados residenciais independentes permanece pendente.
+\end{resumo}
+
+\section{Introdução}
+Uma conta de água mensal informa o consumo acumulado, mas oferece pouco contexto sobre quando ocorreu um comportamento incomum. O AquaFlow busca tornar esse acompanhamento mais frequente: apresenta a evolução do consumo, sinaliza intervalos que merecem verificação e permite consultar a leitura que motivou uma inferência. O objetivo deste trabalho é demonstrar uma arquitetura integrada de aquisição, processamento e apresentação e avaliar, em ambiente controlado, classificadores de anomalias. Os avisos orientam a investigação; a confirmação e a localização de vazamentos exigem verificação física.
+
+\section{Arquitetura e aquisição}
+O firmware do ESP32 publica leituras por MQTT em intervalos configurados de cinco segundos. Um consumidor MQTT encaminha os eventos ao mesmo contrato HTTP usado para validar e persistir leituras no PostgreSQL. O identificador do evento permite tratar reenvios sem duplicar a amostra. A publicação simulada foi exercitada de ponta a ponta; a execução com ESP32 físico permanece pendente. O histórico de demonstração é gerado e carregado separadamente no bootstrap.
+
+\begin{figure}[ht]
+\centering
+\fbox{\small ESP32 / simulador}
+$\rightarrow$ \fbox{\small MQTT}
+$\rightarrow$ \fbox{\small Consumidor}
+$\rightarrow$ \fbox{\small API}
+$\rightarrow$ \fbox{\small PostgreSQL}\\[6pt]
+\fbox{\small PostgreSQL}
+$\rightarrow$ \fbox{\small Worker de inferência}
+$\rightarrow$ \fbox{\small PostgreSQL}
+$\rightarrow$ \fbox{\small API}
+$\rightarrow$ \fbox{\small Painel}
+\caption{Percurso da leitura e retorno da inferência ao painel.}
+\label{fig:fluxo}
+\end{figure}
+
+A API calcula volume entre leituras compatíveis e mantém lacunas como dados ausentes. O worker registra o resultado associado à leitura e à versão do modelo. Previsões positivas consecutivas podem gerar um aviso experimental. Previsões isoladas permanecem disponíveis na tela de telemetria. Para telemetria de alta frequência, obtém atributos de janelas de cinco minutos com cobertura suficiente. Leituras recentes podem aparecer no painel antes de existir uma janela completa. Detectores por regras continuam ativos junto ao classificador experimental.
+
+O Docker Compose reúne banco, broker MQTT, consumidor, API, painel, Airflow, MLflow e serviços de treino e inferência. O DAG manual do Airflow~\cite{airflow} executa geração, análise, preparação e treino, com rastreamento no MLflow~\cite{mlflow}. O treino inicial do Compose cria o artefato quando ele está ausente. O retreinamento manual é restrito ao administrador e usa a série simulada calibrada. O painel técnico mostra vazão, estado do medidor e inferências individuais. Para o morador, o detalhe do medidor resume as leituras e a Visão geral separa o volume dentro do padrão, associado a avisos válidos de consumo e sem conclusão. Essa última categoria inclui volumes registrados sem classificação conclusiva. A estimativa de custo é uma simulação de água pela tarifa residencial de referência de Recife, em mês civil, sem esgoto.
+
+\section{Dados, análise exploratória e preparação}
+O experimento usa quatro CSVs de bancada. As medianas de vazão ativa adotadas na calibração foram 4,13, 4,80, 5,33 e 1,00 L/min, respectivamente, para ambos os registros abertos, registro direito fechado, registro esquerdo fechado e registro esquerdo pouco aberto. O manifesto identifica observações excluídas na calibração. O gerador usa essas referências para simular rotinas, períodos sem demanda e eventos anômalos. Os rótulos vêm dos cenários do gerador. As quatro coletas não representam uma residência monitorada durante todo o período.
+
+A exploração, documentada no notebook do projeto~\cite{aquaflow}, registra as distribuições de vazão e volume, a presença de lacunas e a proporção de anomalias. A série principal preparada contém 4.511 amostras em cadência nominal de cinco minutos. Foram reservadas 2.255 para treino, 1.128 para validação e 1.128 para teste. O teste inclui 168 anomalias (14,9\%), o que motiva a escolha de \textit{average precision} (AP) como métrica de seleção. A AP resume precisão e revocação ao longo dos limiares e, neste teste, o classificador constante tem AP igual à prevalência.
+
+A preparação organiza as leituras pelo tempo, deriva a variação de volume e a duração entre amostras e preserva a distinção entre lacuna e volume zero. Janelas sem dados suficientes não recebem classificação. O contrato inclui atributos cíclicos de horário e dia da semana, mas os estimadores usam vazão, variação do volume e duração. A exclusão do calendário busca reduzir a memorização da rotina simulada. O escalonamento do KNN é ajustado separadamente em cada partição de treino.
+
+\section{Protocolo de avaliação}
+Foram avaliados um classificador por prevalência (\texttt{DummyClassifier}), KNN, Árvore de Decisão e Random Forest. O baseline mede o desempenho sem informação das variáveis. O KNN explora similaridade local, a árvore oferece divisões interpretáveis e a floresta avalia o efeito de combinar árvores.
+
+A busca amostra configurações com semente 42 e usa três divisões de \texttt{TimeSeriesSplit}~\cite{sklearn}, com separação de 12 amostras entre treino e validação. Na execução de referência houve quatro configurações por modelo treinável e 36 ajustes nos folds. Entre soluções próximas da melhor AP, a busca prefere a configuração mais simples dentro de um erro padrão. Os espaços incluem fração de vizinhos para KNN, profundidade e tamanho mínimo de folha para árvores e parâmetros do conjunto para a floresta. A seleção final usa a média de AP na validação padrão e em uma rotina simulada alterada. O ajuste final termina antes do início do teste principal. O perfil de estresse avalia mudanças de rotina com as mesmas premissas do gerador.
+
+\section{Resultados e discussão}
+A Tabela~\ref{tab:modelos} resume a execução de referência do experimento. Os valores vêm de seu relatório de métricas. O KNN selecionado usa 2,5\% das amostras como vizinhança (198 vizinhos no ajuste final). A propriedade proporcional reduziu o desvio da AP nos folds de 0,132 para 0,0165. A AP média de treino nos folds foi 0,987, frente a 0,967 na validação. Essa diferença e a dispersão ajudam a avaliar a estabilidade dentro do experimento.
+
+\begin{table}[ht]
+\centering
+\caption{Comparação na execução de referência.}
+\label{tab:modelos}
+\small
+\begin{tabular}{lrrr}
+\hline
+Modelo & AP de seleção & AP no teste & AP no estresse \\
+\hline
+Baseline por prevalência & 0,165 & 0,149 & 0,159 \\
+KNN & 0,937 & 0,994 & 0,929 \\
+Árvore de Decisão & 0,578 & 0,947 & 0,919 \\
+Random Forest & 0,578 & 0,947 & 0,921 \\
+\hline
+\end{tabular}
+\end{table}
+
+No limiar 0,5, a precisão do KNN foi 93,7\% no teste e 92,7\% no estresse. A revocação caiu de 97,6\% para 91,8\%, e o F1 passou de 0,956 para 0,922. A árvore e a floresta tiveram AP menor, mas cometeram menos falsos positivos nos dois conjuntos no mesmo limiar. A escolha do KNN pela AP favorece a capacidade de ordenar casos anômalos entre perfis. Para um uso doméstico, a escolha do limiar teria de considerar o custo de alarmes indevidos e de ocorrências perdidas.
+
+\begin{table}[ht]
+\centering
+\caption{Matrizes de confusão do KNN no limiar 0,5. As linhas são as classes reais.}
+\label{tab:matrizes}
+\small
+\begin{tabular}{llrr}
+\hline
+Conjunto & Classe real & Predito normal & Predito anômalo \\
+\hline
+Teste cronológico & Normal & 949 & 11 \\
+ & Anômala & 4 & 164 \\
+Estresse simulado & Normal & 3.740 & 52 \\
+ & Anômala & 59 & 660 \\
+\hline
+\end{tabular}
+\end{table}
+
+A Tabela~\ref{tab:matrizes} explicita as perdas de detecção sob estresse. A amostra de estresse tem mais exemplos, por isso a comparação de desempenho usa também taxas. As sementes adicionais foram avaliadas com o mesmo gerador, e cenários de estresse anteriores informaram o desenvolvimento. Assim, a redução da instabilidade nos folds e os resultados de teste justificam a escolha neste protótipo. A transferência para outras casas, sensores e rotinas requer avaliação independente.
+
+\section{Verificação integrada e conclusão}
+A auditoria com MQTT simulado acompanhou leituras até o PostgreSQL e a inferência, verificou reenvio sem duplicação e observou resultados normais, positivos e sem avaliação. A atualização das leituras foi exercitada no navegador no detalhe do medidor. O pipeline no Airflow concluiu as etapas de preparação e treino. O MLflow registrou métricas e artefatos, e o notebook reproduziu a análise exploratória e a avaliação. Essas verificações sustentam a demonstração com dados simulados.
+
+O AquaFlow entrega o percurso da telemetria à interface e permite acompanhar as inferências sem esconder os casos sem análise. Para concluir a validação do demonstrador, o próximo passo é variar o fluxo na maquete com ESP32 físico e localizar o mesmo evento no painel, na API e no banco, mantendo a coleta até completar a janela necessária à inferência. Uma avaliação de desempenho em residências exige dados físicos independentes e eventos verificados.
+
+\bibliographystyle{sbc}
+\bibliography{referencias}
+\end{document}
