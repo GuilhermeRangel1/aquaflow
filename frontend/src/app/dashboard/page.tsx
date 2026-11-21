@@ -17,6 +17,7 @@ import {
   YAxis,
 } from "recharts";
 import { Brand, ThemeToggle } from "../../components/brand";
+import { ConsumptionClassificationCard } from "./consumption-classification-card";
 import { WaterCostCard } from "./water-cost-card";
 import { MLTrainingView } from "./ml-training";
 import { ResidentMeterAnalysis } from "./resident-meter-analysis";
@@ -311,7 +312,7 @@ export default function Dashboard() {
   const [loadingMoreAlerts, setLoadingMoreAlerts] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
-  const [periodDays, setPeriodDays] = useState<1 | 7 | 30 | 90>(7);
+  const [periodDays, setPeriodDays] = useState<1 | 7 | 30 | 90>(30);
   const [consumption, setConsumption] = useState<Consumption | null>(null);
   const [loadedPeriod, setLoadedPeriod] = useState(periodDays);
   const [consumptionFailed, setConsumptionFailed] = useState(false);
@@ -1866,7 +1867,28 @@ export default function Dashboard() {
                               </div>
                             )}
                           </div>
+                          <details className="overview-insights">
+                            <summary className="overview-insights-toggle">
+                              Detalhes do consumo
+                            </summary>
+                            <div className="overview-insights-content">
+                              <OverviewInsights
+                                hours={detailHours}
+                                hourlyData={hourlyChartData}
+                                hourlyLoading={!hourlyConsumption && !hourlyConsumptionError}
+                                hourlyError={hourlyConsumptionError}
+                              />
+                            </div>
+                          </details>
                         </article>
+                      )}
+                      {view === "overview" && selectedId && (
+                        <ConsumptionClassificationCard
+                          key={`${selectedId}:${periodDays}`}
+                          propertyId={selectedId}
+                          days={periodDays}
+                          request={api}
+                        />
                       )}
                       {view === "overview" && selectedId && (
                         <WaterCostCard key={selectedId} propertyId={selectedId} request={api} />
@@ -2176,19 +2198,6 @@ export default function Dashboard() {
                       )}
                     </section>
                   ))}
-                {view === "overview" && selectedDevices.length > 0 && (
-                  <details className="surface overview-insights">
-                    <summary className="overview-insights-toggle">Detalhes do consumo</summary>
-                    <div className="overview-insights-content">
-                      <OverviewInsights
-                        hours={detailHours}
-                        hourlyData={hourlyChartData}
-                        hourlyLoading={!hourlyConsumption && !hourlyConsumptionError}
-                        hourlyError={hourlyConsumptionError}
-                      />
-                    </div>
-                  </details>
-                )}
               </>
             )}
           </div>

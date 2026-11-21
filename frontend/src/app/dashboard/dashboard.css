@@ -3564,3 +3564,57 @@ details[open] > .telemetry-row .telemetry-disclosure-action > :last-child {
 .water-cost-card > small {
   color: var(--muted);
 }
+
+.classified-consumption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(20px, 5vw, 64px);
+  padding-block: 16px;
+}
+
+.classified-consumption-ring {
+  width: min(230px, 100%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  padding: 18px;
+  display: grid;
+}
+
+.classified-consumption-ring > div {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+.classified-consumption-ring strong {
+  font-size: 1.4rem;
+}
+
+.classified-consumption dl {
+  width: min(100%, 300px);
+  display: grid;
+  gap: 12px;
+}
+
+.classified-consumption dl > div,
+.classified-consumption dt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.classified-consumption dt i {
+  width: 10px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+}
+
+.classified-consumption dd {
+  font-weight: 700;
+}
