@@ -74,7 +74,7 @@ function curvePoints(value: unknown, xKey: string, yKey: string): CurvePoint[] {
   });
 }
 
-export function MLTrainingView() {
+export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [executionId, setExecutionId] = useState("");
   const executionRef = useRef("");
@@ -297,29 +297,33 @@ export function MLTrainingView() {
 
   return (
     <section className="ml-dashboard" aria-label="Modelos e treinamento">
-      <div className="ml-training-action">
-        <button
-          className="button button--primary"
-          type="button"
-          onClick={() => void startTraining()}
-          disabled={
-            startingTraining ||
-            (!!trainingJob && ["queued", "running"].includes(trainingJob.status))
-          }
-        >
-          {startingTraining || ["queued", "running"].includes(trainingJob?.status ?? "")
-            ? "Treinamento em andamento…"
-            : "Treinar novamente"}
-        </button>
-        <span className="sr-only" role="status" aria-live="polite">
-          {startingTraining || trainingJob?.status === "queued" || trainingJob?.status === "running"
-            ? "Treinamento em andamento."
-            : trainingJob?.status === "succeeded"
-              ? "Treinamento concluído e modelo atualizado."
-              : ""}
-        </span>
-        {trainingError && <p role="alert">{trainingError}</p>}
-      </div>
+      {canTrain && (
+        <div className="ml-training-action">
+          <button
+            className="button button--primary"
+            type="button"
+            onClick={() => void startTraining()}
+            disabled={
+              startingTraining ||
+              (!!trainingJob && ["queued", "running"].includes(trainingJob.status))
+            }
+          >
+            {startingTraining || ["queued", "running"].includes(trainingJob?.status ?? "")
+              ? "Treinamento em andamento…"
+              : "Treinar novamente"}
+          </button>
+          <span className="sr-only" role="status" aria-live="polite">
+            {startingTraining ||
+            trainingJob?.status === "queued" ||
+            trainingJob?.status === "running"
+              ? "Treinamento em andamento."
+              : trainingJob?.status === "succeeded"
+                ? "Treinamento concluído e modelo atualizado."
+                : ""}
+          </span>
+          {trainingError && <p role="alert">{trainingError}</p>}
+        </div>
+      )}
       <div className="ml-selection-grid">
         <div className="surface ml-selection-card">
           <div>

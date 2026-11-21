@@ -14,12 +14,13 @@ export function resolveActivePropertyId(
   return availablePropertyIds[0] ?? "";
 }
 
-/** @param {string | null} requestedView @returns {"overview" | "meters" | "alerts" | "settings" | "training"} */
+/** @param {string | null} requestedView @returns {"overview" | "meters" | "alerts" | "settings" | "training" | "telemetry"} */
 export function resolveDashboardView(requestedView) {
   return requestedView === "meters" ||
     requestedView === "alerts" ||
     requestedView === "settings" ||
-    requestedView === "training"
+    requestedView === "training" ||
+    requestedView === "telemetry"
     ? requestedView
     : "overview";
 }
@@ -27,7 +28,7 @@ export function resolveDashboardView(requestedView) {
 /**
  * @param {string | null} requestedView
  * @param {string | null} requestedDeviceId
- * @returns {{ view: "overview" | "meters" | "alerts" | "settings" | "training", selectedDeviceId: string | null }}
+ * @returns {{ view: "overview" | "meters" | "alerts" | "settings" | "training" | "telemetry", selectedDeviceId: string | null }}
  */
 export function resolveDashboardRoute(requestedView, requestedDeviceId) {
   const view = resolveDashboardView(requestedView);

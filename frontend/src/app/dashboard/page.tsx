@@ -18,6 +18,9 @@ import {
 } from "recharts";
 import { Brand, ThemeToggle } from "../../components/brand";
 import { MLTrainingView } from "./ml-training";
+import { ResidentMeterAnalysis } from "./resident-meter-analysis";
+import { TelemetryView } from "./telemetry-view";
+import { MeterLabels } from "./meter-labels";
 import {
   orderHoursFromMidnight,
   resolveActivePropertyId,
@@ -55,6 +58,7 @@ type PropertySettingsDraft = {
 };
 type Device = {
   id: string;
+  description: string | null;
   property_id: string;
   serial_number: string;
   name: string;
@@ -286,15 +290,16 @@ function PropertyPicker({
 
 export default function Dashboard() {
   const router = useRouter();
-  const [view, setView] = useState<"overview" | "meters" | "alerts" | "settings" | "training">(
-    "overview",
-  );
+  const [view, setView] = useState<
+    "overview" | "meters" | "alerts" | "settings" | "training" | "telemetry"
+  >("overview");
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [properties, setProperties] = useState<Property[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [deviceHealth, setDeviceHealth] = useState<Record<string, DeviceHealth>>({});
   const [deviceReadings, setDeviceReadings] = useState<DeviceReading[]>([]);
   const [deviceReadingsLoading, setDeviceReadingsLoading] = useState(false);
+  const [readingsDeviceId, setReadingsDeviceId] = useState<string | null>(null);
   const [deviceReadingsError, setDeviceReadingsError] = useState("");
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [alertsLoading, setAlertsLoading] = useState(false);
@@ -326,6 +331,7 @@ export default function Dashboard() {
   const [propertyCreationError, setPropertyCreationError] = useState("");
   const [newDevice, setNewDevice] = useState("");
   const [newSerial, setNewSerial] = useState("");
+  const [newDeviceDescription, setNewDeviceDescription] = useState("");
   const [provisioned, setProvisioned] = useState<{ deviceId: string; key: string } | null>(null);
   const [deviceNotice, setDeviceNotice] = useState<{
     kind: "success" | "error";
@@ -337,6 +343,7 @@ export default function Dashboard() {
   const [editingDeviceId, setEditingDeviceId] = useState("");
   const [editingDeviceName, setEditingDeviceName] = useState("");
   const [editingDeviceInterval, setEditingDeviceInterval] = useState("300");
+  const [editingDeviceDescription, setEditingDeviceDescription] = useState("");
   const [deviceActionId, setDeviceActionId] = useState("");
   const retireDialog = useRef<HTMLDialogElement>(null);
   const [alertActionId, setAlertActionId] = useState("");
@@ -385,13 +392,14 @@ export default function Dashboard() {
         api<{ is_admin: boolean }>("auth/me"),
       ]);
       setIsAdmin(account.is_admin === true);
-      if (!account.is_admin) setView((current) => (current === "training" ? "overview" : current));
       setProperties(propertyResult.items);
       setDevices(deviceResult.items);
       const availableIds = propertyResult.items.map((property) => property.id);
       setSelectedId((currentId) => resolveActivePropertyId(propertyId, currentId, availableIds));
       if (availableIds.length === 0) {
-        setView("settings");
+        setView((current) =>
+          current === "training" || current === "telemetry" ? current : "settings",
+        );
         setConsumption(null);
         setAlerts([]);
         setAlertVisibleLimit(5);
@@ -429,34 +437,42 @@ export default function Dashboard() {
     return () => window.removeEventListener("aquaflow:unauthorized", redirect);
   }, [router]);
   useEffect(() => {
-    if (!selectedId || loading) return;
+    if (!selectedId || loading || view !== "overview") return;
     let cancelled = false;
-    const end = new Date();
-    const start = new Date(end.getTime() - periodDays * 24 * 60 * 60 * 1000);
-    const params = new URLSearchParams({
-      start: start.toISOString(),
-      end: end.toISOString(),
-      granularity: periodDays === 1 ? "hour" : "day",
-    });
-    api<Consumption>(`properties/${selectedId}/consumption?${params}`)
-      .then((result) => {
-        if (!cancelled) {
-          setConsumption(result);
-          setLoadedPeriod(periodDays);
-          setConsumptionFailed(false);
-        }
-      })
-      .catch((caught: unknown) => {
-        if (!cancelled) {
-          setConsumptionFailed(true);
-          setError(caught instanceof Error ? caught.message : "Falha ao carregar consumo.");
-        }
+    let timer: number | undefined;
+    const refresh = () => {
+      const end = new Date();
+      const start = new Date(end.getTime() - periodDays * 24 * 60 * 60 * 1000);
+      const params = new URLSearchParams({
+        start: start.toISOString(),
+        end: end.toISOString(),
+        granularity: periodDays === 1 ? "hour" : "day",
       });
     return () => {
       cancelled = true;
     };
-  }, [selectedId, loading, periodDays]);
+      api<Consumption>(`properties/${selectedId}/consumption?${params}`)
+        .then((result) => {
+          if (!cancelled) {
+            setConsumption(result);
+            setLoadedPeriod(periodDays);
+            setConsumptionFailed(false);
+          }
+        })
+        .catch((caught: unknown) => {
+          if (!cancelled) {
+            setConsumptionFailed(true);
+            setError(caught instanceof Error ? caught.message : "Falha ao carregar consumo.");
+          }
+        })
+        .finally(() => {
+          if (!cancelled) timer = window.setTimeout(refresh, 30_000);
+        });
+    };
+    refresh();
+  }, [selectedId, loading, periodDays, view]);
   useEffect(() => {
+      window.clearTimeout(timer);
     if (!selectedId || loading || view !== "overview") return;
     let cancelled = false;
     const refreshDashboard = () =>
@@ -526,50 +542,67 @@ export default function Dashboard() {
   useEffect(() => {
     if (view !== "meters" || selectedDevices.length === 0) return;
     let cancelled = false;
-    Promise.all(
-      selectedDevices.map(async (device) => {
-        const health = await api<DeviceHealth>(`devices/${device.id}/health`);
-        return [device.id, health] as const;
-      }),
-    )
-      .then((results) => {
+    let timer: number | undefined;
+    const refreshHealth = async () => {
+      try {
+        const results = await Promise.all(
+          selectedDevices.map(async (device) => {
+            const health = await api<DeviceHealth>(`devices/${device.id}/health`);
+            return [device.id, health] as const;
+          }),
+        );
         if (!cancelled) {
-          setDeviceHealth(Object.fromEntries(results));
+          setDeviceHealth((previous) => ({ ...previous, ...Object.fromEntries(results) }));
           setMeterListUpdatedAt(new Date().toISOString());
         }
-      })
-      .catch((caught: unknown) => {
+      } catch (caught: unknown) {
         if (!cancelled)
           setError(caught instanceof Error ? caught.message : "Falha ao consultar os medidores.");
-      });
+      } finally {
+        if (!cancelled) timer = window.setTimeout(refreshHealth, 5_000);
+      }
+    };
+    void refreshHealth();
     return () => {
       cancelled = true;
     };
   }, [view, selectedDevices]);
   useEffect(() => {
+      window.clearTimeout(timer);
     if (view !== "meters" || !selectedDeviceId) return;
     let cancelled = false;
     setDeviceReadings([]);
     setDeviceReadingsError("");
     setDeviceReadingsLoading(true);
-    api<DeviceReadings>(`devices/${selectedDeviceId}/readings?limit=100`)
-      .then((result) => {
-        if (!cancelled) setDeviceReadings(result.items);
-      })
-      .catch((caught: unknown) => {
+    let timer: number | undefined;
+    const refreshReadings = async () => {
+      try {
+        const result = await api<DeviceReadings>(`devices/${selectedDeviceId}/readings?limit=100`);
+        if (!cancelled) {
+          setDeviceReadings(result.items);
+          setReadingsDeviceId(selectedDeviceId);
+          setDeviceReadingsError("");
+          setMeterListUpdatedAt(new Date().toISOString());
+        }
+      } catch (caught: unknown) {
         if (!cancelled)
           setDeviceReadingsError(
             caught instanceof Error ? caught.message : "Não foi possível carregar as leituras.",
           );
-      })
-      .finally(() => {
-        if (!cancelled) setDeviceReadingsLoading(false);
-      });
+      } finally {
+        if (!cancelled) {
+          setDeviceReadingsLoading(false);
+          timer = window.setTimeout(refreshReadings, 5_000);
+        }
+      }
+    };
+    void refreshReadings();
     return () => {
       cancelled = true;
     };
   }, [view, selectedDeviceId]);
   useEffect(() => {
+      window.clearTimeout(timer);
     if (!selectedId || loading) return;
     let cancelled = false;
     setAlerts([]);
@@ -659,12 +692,14 @@ export default function Dashboard() {
           serial_number: newSerial.trim(),
         }),
       });
+          description: newDeviceDescription.trim() || null,
       setProvisioned({ deviceId: result.id, key: result.device_key });
       setKeyCopyStatus("idle");
       setNewDevice("");
       setNewSerial("");
       await load(selectedId);
       setShowDeviceForm(false);
+      setNewDeviceDescription("");
       setDeviceNotice({
         kind: "success",
         message: "Medidor adicionado",
@@ -687,6 +722,7 @@ export default function Dashboard() {
     setEditingDeviceInterval(String(device.expected_interval_seconds));
     setDeviceNotice(null);
   }
+    setEditingDeviceDescription(device.description ?? "");
 
   async function saveDevice(event: FormEvent, device: Device) {
     event.preventDefault();
@@ -694,12 +730,12 @@ export default function Dashboard() {
     if (
       !editingDeviceName.trim() ||
       !Number.isInteger(interval) ||
-      interval < 30 ||
+      interval < 5 ||
       interval > 86400
     ) {
       setDeviceNotice({
         kind: "error",
-        message: "Informe um nome e um intervalo entre 30 e 86.400 segundos.",
+        message: "Informe um nome e um intervalo entre 5 e 86.400 segundos.",
       });
       return;
     }
@@ -713,6 +749,7 @@ export default function Dashboard() {
           expected_interval_seconds: interval,
         }),
       });
+          description: editingDeviceDescription.trim() || null,
       setDevices((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       setEditingDeviceId("");
       setDeviceNotice({ kind: "success", message: `${updated.name} foi atualizado.` });
@@ -845,7 +882,9 @@ export default function Dashboard() {
     return updated;
   }
 
-  function navigateView(destination: "overview" | "meters" | "alerts" | "settings" | "training") {
+  function navigateView(
+    destination: "overview" | "meters" | "alerts" | "settings" | "training" | "telemetry",
+  ) {
     setView(destination);
     setSuccessNotice("");
     setError("");
@@ -934,7 +973,8 @@ export default function Dashboard() {
     }).format(new Date(item.bucket_start)),
   }));
   const meterLatestReading = selectedDeviceId
-    ? (deviceReadings[0] ?? deviceHealth[selectedDeviceId]?.latest_reading)
+    ? ((readingsDeviceId === selectedDeviceId ? deviceReadings[0] : undefined) ??
+      deviceHealth[selectedDeviceId]?.latest_reading)
     : undefined;
   const meterCurrentFlow =
     meterLatestReading?.quality === "valid" ? meterLatestReading.flow_rate_liters_minute : null;
@@ -1079,19 +1119,23 @@ export default function Dashboard() {
                 <span className="nav-link-label">{label}</span>
               </button>
             ))}
-            {isAdmin && (
-              <>
-                <span className="sidebar-section-label nav-section-label">Área técnica</span>
-                <button
-                  type="button"
-                  aria-current={view === "training" ? "page" : undefined}
-                  className={`nav-link${view === "training" ? " nav-link--active" : ""}`}
-                  onClick={() => navigateView("training")}
-                >
-                  <span className="nav-link-label">Modelos e treinamento</span>
-                </button>
-              </>
-            )}
+            <span className="sidebar-section-label nav-section-label">Área técnica</span>
+            <button
+              type="button"
+              aria-current={view === "training" ? "page" : undefined}
+              className={`nav-link${view === "training" ? " nav-link--active" : ""}`}
+              onClick={() => navigateView("training")}
+            >
+              <span className="nav-link-label">Modelos e treinamento</span>
+            </button>
+            <button
+              type="button"
+              aria-current={view === "telemetry" ? "page" : undefined}
+              className={view === "telemetry" ? "nav-link nav-link--active" : "nav-link"}
+              onClick={() => navigateView("telemetry")}
+            >
+              Telemetria e inferências
+            </button>
           </nav>
           <div className="sidebar-footer">
             <button onClick={logout} className="button button--quiet">
@@ -1107,9 +1151,11 @@ export default function Dashboard() {
                   <Brand compact />
                 </div>
                 <span className="app-context-property">
-                  {view === "training"
-                    ? "Área técnica / Machine Learning"
-                    : (selected?.name ?? "Acompanhamento da sua água")}
+                  {view === "telemetry"
+                    ? "Área técnica / Monitoramento"
+                    : view === "training"
+                      ? "Área técnica / Machine Learning"
+                      : (selected?.name ?? "Acompanhamento da sua água")}
                 </span>
               </div>
               <div className="header-actions">
@@ -1129,40 +1175,44 @@ export default function Dashboard() {
             >
               <div>
                 <h1 id={view === "meters" && selectedDeviceId ? "meter-detail-title" : undefined}>
-                  {view === "meters"
-                    ? (selectedDevice?.name ?? "Seus medidores")
-                    : view === "alerts"
-                      ? selectedAlert
-                        ? alertTitle(selectedAlert.detector_type)
-                        : "O que merece atenção"
-                      : view === "settings"
-                        ? showPropertyForm
-                          ? "Adicionar propriedade"
-                          : !selected
-                            ? "Vamos começar pela sua casa"
-                            : "Sua casa, do seu jeito"
-                        : view === "training"
-                          ? "Modelos e treinamento"
-                          : "Sua água, de perto"}
+                  {view === "telemetry"
+                    ? "Telemetria e inferências"
+                    : view === "meters"
+                      ? (selectedDevice?.name ?? "Seus medidores")
+                      : view === "alerts"
+                        ? selectedAlert
+                          ? alertTitle(selectedAlert.detector_type)
+                          : "O que merece atenção"
+                        : view === "settings"
+                          ? showPropertyForm
+                            ? "Adicionar propriedade"
+                            : !selected
+                              ? "Vamos começar pela sua casa"
+                              : "Sua casa, do seu jeito"
+                          : view === "training"
+                            ? "Modelos e treinamento"
+                            : "Sua água, de perto"}
                 </h1>
                 <p>
-                  {view === "meters"
-                    ? selectedDevice
-                      ? `${selected?.name ?? "Sua casa"} · ${selectedDevice.serial_number}`
-                      : "Veja onde a água está sendo acompanhada."
-                    : view === "alerts"
-                      ? selectedAlert
-                        ? `${selectedAlertDevice} · ${formatDate(selectedAlert.detected_at)}`
-                        : "Entenda os avisos e acompanhe cada situação."
-                      : view === "settings"
-                        ? showPropertyForm
-                          ? "Organize o acompanhamento de outro local."
-                          : !selected
-                            ? "Crie um local para organizar seus medidores."
-                            : "Ajuste os dados e o acompanhamento da sua casa."
-                        : view === "training"
-                          ? "Acompanhe as avaliações, compare modelos e consulte cada treinamento."
-                          : "Acompanhe o consumo e o que merece atenção."}
+                  {view === "telemetry"
+                    ? "Acompanhe as leituras recebidas e a análise do modelo em operação."
+                    : view === "meters"
+                      ? selectedDevice
+                        ? `${selected?.name ?? "Sua casa"} · ${selectedDevice.serial_number}`
+                        : "Veja onde a água está sendo acompanhada."
+                      : view === "alerts"
+                        ? selectedAlert
+                          ? `${selectedAlertDevice} · ${formatDate(selectedAlert.detected_at)}`
+                          : "Entenda os avisos e acompanhe cada situação."
+                        : view === "settings"
+                          ? showPropertyForm
+                            ? "Organize o acompanhamento de outro local."
+                            : !selected
+                              ? "Crie um local para organizar seus medidores."
+                              : "Ajuste os dados e o acompanhamento da sua casa."
+                          : view === "training"
+                            ? "Acompanhe as avaliações, compare modelos e consulte cada treinamento."
+                            : "Acompanhe o consumo e o que merece atenção."}
                 </p>
               </div>
               <div className="mobile-property-picker">{propertyPicker}</div>
@@ -1222,8 +1272,16 @@ export default function Dashboard() {
                 {successNotice}
               </p>
             )}
-            {view === "training" && isAdmin ? (
-              <MLTrainingView />
+            {view === "training" ? (
+              <MLTrainingView canTrain={isAdmin} />
+            ) : view === "telemetry" ? (
+              <TelemetryView
+                key={selectedId}
+                devices={selectedDevices}
+                propertyId={selectedId}
+                timezone={selected?.timezone ?? "UTC"}
+                load={api}
+              />
             ) : loading && properties.length === 0 ? (
               <LoadingCard />
             ) : error && properties.length === 0 ? (
@@ -1379,6 +1437,17 @@ export default function Dashboard() {
                       {deviceNotice?.createdDeviceId === selectedDevice.id && (
                         <p className="meter-created-label" role="status">
                           <span aria-hidden="true">✓</span> {deviceNotice.message}
+                      {isAdmin && selectedId && (
+                        <details>
+                          <summary className="meter-labels-toggle">Revisão de rótulos</summary>
+                          <MeterLabels
+                            key={selectedDevice.id}
+                            propertyId={selectedId}
+                            deviceId={selectedDevice.id}
+                            load={api}
+                          />
+                        </details>
+                      )}
                         </p>
                       )}
                       {provisioned?.deviceId === selectedDevice.id && (
@@ -1435,7 +1504,7 @@ export default function Dashboard() {
                                 Intervalo de leitura (segundos)
                                 <input
                                   type="number"
-                                  min={30}
+                                  min={5}
                                   max={86400}
                                   step={1}
                                   value={editingDeviceInterval}
@@ -1447,6 +1516,17 @@ export default function Dashboard() {
                             {deviceNotice?.kind === "error" && (
                               <p role="alert" className="form-notice form-notice--error">
                                 {deviceNotice.message}
+                            <label className="field">
+                              Descrição (opcional)
+                              <input
+                                value={editingDeviceDescription}
+                                maxLength={240}
+                                onChange={(event) =>
+                                  setEditingDeviceDescription(event.target.value)
+                                }
+                                placeholder="Ex.: Entrada de água da casa"
+                              />
+                            </label>
                               </p>
                             )}
                             <div className="settings-actions">
@@ -1490,11 +1570,22 @@ export default function Dashboard() {
                             ? "—"
                             : `${Number(meterCurrentFlow).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} L/min`}
                         </strong>
-                        <span>Vazão registrada na atualização mais recente</span>
+                        <span>
+                          {deviceReadingsError
+                            ? "Não foi possível atualizar a conexão"
+                            : deviceReadingsLoading
+                              ? "Consultando conexão…"
+                              : meterLatestReading
+                                ? Date.now() - Date.parse(meterLatestReading.received_at) <=
+                                  selectedDevice.expected_interval_seconds * 2_000
+                                  ? "Recebendo leituras"
+                                  : "Sem comunicação recente"
+                                : "Ainda sem leituras"}
+                        </span>
                       </section>
                       <section className="surface chart-card meter-history-card">
                         <div>
-                          <h2>Vazão nas leituras recentes</h2>
+                          <h2>Vazão recente</h2>
                           <p className="section-subtitle">Litros por minuto</p>
                         </div>
                         {deviceReadingsError ? (
@@ -1580,6 +1671,24 @@ export default function Dashboard() {
                       <dialog
                         ref={retireDialog}
                         className="property-archive-dialog"
+                      <ResidentMeterAnalysis
+                        key={selectedDevice.id}
+                        deviceId={selectedDevice.id}
+                        timezone={selected?.timezone ?? "America/Sao_Paulo"}
+                        load={api}
+                        openAlert={async (alertId) => {
+                          const result = await api<{ items: Alert[] }>(
+                            `properties/${selectedDevice.property_id}/alerts?alert_id=${encodeURIComponent(alertId)}&limit=1`,
+                          );
+                          const alert = result.items[0];
+                          if (!alert) throw new Error("Aviso indisponível.");
+                          setAlerts((current) => [
+                            alert,
+                            ...current.filter((item) => item.id !== alert.id),
+                          ]);
+                          openAlert(alert);
+                        }}
+                      />
                         aria-labelledby="meter-retire-title"
                         aria-describedby="meter-retire-description"
                         onCancel={(event) => {
@@ -1787,7 +1896,18 @@ export default function Dashboard() {
                                 const reading = health?.latest_reading;
                                 return (
                                   <li key={device.id} className="meter-row">
-                                    <strong className="meter-list-name">{device.name}</strong>
+                                    <div className="meter-card-identity">
+                                      <strong className="meter-list-name">{device.name}</strong>
+                                      {device.description && <p>{device.description}</p>}
+                                    </div>
+                                const readingValue =
+                                  reading?.quality === "valid" &&
+                                  reading.flow_rate_liters_minute !== null
+                                    ? `${Number(reading.flow_rate_liters_minute).toLocaleString("pt-BR", { maximumFractionDigits: 3 })} L/min`
+                                    : reading?.cumulative_volume_liters !== null &&
+                                        reading?.cumulative_volume_liters !== undefined
+                                      ? `${Number(reading.cumulative_volume_liters).toLocaleString("pt-BR", { maximumFractionDigits: 3 })} L acumulados`
+                                      : null;
                                     <small
                                       className="meter-list-reading"
                                       title={
@@ -1799,7 +1919,7 @@ export default function Dashboard() {
                                       }
                                     >
                                       {reading
-                                        ? `Última leitura ${formatRelativeUpdate(reading.recorded_at).replace("Atualizado", "").trim()}`
+                                        ? `Última leitura${readingValue ? ` · ${readingValue}` : ""} · ${formatRelativeUpdate(reading.recorded_at).replace("Atualizado", "").trim()}`
                                         : lastSeen
                                           ? `Último contato ${formatRelativeUpdate(lastSeen).replace("Atualizado", "").trim()}`
                                           : "Aguardando a primeira leitura"}
@@ -1881,6 +2001,15 @@ export default function Dashboard() {
                             </div>
                             {deviceNotice?.kind === "error" && (
                               <p role="alert" className="form-notice form-notice--error">
+                              <label className="field">
+                                Descrição (opcional)
+                                <input
+                                  value={newDeviceDescription}
+                                  maxLength={240}
+                                  onChange={(event) => setNewDeviceDescription(event.target.value)}
+                                  placeholder="Ex.: Entrada de água da casa"
+                                />
+                              </label>
                                 {deviceNotice.message}
                               </p>
                             )}
@@ -2784,121 +2913,6 @@ function PropertySettingsForm({
         </dialog>
       )}
     </section>
-  );
-}
-
-function AlertEvidence({ alert }: { alert: Alert }) {
-  const evidence = alert.evidence;
-  const rows: Array<[string, string]> = [];
-  const addNumber = (key: string, label: string, unit: string) => {
-    const value = evidence[key];
-    if (typeof value === "number" && Number.isFinite(value)) {
-      rows.push([label, `${value.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} ${unit}`]);
-    }
-  };
-  const addText = (key: string, label: string) => {
-    const value = evidence[key];
-    if (typeof value === "string" && value.trim()) rows.push([label, value]);
-  };
-  const formatDate = (value: string) =>
-    new Intl.DateTimeFormat("pt-BR", {
-      dateStyle: "short",
-      timeStyle: "short",
-    }).format(new Date(value));
-
-  const start = formatDate(alert.window_start);
-  const end = formatDate(alert.window_end);
-  rows.push(start === end ? ["Horário do aviso", end] : ["Período observado", `${start} – ${end}`]);
-  rows.push(["Prioridade", alertSeverityLabel(alert.severity)]);
-  if (alert.detector_type === "ml_anomaly") {
-    if (typeof evidence.anomaly_probability === "number") {
-      rows.push([
-        "Probabilidade na leitura mais recente",
-        `${(evidence.anomaly_probability * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`,
-      ]);
-    }
-    if (typeof evidence.maximum_anomaly_probability === "number") {
-      rows.push([
-        "Maior probabilidade registrada",
-        `${(evidence.maximum_anomaly_probability * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`,
-      ]);
-    }
-    if (typeof evidence.classification_threshold === "number") {
-      rows.push([
-        "Limite usado pelo modelo",
-        `${(evidence.classification_threshold * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`,
-      ]);
-    }
-    addNumber("occurrence_count", "Previsões positivas agrupadas", "leituras");
-    addText("model_version", "Versão do modelo");
-    const latestSignals = evidence.latest_signals;
-    if (typeof latestSignals === "object" && latestSignals !== null) {
-      const signals = latestSignals as Record<string, unknown>;
-      for (const [key, label, unit] of [
-        ["flow_rate_liters_minute", "Vazão observada", "L/min"],
-        ["volume_delta_liters", "Variação do volume", "L"],
-        ["elapsed_minutes", "Intervalo entre leituras", "min"],
-      ]) {
-        const value = signals[key];
-        if (typeof value === "number" && Number.isFinite(value)) {
-          rows.push([
-            label,
-            `${value.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} ${unit}`,
-          ]);
-        }
-      }
-      const derivation = signals.input_derivation;
-      if (typeof derivation === "string") {
-        rows.push([
-          "Origem da vazão",
-          derivation === "cumulative_volume_5min_window"
-            ? "Vazão média na janela de cinco minutos"
-            : derivation === "flow_rate_from_cumulative_volume"
-              ? "Calculada pela variação do volume acumulado"
-              : derivation === "cumulative_volume"
-                ? "Informada pelo medidor"
-                : "Estimativa a partir da vazão informada",
-        ]);
-      }
-    }
-  } else if (alert.detector_type === "continuous_flow") {
-    addNumber("minimum_flow_rate_liters_minute", "Limite de fluxo", "L/min");
-    addNumber("observed_flow_rate_liters_minute", "Fluxo observado", "L/min");
-    addNumber("required_duration_minutes", "Duração necessária", "min");
-    addNumber("observed_duration_minutes", "Duração observada", "min");
-    addNumber("measured_interval_count", "Intervalos medidos", "amostras");
-    addNumber("max_sample_gap_seconds", "Maior intervalo entre amostras", "s");
-  } else if (alert.detector_type === "night_consumption") {
-    addNumber("baseline_daytime_median_liters_minute", "Mediana diurna", "L/min");
-    addNumber("minimum_increase_liters_minute", "Aumento mínimo", "L/min");
-    addNumber("threshold_liters_minute", "Limite noturno calculado", "L/min");
-    addNumber("observed_flow_rate_liters_minute", "Fluxo observado", "L/min");
-    addNumber("required_duration_minutes", "Duração necessária", "min");
-    addNumber("observed_duration_minutes", "Duração observada", "min");
-    addText("night_window", "Janela noturna");
-    addText("timezone", "Fuso da propriedade");
-  } else if (alert.detector_type === "device_offline") {
-    const lastSeen = evidence.last_seen_at;
-    if (typeof lastSeen === "string" && !Number.isNaN(Date.parse(lastSeen))) {
-      rows.push(["Último contato registrado", formatDate(lastSeen)]);
-    }
-    addNumber("expected_interval_seconds", "Intervalo esperado", "s");
-    addNumber("offline_threshold_seconds", "Tempo até gerar o aviso", "s");
-    addNumber("seconds_since_last_seen", "Tempo sem comunicação", "s");
-  }
-
-  return (
-    <details className="alert-evidence">
-      <summary>Ver evidências do aviso</summary>
-      <dl>
-        {rows.map(([label, value]) => (
-          <div key={label}>
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
-      </dl>
-    </details>
   );
 }
 

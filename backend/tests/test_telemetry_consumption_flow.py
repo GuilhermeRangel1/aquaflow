@@ -1,10 +1,43 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import AsyncClient
 
 from tests.conftest import reading_payload
+
+
+@pytest.mark.asyncio
+async def test_meter_description_and_monthly_consumption(
+    api_client: tuple[AsyncClient, object, str, str],
+) -> None:
+    client, _, device_key, token = api_client
+    headers = {"Authorization": f"Bearer {token}"}
+    device = (await client.get("/api/v1/devices", headers=headers)).json()["items"][0]
+    path = f"/api/v1/devices/{device['id']}"
+    updated = await client.patch(path, headers=headers, json={"description": "  Entrada da casa  "})
+    assert updated.status_code == 200
+    assert updated.json()["description"] == "Entrada da casa"
+    assert (await client.get(path, headers=headers)).json()["description"] == "Entrada da casa"
+
+    monthly = f"{path}/monthly-consumption"
+    assert (await client.get(monthly)).status_code == 401
+    assert (await client.get(monthly, headers=headers)).json() == {"total_volume_liters": None}
+    now = datetime.now(ZoneInfo("America/Sao_Paulo"))
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if now - start < timedelta(minutes=10):
+        pytest.skip("Requires two completed sampling intervals in the calendar month")
+    for at, volume in ((now - timedelta(minutes=5), 100), (now, 107)):
+        saved = await client.post(
+            "/api/v1/ingestion/telemetry",
+            headers={"X-Device-Key": device_key},
+            json=reading_payload(str(uuid4()), at.isoformat(), cumulative_volume_liters=volume),
+        )
+        assert saved.status_code == 202
+    assert (await client.get(monthly, headers=headers)).json() == {"total_volume_liters": 7.0}
+    cleared = await client.patch(path, headers=headers, json={"description": None})
+    assert cleared.json()["description"] is None
 
 
 @pytest.mark.asyncio
@@ -48,6 +81,41 @@ async def test_cumulative_readings_are_idempotent_and_visible_as_consumption(
     assert body["summary"]["total_volume_liters"] == pytest.approx(10.0)
     assert len(body["items"]) == 1
     assert body["items"][0]["volume_liters"] == pytest.approx(10.0)
+
+
+@pytest.mark.asyncio
+async def test_latest_telemetry_is_the_same_in_meter_health_and_reading_history(
+    api_client: tuple[AsyncClient, object, str, str],
+) -> None:
+    client, _property_id, device_key, token = api_client
+    measured_at = datetime.now(UTC) - timedelta(minutes=1)
+    payload = reading_payload(
+        str(uuid4()),
+        measured_at.isoformat(),
+        cumulative_volume_liters=21.5,
+    )
+    payload["flow_rate_liters_minute"] = 0.42
+    ingested = await client.post(
+        "/api/v1/ingestion/telemetry",
+        json=payload,
+        headers={"X-Device-Key": device_key},
+    )
+    device_list = await client.get("/api/v1/devices", headers={"Authorization": f"Bearer {token}"})
+    device_id = device_list.json()["items"][0]["id"]
+    health = await client.get(
+        f"/api/v1/devices/{device_id}/health",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    readings = await client.get(
+        f"/api/v1/devices/{device_id}/readings?limit=1",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert ingested.status_code == 202
+    assert health.status_code == readings.status_code == 200
+    assert health.json()["latest_reading"]["id"] == readings.json()["items"][0]["id"]
+    assert health.json()["latest_reading"]["event_id"] == payload["event_id"]
+    assert health.json()["latest_reading"]["flow_rate_liters_minute"] == "0.420"
 
 
 @pytest.mark.asyncio

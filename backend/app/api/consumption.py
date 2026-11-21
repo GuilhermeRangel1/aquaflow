@@ -4,6 +4,7 @@ from itertools import pairwise
 from math import ceil
 from typing import Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -12,11 +13,67 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.cursors import decode_timestamp, encode_timestamp
 from app.api.deps import current_user
+from app.api.resources import _owned_device
 from app.db.models import Alert, AnomalyEvent, Device, Property, TelemetryReading, User
 from app.db.session import get_session
 from app.domain.consumption import Sample, aggregate_samples, interval_volume
 
 router = APIRouter(prefix="/api/v1/properties", tags=["consumption"])
+device_router = APIRouter(prefix="/api/v1/devices", tags=["consumption"])
+
+
+class MonthlyMeterConsumption(BaseModel):
+    total_volume_liters: float | None
+
+
+@device_router.get("/{device_id}/monthly-consumption", response_model=MonthlyMeterConsumption)
+async def get_monthly_meter_consumption(
+    device_id: UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+) -> MonthlyMeterConsumption:
+    device = await _owned_device(session, user, device_id)
+    timezone_name = await session.scalar(
+        select(Property.timezone).where(Property.id == device.property_id)
+    )
+    timezone_name = timezone_name or "UTC"
+    end = datetime.now(UTC)
+    start = (
+        end.astimezone(ZoneInfo(timezone_name))
+        .replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        .astimezone(UTC)
+    )
+    rows = await session.execute(
+        select(
+            TelemetryReading.recorded_at,
+            TelemetryReading.cumulative_volume_liters,
+            TelemetryReading.flow_rate_liters_minute,
+        )
+        .where(
+            TelemetryReading.device_id == device_id,
+            TelemetryReading.quality == "valid",
+            TelemetryReading.recorded_at
+            >= start - timedelta(seconds=device.expected_interval_seconds * 2),
+            TelemetryReading.recorded_at <= end,
+        )
+        .order_by(TelemetryReading.recorded_at, TelemetryReading.id)
+    )
+    samples = [
+        Sample(
+            recorded_at=at if at.tzinfo else at.replace(tzinfo=UTC),
+            cumulative_volume_liters=volume,
+            flow_rate_liters_minute=flow,
+        )
+        for at, volume, flow in rows
+    ]
+    buckets = aggregate_samples(
+        samples, device.expected_interval_seconds, timezone_name, "month", start=start, end=end
+    )
+    return MonthlyMeterConsumption(
+        total_volume_liters=float(sum(bucket.volume_liters for bucket in buckets))
+        if buckets
+        else None
+    )
 
 
 class ConsumptionItem(BaseModel):
