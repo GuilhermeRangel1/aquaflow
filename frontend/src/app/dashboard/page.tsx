@@ -95,6 +95,7 @@ type Consumption = {
   };
 };
 type Alert = {
+  device_name?: string | null;
   id: string;
   device_id: string;
   detector_type: string;
@@ -298,8 +299,8 @@ export default function Dashboard() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [deviceHealth, setDeviceHealth] = useState<Record<string, DeviceHealth>>({});
   const [deviceReadings, setDeviceReadings] = useState<DeviceReading[]>([]);
-  const [deviceReadingsLoading, setDeviceReadingsLoading] = useState(false);
   const [readingsDeviceId, setReadingsDeviceId] = useState<string | null>(null);
+  const [deviceReadingsLoading, setDeviceReadingsLoading] = useState(false);
   const [deviceReadingsError, setDeviceReadingsError] = useState("");
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [alertsLoading, setAlertsLoading] = useState(false);
@@ -330,8 +331,8 @@ export default function Dashboard() {
   const [creatingProperty, setCreatingProperty] = useState(false);
   const [propertyCreationError, setPropertyCreationError] = useState("");
   const [newDevice, setNewDevice] = useState("");
-  const [newSerial, setNewSerial] = useState("");
   const [newDeviceDescription, setNewDeviceDescription] = useState("");
+  const [newSerial, setNewSerial] = useState("");
   const [provisioned, setProvisioned] = useState<{ deviceId: string; key: string } | null>(null);
   const [deviceNotice, setDeviceNotice] = useState<{
     kind: "success" | "error";
@@ -342,8 +343,8 @@ export default function Dashboard() {
   const [provisioning, setProvisioning] = useState(false);
   const [editingDeviceId, setEditingDeviceId] = useState("");
   const [editingDeviceName, setEditingDeviceName] = useState("");
-  const [editingDeviceInterval, setEditingDeviceInterval] = useState("300");
   const [editingDeviceDescription, setEditingDeviceDescription] = useState("");
+  const [editingDeviceInterval, setEditingDeviceInterval] = useState("300");
   const [deviceActionId, setDeviceActionId] = useState("");
   const retireDialog = useRef<HTMLDialogElement>(null);
   const [alertActionId, setAlertActionId] = useState("");
@@ -357,7 +358,9 @@ export default function Dashboard() {
   const selected = properties.find((item) => item.id === selectedId);
   const selectedAlert = alerts.find((alert) => alert.id === selectedAlertId);
   const selectedAlertDevice = selectedAlert
-    ? (devices.find((device) => device.id === selectedAlert.device_id)?.name ?? "Medidor")
+    ? (selectedAlert.device_name ??
+      devices.find((device) => device.id === selectedAlert.device_id)?.name ??
+      "Medidor não identificado")
     : "Medidor";
   const selectedDevices = useMemo(
     () => devices.filter((item) => item.property_id === selectedId),
@@ -448,9 +451,6 @@ export default function Dashboard() {
         end: end.toISOString(),
         granularity: periodDays === 1 ? "hour" : "day",
       });
-    return () => {
-      cancelled = true;
-    };
       api<Consumption>(`properties/${selectedId}/consumption?${params}`)
         .then((result) => {
           if (!cancelled) {
@@ -470,9 +470,12 @@ export default function Dashboard() {
         });
     };
     refresh();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [selectedId, loading, periodDays, view]);
   useEffect(() => {
-      window.clearTimeout(timer);
     if (!selectedId || loading || view !== "overview") return;
     let cancelled = false;
     const refreshDashboard = () =>
@@ -565,16 +568,16 @@ export default function Dashboard() {
     void refreshHealth();
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [view, selectedDevices]);
   useEffect(() => {
-      window.clearTimeout(timer);
     if (view !== "meters" || !selectedDeviceId) return;
     let cancelled = false;
+    let timer: number | undefined;
     setDeviceReadings([]);
     setDeviceReadingsError("");
     setDeviceReadingsLoading(true);
-    let timer: number | undefined;
     const refreshReadings = async () => {
       try {
         const result = await api<DeviceReadings>(`devices/${selectedDeviceId}/readings?limit=100`);
@@ -599,10 +602,10 @@ export default function Dashboard() {
     void refreshReadings();
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [view, selectedDeviceId]);
   useEffect(() => {
-      window.clearTimeout(timer);
     if (!selectedId || loading) return;
     let cancelled = false;
     setAlerts([]);
@@ -689,17 +692,17 @@ export default function Dashboard() {
         body: JSON.stringify({
           property_id: selectedId,
           name: newDevice.trim(),
+          description: newDeviceDescription.trim() || null,
           serial_number: newSerial.trim(),
         }),
       });
-          description: newDeviceDescription.trim() || null,
       setProvisioned({ deviceId: result.id, key: result.device_key });
       setKeyCopyStatus("idle");
       setNewDevice("");
+      setNewDeviceDescription("");
       setNewSerial("");
       await load(selectedId);
       setShowDeviceForm(false);
-      setNewDeviceDescription("");
       setDeviceNotice({
         kind: "success",
         message: "Medidor adicionado",
@@ -719,10 +722,10 @@ export default function Dashboard() {
   function beginDeviceEdit(device: Device) {
     setEditingDeviceId(device.id);
     setEditingDeviceName(device.name);
+    setEditingDeviceDescription(device.description ?? "");
     setEditingDeviceInterval(String(device.expected_interval_seconds));
     setDeviceNotice(null);
   }
-    setEditingDeviceDescription(device.description ?? "");
 
   async function saveDevice(event: FormEvent, device: Device) {
     event.preventDefault();
@@ -746,10 +749,10 @@ export default function Dashboard() {
         method: "PATCH",
         body: JSON.stringify({
           name: editingDeviceName.trim(),
+          description: editingDeviceDescription.trim() || null,
           expected_interval_seconds: interval,
         }),
       });
-          description: editingDeviceDescription.trim() || null,
       setDevices((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       setEditingDeviceId("");
       setDeviceNotice({ kind: "success", message: `${updated.name} foi atualizado.` });
@@ -1434,9 +1437,6 @@ export default function Dashboard() {
                       >
                         <span aria-hidden="true">←</span> Seus medidores
                       </button>
-                      {deviceNotice?.createdDeviceId === selectedDevice.id && (
-                        <p className="meter-created-label" role="status">
-                          <span aria-hidden="true">✓</span> {deviceNotice.message}
                       {isAdmin && selectedId && (
                         <details>
                           <summary className="meter-labels-toggle">Revisão de rótulos</summary>
@@ -1448,6 +1448,9 @@ export default function Dashboard() {
                           />
                         </details>
                       )}
+                      {deviceNotice?.createdDeviceId === selectedDevice.id && (
+                        <p className="meter-created-label" role="status">
+                          <span aria-hidden="true">✓</span> {deviceNotice.message}
                         </p>
                       )}
                       {provisioned?.deviceId === selectedDevice.id && (
@@ -1513,9 +1516,6 @@ export default function Dashboard() {
                                 />
                               </label>
                             </div>
-                            {deviceNotice?.kind === "error" && (
-                              <p role="alert" className="form-notice form-notice--error">
-                                {deviceNotice.message}
                             <label className="field">
                               Descrição (opcional)
                               <input
@@ -1527,6 +1527,9 @@ export default function Dashboard() {
                                 placeholder="Ex.: Entrada de água da casa"
                               />
                             </label>
+                            {deviceNotice?.kind === "error" && (
+                              <p role="alert" className="form-notice form-notice--error">
+                                {deviceNotice.message}
                               </p>
                             )}
                             <div className="settings-actions">
@@ -1668,9 +1671,6 @@ export default function Dashboard() {
                           </p>
                         )}
                       </section>
-                      <dialog
-                        ref={retireDialog}
-                        className="property-archive-dialog"
                       <ResidentMeterAnalysis
                         key={selectedDevice.id}
                         deviceId={selectedDevice.id}
@@ -1689,6 +1689,9 @@ export default function Dashboard() {
                           openAlert(alert);
                         }}
                       />
+                      <dialog
+                        ref={retireDialog}
+                        className="property-archive-dialog"
                         aria-labelledby="meter-retire-title"
                         aria-describedby="meter-retire-description"
                         onCancel={(event) => {
@@ -1894,12 +1897,6 @@ export default function Dashboard() {
                                   health?.connectivity === "never_connected" ||
                                   (!health && lastSeen === null);
                                 const reading = health?.latest_reading;
-                                return (
-                                  <li key={device.id} className="meter-row">
-                                    <div className="meter-card-identity">
-                                      <strong className="meter-list-name">{device.name}</strong>
-                                      {device.description && <p>{device.description}</p>}
-                                    </div>
                                 const readingValue =
                                   reading?.quality === "valid" &&
                                   reading.flow_rate_liters_minute !== null
@@ -1908,6 +1905,12 @@ export default function Dashboard() {
                                         reading?.cumulative_volume_liters !== undefined
                                       ? `${Number(reading.cumulative_volume_liters).toLocaleString("pt-BR", { maximumFractionDigits: 3 })} L acumulados`
                                       : null;
+                                return (
+                                  <li key={device.id} className="meter-row">
+                                    <div className="meter-card-identity">
+                                      <strong className="meter-list-name">{device.name}</strong>
+                                      {device.description && <p>{device.description}</p>}
+                                    </div>
                                     <small
                                       className="meter-list-reading"
                                       title={
@@ -1998,9 +2001,6 @@ export default function Dashboard() {
                                   required
                                 />
                               </label>
-                            </div>
-                            {deviceNotice?.kind === "error" && (
-                              <p role="alert" className="form-notice form-notice--error">
                               <label className="field">
                                 Descrição (opcional)
                                 <input
@@ -2010,6 +2010,9 @@ export default function Dashboard() {
                                   placeholder="Ex.: Entrada de água da casa"
                                 />
                               </label>
+                            </div>
+                            {deviceNotice?.kind === "error" && (
+                              <p role="alert" className="form-notice form-notice--error">
                                 {deviceNotice.message}
                               </p>
                             )}
@@ -2044,6 +2047,7 @@ export default function Dashboard() {
                   (selectedAlert ? (
                     <AlertDetail
                       alert={selectedAlert}
+                      timezone={selected?.timezone}
                       notice={alertNotice}
                       busy={alertActionId === selectedAlert.id}
                       onBack={closeAlert}
@@ -2099,8 +2103,9 @@ export default function Dashboard() {
                           <ul className="alert-list" id="alerts-list">
                             {visibleAlerts.slice(0, alertVisibleLimit).map((alert) => {
                               const deviceName =
+                                alert.device_name ??
                                 devices.find((device) => device.id === alert.device_id)?.name ??
-                                "Medidor";
+                                "Medidor não identificado";
                               const statusLabel =
                                 alert.status === "acknowledged"
                                   ? "Reconhecido"
@@ -2109,7 +2114,7 @@ export default function Dashboard() {
                                     : alert.status === "false_positive"
                                       ? "Marcado como falso positivo"
                                       : null;
-                              const description = alertListDescription(alert);
+                              const story = alertStory(alert, selected?.timezone);
                               return (
                                 <li className="alert-row" key={alert.id}>
                                   <div className="alert-main">
@@ -2123,11 +2128,10 @@ export default function Dashboard() {
                                         </span>
                                       )}
                                     </div>
-                                    <p>{description}</p>
+                                    <p>{story.description}</p>
+                                    <small className="alert-observed-period">{story.when}</small>
                                   </div>
-                                  <small className="alert-list-meta">
-                                    {deviceName} · {formatDate(alert.detected_at)}
-                                  </small>
+                                  <small className="alert-list-meta">{deviceName}</small>
                                   <button
                                     type="button"
                                     className="button button--quiet alert-view-button"
@@ -2217,24 +2221,129 @@ function alertTitle(detectorType: string): string {
   if (detectorType === "continuous_flow") return "Consumo contínuo";
   if (detectorType === "night_consumption") return "Consumo à noite";
   if (detectorType === "device_offline") return "Medidor sem comunicação";
-  if (detectorType === "ml_anomaly") return "Mudança no consumo";
+  if (detectorType === "ml_anomaly") return "Uso de água para conferir";
   return "Aviso de consumo";
 }
 
-function alertListDescription(alert: Alert): string {
-  if (alert.detector_type === "continuous_flow")
-    return "Há água passando por mais tempo que o configurado.";
-  if (alert.detector_type === "device_offline")
-    return "O medidor está há mais tempo sem enviar leituras.";
-  if (alert.detector_type === "ml_anomaly")
-    return "O consumo pode ter mudado em relação ao padrão. Confira as leituras.";
-  return alert.reason;
+function alertStory(alert: Alert, timezone?: string) {
+  const evidence = alert.evidence;
+  const signals = objectEvidence(evidence.latest_signals);
+  const number = (key: string, source = evidence) => {
+    const value = source[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  };
+  const date = (value: string) =>
+    new Date(value).toLocaleString("pt-BR", {
+      timeZone: timezone,
+      dateStyle: "short",
+      timeStyle: "short",
+    });
+  const rate = (value: number) =>
+    `${value.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} L/min`;
+  const duration = (minutes: number) =>
+    minutes < 1 ? `${Math.round(minutes * 60)} s` : formatObservedDuration(minutes);
+  const facts: [string, string][] = [];
+  const add = (label: string, value: number | null, format: (v: number) => string) => {
+    if (value !== null) facts.push([label, format(value)]);
+  };
+  const start = date(alert.window_start);
+  const end = date(alert.window_end);
+
+  if (alert.detector_type === "device_offline") {
+    const seconds = number("seconds_since_last_seen");
+    const limit = number("offline_threshold_seconds");
+    const lastSeen = evidence.last_seen_at;
+    add("Sem leituras ao abrir o aviso", seconds, (v) => duration(v / 60));
+    return {
+      description:
+        seconds === null
+          ? "O medidor deixou de mandar leituras."
+          : `O medidor já estava há ${duration(seconds / 60)} sem mandar leituras quando o aviso foi aberto.`,
+      when:
+        typeof lastSeen === "string" && Number.isFinite(Date.parse(lastSeen))
+          ? `Último sinal antes do aviso: ${date(lastSeen)}`
+          : `Aviso registrado em ${date(alert.detected_at)}`,
+      facts,
+      why:
+        limit === null
+          ? null
+          : `O aviso é aberto quando o medidor passa mais de ${duration(limit / 60)} sem mandar uma leitura.`,
+      next: [
+        "Veja se o medidor está ligado.",
+        "Confira o Wi-Fi. Depois, veja em Medidores se o horário da última leitura mudou.",
+      ],
+    };
+  }
+
+  if (alert.detector_type === "continuous_flow" || alert.detector_type === "night_consumption") {
+    const night = alert.detector_type === "night_consumption";
+    const windowMinutes = (Date.parse(alert.window_end) - Date.parse(alert.window_start)) / 60_000;
+    const minutes =
+      number("observed_duration_minutes") ?? (windowMinutes > 0 ? windowMinutes : null);
+    const minimum = number(night ? "threshold_liters_minute" : "minimum_flow_rate_liters_minute");
+    const required = number("required_duration_minutes");
+    const baseline = number("baseline_daytime_median_liters_minute");
+    add("Tempo com água passando", minutes, duration);
+    const flow = number("observed_flow_rate_liters_minute");
+    add("Água por minuto, em média", flow, rate);
+    return {
+      description:
+        flow !== null && minutes !== null
+          ? `Passaram em média ${rate(flow)} por ${duration(minutes)}${night ? " durante a noite" : " sem parar"}.`
+          : night
+            ? "O medidor registrou consumo acima do esperado no horário noturno."
+            : "O medidor registrou água passando sem parar.",
+      when: start === end ? end : `De ${start} até ${end}`,
+      facts,
+      why:
+        minimum !== null && required !== null
+          ? `Este aviso aparece quando passam ${night ? "pelo menos" : "mais de"} ${rate(minimum)} por ${duration(required)} ou mais${night ? " entre 22h e 6h" : ""}.${baseline === null ? "" : ` Para comparar, o valor típico durante o dia foi ${rate(baseline)}.`}`
+          : null,
+      next: [
+        night
+          ? "Veja se alguma máquina ou irrigação estava programada para esse horário."
+          : "Veja se havia torneira aberta, irrigação ou caixa-d’água enchendo.",
+        "Se nada estiver em uso, feche as torneiras e veja se o medidor ainda mostra água passando.",
+      ],
+    };
+  }
+
+  if (alert.detector_type === "ml_anomaly") {
+    const liters = number("volume_delta_liters", signals);
+    const minutes = number("elapsed_minutes", signals);
+    const flow = number("flow_rate_liters_minute", signals);
+    const volume = (v: number) => `${v.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} L`;
+    add("Água nesse período", liters, volume);
+    add("Por quanto tempo foi medido", minutes, duration);
+    if (!facts.length) add("Água por minuto", flow, rate);
+    return {
+      description:
+        liters !== null && minutes !== null
+          ? `Passaram cerca de ${volume(liters)} em ${duration(minutes)}. Você reconhece esse uso de água?`
+          : flow !== null
+            ? `O medidor indicou ${rate(flow)} nesse horário. Você reconhece esse uso de água?`
+            : "O medidor registrou um uso que vale conferir no horário abaixo.",
+      when: `Horário da leitura: ${end}`,
+      facts,
+      why: "A leitura ficou parecida com exemplos de uso incomum que o sistema conhece. Veja se alguém usou água nesse horário. Esse aviso, sozinho, não confirma vazamento.",
+      next: [
+        `Confira se alguém usou água no horário da leitura (${end}).`,
+        "Se ninguém usou água, feche as torneiras e veja no medidor se ainda passa água.",
+      ],
+    };
+  }
+
+  return {
+    description: alert.reason,
+    when: `Aviso registrado em ${date(alert.detected_at)}`,
+    facts,
+    why: null,
+    next: ["Confira o horário e as leituras no detalhe do medidor."],
+  };
 }
 
-function alertSeverityLabel(severity: Alert["severity"]): string {
-  if (severity === "high") return "Prioridade alta";
-  if (severity === "medium") return "Atenção";
-  return "Para verificar";
+function objectEvidence(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
 function formatObservedDuration(minutes: number): string {
@@ -2918,6 +3027,7 @@ function PropertySettingsForm({
 
 function AlertDetail({
   alert,
+  timezone,
   notice,
   busy,
   onBack,
@@ -2926,6 +3036,7 @@ function AlertDetail({
   onFalsePositive,
 }: {
   alert: Alert;
+  timezone?: string;
   notice: string;
   busy: boolean;
   onBack: () => void;
@@ -2933,30 +3044,7 @@ function AlertDetail({
   onResolve: () => void;
   onFalsePositive: () => void;
 }) {
-  const evidence = alert.evidence;
-  const isOffline = alert.detector_type === "device_offline";
-  const offlineSeconds = evidence.seconds_since_last_seen;
-  const offlineDuration =
-    typeof offlineSeconds === "number" && Number.isFinite(offlineSeconds) && offlineSeconds >= 0
-      ? offlineSeconds >= 60
-        ? formatObservedDuration(Math.round(offlineSeconds / 60))
-        : `${Math.round(offlineSeconds)} s`
-      : null;
-  const latestSignals = evidence.latest_signals;
-  const signalFlow =
-    typeof latestSignals === "object" && latestSignals !== null
-      ? (latestSignals as Record<string, unknown>).flow_rate_liters_minute
-      : null;
-  const flowRate =
-    typeof evidence.observed_flow_rate_liters_minute === "number"
-      ? evidence.observed_flow_rate_liters_minute
-      : typeof signalFlow === "number"
-        ? signalFlow
-        : null;
-  const duration =
-    typeof evidence.observed_duration_minutes === "number"
-      ? evidence.observed_duration_minutes
-      : null;
+  const story = alertStory(alert, timezone);
   const statusText =
     alert.status === "open"
       ? "Precisa de atenção"
@@ -2965,10 +3053,6 @@ function AlertDetail({
         : alert.status === "resolved"
           ? "Aviso resolvido"
           : "Aviso marcado como incorreto";
-  const nextStep = isOffline
-    ? "Confira se o medidor está ligado e conectado à rede."
-    : "Confira se havia alguma torneira aberta ou algum equipamento em uso nesse horário.";
-
   return (
     <div className="alert-detail-page">
       <button type="button" className="button button--quiet alert-back-button" onClick={onBack}>
@@ -2980,46 +3064,48 @@ function AlertDetail({
         </p>
       )}
       <section className="surface alert-detail-card" aria-labelledby="alert-detail-title">
-        <span className={`alert-detail-status alert-detail-status--${alert.status}`}>
-          {statusText}
-        </span>
-        <h2 id="alert-detail-title">O que aconteceu</h2>
-        <p className="alert-detail-description">
-          {isOffline
-            ? "Quando este aviso foi criado, o medidor tinha parado de enviar leituras."
-            : alertListDescription(alert)}
-        </p>
-        {isOffline && offlineDuration && (
-          <div className="alert-detail-metrics">
-            <div>
-              <strong>{offlineDuration}</strong>
-              <span>Tempo aproximado sem comunicação ao gerar o aviso</span>
-            </div>
-          </div>
-        )}
-        {!isOffline && (flowRate !== null || duration !== null) && (
-          <div className="alert-detail-metrics">
-            {flowRate !== null && (
-              <div>
-                <strong>
-                  {flowRate.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} L/min
-                </strong>
-                <span>Vazão registrada</span>
-              </div>
-            )}
-            {duration !== null && (
-              <div>
-                <strong>{formatObservedDuration(duration)}</strong>
-                <span>Duração observada</span>
-              </div>
-            )}
-          </div>
-        )}
-        <div className="alert-detail-next-step">
-          <h3>Vale verificar</h3>
-          <p>{nextStep}</p>
+        <div className="alert-detail-heading">
+          <h2 id="alert-detail-title">O que aconteceu</h2>
+          <span
+            className={
+              alert.status === "open"
+                ? "severity-badge severity-badge--medium"
+                : `alert-status alert-status--${alert.status}`
+            }
+          >
+            {statusText}
+          </span>
         </div>
-        <AlertEvidence key={alert.id} alert={alert} />
+        <div className="alert-detail-layout">
+          <div>
+            <p className="alert-detail-description">{story.description}</p>
+            <p className="alert-observed-period">{story.when}</p>
+            {story.facts.length > 0 && (
+              <dl className="alert-plain-facts">
+                {story.facts.map(([label, value]) => (
+                  <div key={label}>
+                    <dt>{label}</dt>
+                    <dd>{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </div>
+          <div className="alert-next-actions">
+            <h3>O que fazer agora</h3>
+            <ol>
+              {story.next.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+          </div>
+        </div>
+        {story.why && (
+          <details className="alert-evidence">
+            <summary>Como o aviso foi gerado</summary>
+            <p>{story.why}</p>
+          </details>
+        )}
       </section>
       {(alert.status === "open" || alert.status === "acknowledged") && (
         <div className="alert-detail-actions">
