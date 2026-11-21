@@ -17,19 +17,23 @@ async def classify_consumption(
     session: AsyncSession, property_id: UUID, start: datetime, end: datetime
 ) -> dict[str, Decimal]:
     devices = list(
-        (await session.scalars(select(Device).where(Device.property_id == property_id))).all()
+        (
+            await session.scalars(
+                select(Device).where(Device.property_id == property_id, Device.is_active.is_(True))
+            )
+        ).all()
     )
     totals = {"normal": Decimal(0), "flagged": Decimal(0), "unclassified": Decimal(0)}
     rules = (
         await session.execute(
             select(AnomalyEvent.device_id, AnomalyEvent.window_start, AnomalyEvent.window_end)
-            .outerjoin(Alert, Alert.anomaly_id == AnomalyEvent.id)
+            .join(Alert, Alert.anomaly_id == AnomalyEvent.id)
             .where(
                 AnomalyEvent.property_id == property_id,
                 AnomalyEvent.detector_type.in_(("continuous_flow", "night_consumption")),
                 AnomalyEvent.window_end > start,
                 AnomalyEvent.window_start < end,
-                (Alert.id.is_(None) | (Alert.status != "false_positive")),
+                Alert.status != "false_positive",
             )
         )
     ).all()
@@ -45,7 +49,9 @@ async def classify_consumption(
             .where(
                 AnomalyEvent.property_id == property_id,
                 AnomalyEvent.detector_type == "ml_anomaly",
-                AnomalyEvent.window_end >= start,
+                AnomalyEvent.evidence["episode_policy"].as_string() == "consecutive-v1",
+                AnomalyEvent.window_end > start,
+                AnomalyEvent.window_start < end,
             )
             .order_by(Alert.created_at.desc(), Alert.id.desc())
         )
@@ -101,16 +107,18 @@ async def classify_consumption(
         )
         results = await session.stream(select(ranked).where(ranked.c.position == 1))
         direct_predictions: dict[UUID, bool | None] = {}
-        windows: list[tuple[datetime, datetime, bool]] = []
+        windows: list[tuple[datetime, datetime, bool | None]] = []
         try:
             async for inference in results:
-                rejected = review_by_inference.get(str(inference.id)) == "false_positive"
+                prediction = inference.predicted_anomaly
+                if prediction is True and review_by_inference.get(str(inference.id)) not in (
+                    "open",
+                    "acknowledged",
+                    "resolved",
+                ):
+                    prediction = None
                 if inference.derivation != "cumulative_volume_5min_window":
-                    direct_predictions[inference.reading_id] = (
-                        None if rejected else inference.predicted_anomaly
-                    )
-                    continue
-                if rejected:
+                    direct_predictions[inference.reading_id] = prediction
                     continue
                 minutes = inference.elapsed_minutes
                 if (
@@ -123,7 +131,7 @@ async def classify_consumption(
                         (
                             window_end - timedelta(minutes=minutes),
                             window_end,
-                            inference.predicted_anomaly,
+                            prediction,
                         )
                     )
         finally:

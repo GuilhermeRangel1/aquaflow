@@ -76,19 +76,50 @@ async def _record_ml_alert(
     reason: str,
 ) -> None:
     """Create or update one actionable alert for consecutive model positives."""
+    end = reading["recorded_at"]
+    # Serialize decisions for a meter, including reprocessing by another worker.
+    active = await connection.fetchval(
+        "SELECT is_active FROM devices WHERE id = $1 FOR NO KEY UPDATE", reading["device_id"]
+    )
+    if not active:
+        return
+    already_scored = await connection.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM ml_inferences WHERE reading_id = $1 AND id <> $2)",
+        reading["id"], inference_id,
+    )
+    if already_scored:
+        return
+    previous = await connection.fetchrow(
+        """
+        SELECT i.id, i.predicted_anomaly, r.recorded_at,
+               i.feature_values->>'elapsed_minutes' AS minutes
+        FROM ml_inferences i JOIN telemetry_readings r ON r.id = i.reading_id
+        WHERE r.device_id = $1 AND i.model_version = $2
+          AND r.recorded_at < $3
+          AND r.recorded_at >= $3 - $4::double precision * interval '1 second'
+        ORDER BY r.recorded_at DESC, r.id DESC LIMIT 1
+        """,
+        reading["device_id"], model_version, end,
+        float(features["elapsed_minutes"]) * 60 + 1,
+    )
+    if previous is None or previous["predicted_anomaly"] is not True:
+        return
+    previous_end = previous["recorded_at"]
+    start = previous_end - timedelta(minutes=float(previous["minutes"]))
     existing = await connection.fetchrow(
         """
-        SELECT a.id AS alert_id, e.id AS anomaly_id, e.evidence
+        SELECT a.id AS alert_id, a.status, e.id AS anomaly_id, e.evidence, e.window_end
         FROM alerts AS a
         JOIN anomaly_events AS e ON e.id = a.anomaly_id
         WHERE e.device_id = $1
           AND e.detector_type = 'ml_anomaly'
-          AND a.status IN ('open', 'acknowledged')
-        ORDER BY e.detected_at DESC, a.id DESC
+          AND e.evidence->>'episode_policy' = 'consecutive-v1'
+          AND e.window_end >= $2 AND e.window_start < $3
+        ORDER BY (e.window_end >= $3) DESC, e.window_end DESC, a.id DESC
         LIMIT 1
         FOR UPDATE OF a, e
         """,
-        reading["device_id"],
+        reading["device_id"], previous_end, end,
     )
     now = datetime.now(UTC)
     signal_values = {
@@ -99,6 +130,8 @@ async def _record_ml_alert(
         "top_signals": explanation.get("top_signals", []),
     }
     if existing is not None:
+        if existing["window_end"] >= end or existing["status"] not in ("open", "acknowledged"):
+            return
         evidence = _json_object(existing["evidence"])
         inference_ids = list(evidence.get("ml_inference_ids", []))
         inference_key = str(inference_id)
@@ -137,7 +170,8 @@ async def _record_ml_alert(
 
     inference_key = str(inference_id)
     evidence = {
-        "ml_inference_ids": [inference_key],
+        "episode_policy": "consecutive-v1",
+        "ml_inference_ids": [str(previous["id"]), inference_key],
         "latest_ml_inference_id": inference_key,
         "reading_id": str(reading["id"]),
         "latest_reading_id": str(reading["id"]),
@@ -146,7 +180,7 @@ async def _record_ml_alert(
         "maximum_anomaly_probability": probability,
         "classification_threshold": threshold,
         "latest_signals": signal_values,
-        "occurrence_count": 1,
+        "occurrence_count": 2,
     }
     anomaly_id = uuid4()
     alert_id = uuid4()
@@ -155,14 +189,15 @@ async def _record_ml_alert(
         INSERT INTO anomaly_events (
             id, property_id, device_id, detector_type, score, severity, reason,
             window_start, window_end, evidence, detected_at
-        ) VALUES ($1, $2, $3, 'ml_anomaly', $4, 'medium', $5, $6, $6, $7::json, $8)
+        ) VALUES ($1, $2, $3, 'ml_anomaly', $4, 'medium', $5, $6, $7, $8::json, $9)
         """,
         anomaly_id,
         reading["property_id"],
         reading["device_id"],
         Decimal(str(probability)),
         reason,
-        reading["recorded_at"],
+        start,
+        end,
         json.dumps(evidence, allow_nan=False),
         now,
     )
@@ -176,73 +211,6 @@ async def _record_ml_alert(
         now,
     )
 
-
-async def _backfill_ml_alerts(
-    connection: Any,
-    *,
-    model_version: str,
-    threshold: float,
-) -> int:
-    """Make previously persisted positive predictions actionable after deployment."""
-    rows = await connection.fetch(
-        """
-        SELECT i.id AS inference_id, i.model_version, i.anomaly_probability,
-               i.feature_values, i.explanation, i.reason, i.inferred_at,
-               r.id, r.device_id, r.recorded_at, d.name AS device_name,
-               d.property_id
-        FROM ml_inferences AS i
-        JOIN telemetry_readings AS r ON r.id = i.reading_id
-        JOIN devices AS d ON d.id = r.device_id
-        WHERE i.model_version = $1
-          AND i.status = 'scored'
-          AND i.predicted_anomaly IS TRUE
-          AND NOT EXISTS (
-              SELECT 1
-              FROM alerts AS a
-              JOIN anomaly_events AS e ON e.id = a.anomaly_id
-              WHERE e.detector_type = 'ml_anomaly'
-                AND (e.evidence::jsonb -> 'ml_inference_ids')
-                    @> jsonb_build_array(i.id::text)
-          )
-        ORDER BY i.inferred_at, i.id
-        """,
-        model_version,
-    )
-    created = 0
-    for row in rows:
-        explanation = _json_object(row["explanation"])
-        reason = (
-            f"O modelo experimental identificou comportamento compatível com anomalia "
-            f"({float(row['anomaly_probability']):.1%} de probabilidade). "
-            "Verifique as evidências; este alerta não substitui as regras de monitoramento."
-        )
-        await _record_ml_alert(
-            connection,
-            inference_id=row["inference_id"],
-            reading=row,
-            model_version=row["model_version"],
-            probability=float(row["anomaly_probability"]),
-            threshold=float(explanation.get("classification_threshold", threshold)),
-            features=_json_object(row["feature_values"]),
-            explanation=explanation,
-            reason=reason,
-        )
-        created += 1
-    return created
-
-
-async def _backfill_existing_ml_alerts(
-    pool: Any,
-    *,
-    model_version: str,
-    threshold: float,
-) -> int:
-    async with pool.acquire() as connection, connection.transaction():
-        return await _backfill_ml_alerts(
-            connection,
-            model_version=model_version,
-            threshold=threshold,
-        )
 
 
 def load_model(model_path: Path, report_path: Path) -> tuple[Any, dict[str, Any], str]:
@@ -507,7 +475,7 @@ async def run_batch(
                         },
                         "reason": (
                             f"Avaliação experimental: probabilidade estimada de anomalia "
-                            f"{probability:.1%}. Uma previsão positiva gera um alerta "
+                            f"{probability:.1%}. Previsões consecutivas podem gerar um alerta "
                             "experimental separado das regras."
                         ),
                     }
@@ -590,22 +558,11 @@ async def serve() -> None:
         version,
     )
     try:
-        backfill_complete = False
         while True:
             try:
-                if not backfill_complete:
-                    count = await _backfill_existing_ml_alerts(
-                        pool,
-                        model_version=version,
-                        threshold=float(report.get("threshold", 0.5)),
-                    )
-                    backfill_complete = True
-                    if count:
-                        logger.info("Backfilled %d actionable ML alerts", count)
                 refreshed_model, refreshed_report, refreshed_version = load_model(model_path, report_path)
                 if refreshed_version != version:
                     model, report, version = refreshed_model, refreshed_report, refreshed_version
-                    backfill_complete = False
                     with _health_lock:
                         _health["model_name"] = report["selected_model"]
                         _health["model_version"] = version
@@ -649,15 +606,10 @@ async def _run_once() -> None:
     database_url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
     pool = await asyncpg.create_pool(database_url, min_size=1, max_size=2)
     try:
-        backfilled = await _backfill_existing_ml_alerts(
-            pool,
-            model_version=version,
-            threshold=float(report.get("threshold", 0.5)),
-        )
         processed = await run_batch(pool, model=model, report=report, model_version=version)
         print(
             json.dumps(
-                {"model_version": version, "processed": processed, "backfilled_alerts": backfilled},
+                {"model_version": version, "processed": processed},
                 sort_keys=True,
             )
         )

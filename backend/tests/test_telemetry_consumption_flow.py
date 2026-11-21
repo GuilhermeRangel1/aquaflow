@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
-from app.db.models import Alert, AnomalyEvent, MLInference, TelemetryReading
+from app.db.models import Alert, AnomalyEvent, Device, MLInference, TelemetryReading
 from tests.conftest import reading_payload
 
 
@@ -393,6 +393,7 @@ async def test_classification_clips_window_and_respects_false_positive(
     transport = client._transport
     assert isinstance(transport, ASGITransport)
     app = cast(FastAPI, transport.app)
+    path = f"/api/v1/properties/{property_id}/consumption-classification?days=1"
     async with app.state.session_factory.begin() as session:
         reading = (
             await session.scalars(select(TelemetryReading).order_by(TelemetryReading.recorded_at))
@@ -423,16 +424,24 @@ async def test_classification_clips_window_and_respects_false_positive(
                 inferred_at=now - timedelta(minutes=1),
             )
         )
+        device_id = reading.device_id
+    unresolved_volume = {"normal_liters": 0, "flagged_liters": 0, "unclassified_liters": 6}
+    assert (await client.get(path)).status_code == 401
+    assert (await client.get(path, headers=headers)).json() == unresolved_volume
+    async with app.state.session_factory.begin() as session:
         anomaly = AnomalyEvent(
             property_id=property_id,
-            device_id=reading.device_id,
+            device_id=device_id,
             detector_type="ml_anomaly",
             score=Decimal("0.9"),
             severity="medium",
             reason="Test anomaly",
             window_start=boundary,
             window_end=reading.recorded_at,
-            evidence={"ml_inference_ids": [str(inference_id)]},
+            evidence={
+                "episode_policy": "consecutive-v1",
+                "ml_inference_ids": [str(uuid4()), str(inference_id)],
+            },
             detected_at=now,
         )
         session.add(anomaly)
@@ -441,7 +450,6 @@ async def test_classification_clips_window_and_respects_false_positive(
         session.add(alert)
         await session.flush()
         alert_id = alert.id
-    path = f"/api/v1/properties/{property_id}/consumption-classification?days=1"
     assert (await client.get(path, headers=headers)).json() == {
         "normal_liters": 0,
         "flagged_liters": 6,
@@ -451,8 +459,13 @@ async def test_classification_clips_window_and_respects_false_positive(
         stored_alert = await session.get(Alert, alert_id)
         assert stored_alert is not None
         stored_alert.status = "false_positive"
+    assert (await client.get(path, headers=headers)).json() == unresolved_volume
+    async with app.state.session_factory.begin() as session:
+        device = await session.get(Device, device_id)
+        assert device is not None
+        device.is_active = False
     assert (await client.get(path, headers=headers)).json() == {
         "normal_liters": 0,
         "flagged_liters": 0,
-        "unclassified_liters": 6,
+        "unclassified_liters": 0,
     }

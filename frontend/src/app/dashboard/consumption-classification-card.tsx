@@ -46,13 +46,13 @@ export function ConsumptionClassificationCard({
   const rows = [
     { label: "Dentro do padrão", value: normal, color: "var(--accent-strong)" },
     { label: "Vale verificar", value: flagged, color: "var(--warm)" },
-    { label: "Sem análise", value: unclassified, color: "var(--line)" },
+    { label: "Sem conclusão", value: unclassified, color: "var(--line)" },
   ];
 
   return (
     <article className="surface chart-card water-cost-card">
       <div className="section-heading">
-        <h2>Consumo dentro e fora do padrão</h2>
+        <h2>Consumo e avisos de água</h2>
         <span>{days === 1 ? "Últimas 24 horas" : `Últimos ${days} dias`}</span>
       </div>
       {failed ? (
@@ -89,8 +89,9 @@ export function ConsumptionClassificationCard({
             </dl>
           </div>
           <small>
-            “Vale verificar” indica água que passou em períodos sinalizados. Um aviso por si só não
-            confirma vazamento.
+            “Vale verificar” indica consumo com aviso de água. O aviso não confirma vazamento.
+            <br />
+            “Sem conclusão” indica consumo registrado que ficou sem classificação.
           </small>
         </>
       )}
