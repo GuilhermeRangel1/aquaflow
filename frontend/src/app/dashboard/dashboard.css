@@ -3503,3 +3503,64 @@ details[open] > .telemetry-row .telemetry-disclosure-action > :last-child {
     grid-column: 1 / -1;
   }
 }
+
+.water-cost-card {
+  display: grid;
+  gap: 12px;
+}
+
+.water-cost-value {
+  font-size: 2rem;
+  line-height: 1.15;
+}
+
+.water-cost-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
+  gap: 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.water-cost-columns li {
+  text-align: center;
+}
+
+.water-cost-column-track {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 120px;
+  margin-block: 8px;
+}
+
+.water-cost-column-track > div {
+  width: min(55%, 60px);
+  border-radius: 6px 6px 0 0;
+  background: var(--accent-strong);
+}
+
+.water-cost-columns small {
+  display: block;
+}
+
+.water-cost-rates {
+  width: 100%;
+  text-align: left;
+  border-collapse: collapse;
+}
+
+.water-cost-rates caption {
+  padding-block: 8px;
+  text-align: left;
+  font-weight: 700;
+}
+
+.water-cost-rates :is(th, td) {
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.water-cost-card > small {
+  color: var(--muted);
+}

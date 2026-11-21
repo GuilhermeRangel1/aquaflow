@@ -22,6 +22,73 @@ router = APIRouter(prefix="/api/v1/properties", tags=["consumption"])
 device_router = APIRouter(prefix="/api/v1/devices", tags=["consumption"])
 
 
+RECIFE_WATER_BASE = Decimal("61.77")
+RECIFE_WATER_BANDS = (
+    (10_000, 20_000, Decimal("7.09")),
+    (20_000, 30_000, Decimal("8.42")),
+    (30_000, 50_000, Decimal("11.59")),
+    (50_000, 90_000, Decimal("13.74")),
+    (90_000, None, Decimal("26.40")),
+)
+
+
+class WaterCostMonth(BaseModel):
+    month: str
+    liters: float
+    water_cost_cents: int
+
+
+class WaterCostEstimate(BaseModel):
+    current_month: str
+    months: list[WaterCostMonth]
+
+
+def _recife_water_cost_cents(liters: float) -> int:
+    volume = Decimal(str(liters))
+    cost = RECIFE_WATER_BASE
+    for lower, upper, rate in RECIFE_WATER_BANDS:
+        band_end = min(volume, Decimal(upper)) if upper is not None else volume
+        cost += max(Decimal(0), band_end - lower) / 1000 * rate
+    return int((cost * 100).quantize(Decimal(1), rounding="ROUND_HALF_UP"))
+
+
+@router.get("/{property_id}/water-cost-estimate", response_model=WaterCostEstimate)
+async def get_water_cost_estimate(
+    property_id: UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+) -> WaterCostEstimate:
+    timezone_name = await session.scalar(
+        select(Property.timezone).where(
+            Property.id == property_id, Property.owner_id == user.id, Property.archived_at.is_(None)
+        )
+    )
+    if timezone_name is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "property_not_found", "message": "Property was not found"},
+        )
+    timezone = ZoneInfo(timezone_name)
+    end = datetime.now(timezone)
+    start = end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    for _ in range(3):
+        start = (start - timedelta(days=1)).replace(day=1)
+    consumption = await get_consumption(
+        property_id, start, end, granularity="month", limit=4, session=session, user=user
+    )
+    return WaterCostEstimate(
+        current_month=end.strftime("%Y-%m"),
+        months=[
+            WaterCostMonth(
+                month=item.bucket_start.astimezone(timezone).strftime("%Y-%m"),
+                liters=item.volume_liters,
+                water_cost_cents=_recife_water_cost_cents(item.volume_liters),
+            )
+            for item in consumption.items
+        ],
+    )
+
+
 class MonthlyMeterConsumption(BaseModel):
     total_volume_liters: float | None
 

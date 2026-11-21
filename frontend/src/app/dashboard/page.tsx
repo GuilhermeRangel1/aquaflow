@@ -17,6 +17,7 @@ import {
   YAxis,
 } from "recharts";
 import { Brand, ThemeToggle } from "../../components/brand";
+import { WaterCostCard } from "./water-cost-card";
 import { MLTrainingView } from "./ml-training";
 import { ResidentMeterAnalysis } from "./resident-meter-analysis";
 import { TelemetryView } from "./telemetry-view";
@@ -1866,6 +1867,9 @@ export default function Dashboard() {
                             )}
                           </div>
                         </article>
+                      )}
+                      {view === "overview" && selectedId && (
+                        <WaterCostCard key={selectedId} propertyId={selectedId} request={api} />
                       )}
                       {view === "meters" && (
                         <article
