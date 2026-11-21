@@ -9,7 +9,6 @@ import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from itertools import pairwise
 from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
@@ -18,6 +17,7 @@ from uuid import uuid4
 import joblib
 import numpy as np
 from feature_transforms import FEATURE_NAMES, transform_reading
+from feature_transforms import transform_window
 
 logger = logging.getLogger("aquaflow.ml.inference")
 MODEL_WINDOW_SECONDS = 300
@@ -287,7 +287,6 @@ async def _aggregate_window(
 ) -> tuple[dict[str, float] | None, str | None]:
     end = reading["recorded_at"]
     tolerance = timedelta(seconds=reading["expected_interval_seconds"] * 1.5)
-    window = timedelta(seconds=MODEL_WINDOW_SECONDS)
     boundary = reading["window_start"]
     coverage_tolerance = min(tolerance, timedelta(seconds=60))
     history = await connection.fetch(
@@ -299,35 +298,7 @@ async def _aggregate_window(
         """,
         reading["device_id"], boundary - coverage_tolerance, end,
     )
-    candidates = [
-        i for i, sample in enumerate(history)
-        if sample["recorded_at"] < boundary
-    ]
-    if not candidates or end - boundary < window - coverage_tolerance:
-        return None, "Cobertura insuficiente para a janela de cinco minutos."
-    # Reuse the previous bucket's last sample as the next volume baseline.
-    samples = [*history[candidates[-1]:], reading]
-    for before, after in pairwise(samples):
-        step = after["recorded_at"] - before["recorded_at"]
-        if not timedelta(0) < step <= tolerance:
-            return None, "Lacuna ou timestamp duplicado na janela de cinco minutos."
-    if any(
-        sample["quality"] != "valid" or sample["cumulative_volume_liters"] is None
-        for sample in samples
-    ):
-        return None, "Volume acumulado válido insuficiente na janela de cinco minutos."
-    volumes = [sample["cumulative_volume_liters"] for sample in samples]
-    if any(after < before for before, after in pairwise(volumes)):
-        return None, "O contador de volume diminuiu dentro da janela de cinco minutos."
-    elapsed = (end - samples[0]["recorded_at"]).total_seconds() / 60
-    delta = float(volumes[-1] - volumes[0])
-    return transform_reading(
-        flow_rate_liters_minute=delta / elapsed,
-        volume_delta_liters=delta,
-        elapsed_minutes=elapsed,
-        recorded_at=boundary + window,
-        timezone=reading["timezone"],
-    ), None
+    return transform_window(history, reading, MODEL_WINDOW_SECONDS)
 
 
 async def run_batch(

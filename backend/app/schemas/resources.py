@@ -105,11 +105,20 @@ class PropertyPatch(BaseModel):
         return self
 
 
-class DeviceCreate(BaseModel):
+class DeviceDescription(BaseModel):
+    description: str | None = Field(default=None, max_length=240)
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+
+class DeviceCreate(DeviceDescription):
     property_id: UUID
     serial_number: str = Field(min_length=1, max_length=80)
     name: str = Field(min_length=1, max_length=120)
-    expected_interval_seconds: int = Field(default=300, ge=30, le=86400)
+    expected_interval_seconds: int = Field(default=300, ge=5, le=86400)
 
     @field_validator("serial_number", "name")
     @classmethod
@@ -120,11 +129,11 @@ class DeviceCreate(BaseModel):
         return normalized
 
 
-class DevicePatch(BaseModel):
+class DevicePatch(DeviceDescription):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    expected_interval_seconds: int | None = Field(default=None, ge=30, le=86400)
+    expected_interval_seconds: int | None = Field(default=None, ge=5, le=86400)
     late_reading_window_days: int | None = Field(default=None, ge=1, le=30)
 
     @field_validator("name")
@@ -151,6 +160,7 @@ class DeviceOutput(BaseModel):
     id: UUID
     property_id: UUID
     serial_number: str
+    description: str | None
     name: str
     expected_interval_seconds: int
     late_reading_window_days: int | None

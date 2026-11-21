@@ -17,10 +17,10 @@ docker compose run --build --rm ml-data-generator
 O arquivo é criado em `data/ml/real/readings.csv`, fora do controle de versão. Para mudar seed, período ou intervalo, passe o comando completo ao serviço:
 
 ```powershell
-docker compose run --build --rm ml-data-generator python build_real_dataset.py --calibration --seed 7 --days 16 --interval-minutes 5
+docker compose run --build --rm ml-data-generator python build_real_dataset.py --bench-dir data/dados_reais --bench-calibration collection/bench-calibration-v1.json --seed 7 --days 16 --interval-minutes 5
 ```
 
-O gerador usa apenas a biblioteca padrão do Python e também pode ser executado com `python ml/build_real_dataset.py --calibration` na raiz do projeto. Veja [schema, cenários e limitações](docs/dados-mockados.md). O conjunto Unitywater pesquisado é apenas uma referência possível de schema: **o pipeline atual não usa esse dataset**. Veja [fontes externas consideradas](docs/avaliacao-dataset.md).
+O gerador usa apenas a biblioteca padrão do Python e também pode ser executado com `python ml/build_real_dataset.py --bench-dir data/dados_reais --bench-calibration ml/collection/bench-calibration-v1.json` na raiz do projeto. Os quatro CSVs versionados são lidos para recalcular as medianas de calibração e confirmar os mesmos parâmetros usados no experimento. Veja [schema, cenários e limitações](docs/dados-mockados.md). O conjunto Unitywater pesquisado é apenas uma referência possível de schema: **o pipeline atual não usa esse dataset**. Veja [fontes externas consideradas](docs/avaliacao-dataset.md).
 
 ## Pipeline Airflow
 
@@ -43,12 +43,12 @@ O [contrato do pipeline](docs/pipeline.md) detalha as verificações, os arquivo
 ### Simulação doméstica calibrada com a bancada
 
 ```powershell
-python ml/build_real_dataset.py --calibration --output data/ml/bench-household/raw/readings.csv
+python ml/build_real_dataset.py --bench-dir data/dados_reais --bench-calibration ml/collection/bench-calibration-v1.json --output data/ml/bench-household/raw/readings.csv
 python ml/prepare_dataset.py analyze --input data/ml/bench-household/raw/readings.csv --output-dir data/ml/bench-household/analysis --timezone America/Sao_Paulo
 python ml/prepare_dataset.py prepare --input data/ml/bench-household/raw/readings.csv --output-dir data/ml/bench-household/prepared --timezone America/Sao_Paulo
 ```
 
-O modo padrão lê as medianas das vazões positivas das quatro corridas da calibração versionada. As oito leituras suspeitas, incluindo o pico de 49,6 L/min, foram excluídas antes do cálculo. Como os horários dos demais sopros são desconhecidos, a mediana reduz a influência dos extremos sem presumir que toda vazão alta foi um sopro. Os arquivos originais permanecem separados.
+O fluxo do Compose, Airflow e retreinamento lê os quatro CSVs de `data/dados_reais/`, aplica as oito exclusões registradas e recalcula as medianas das vazões positivas. O pipeline interrompe a geração se os arquivos não corresponderem à calibração versionada. As medianas usadas continuam 4,13; 4,80; 5,33 e 1,00 L/min. Como os horários dos demais sopros são desconhecidos, a mediana reduz a influência dos extremos sem presumir que toda vazão alta foi um sopro. Os dados brutos permanecem separados das saídas geradas em `data/ml/`.
 
 A série usa 16 dias a cada cinco minutos por padrão. Os eventos de uso duram uma fração simulada de cada intervalo, e a vazão é expressa como média desse intervalo. Nos fins de semana, das 8h às 18h, a vazão de fundo esperada aumenta 20% como hipótese da simulação. Os rótulos de fluxo contínuo, consumo noturno e lacuna vêm da agenda do simulador. As condições de bancada não são rótulos de anomalia.
 
@@ -105,7 +105,7 @@ Para rodar sem Docker, instale `ml/requirements-training.txt` e execute `python 
 Depois de treinar e preparar o modelo pelo fluxo acima, gere uma série com outro período e outra seed. Em seguida, use o mesmo preparador (`prepare_dataset.py`) utilizado no treinamento e rode a inferência offline:
 
 ```powershell
-docker compose --profile tools run --rm ml-trainer python build_real_dataset.py --calibration --output data/ml/inference/raw/household_readings.csv --seed 99 --start 2026-09-17T00:00:00-03:00 --timezone America/Sao_Paulo --days 4
+docker compose --profile tools run --rm ml-trainer python build_real_dataset.py --bench-dir data/dados_reais --bench-calibration collection/bench-calibration-v1.json --output data/ml/inference/raw/household_readings.csv --seed 99 --start 2026-09-17T00:00:00-03:00 --timezone America/Sao_Paulo --days 4
 docker compose --profile tools run --rm ml-trainer python prepare_dataset.py prepare --input data/ml/inference/raw/household_readings.csv --output-dir data/ml/inference/prepared --timezone America/Sao_Paulo
 docker compose --profile tools run --rm ml-trainer python predict_model.py
 ```
@@ -133,3 +133,14 @@ docker compose -f docker-compose.yml -f docker-compose.test.yml --profile test -
 ```
 
 O worker confere o hash e a estrutura do relatório antes de carregar o artefato local. O hash identifica o arquivo e detecta divergências; não significa que o modelo tenha sido validado para consumo real. O método explicativo substitui cada sinal isoladamente pela mediana do treino e mede como a probabilidade muda; isso é uma estimativa de sensibilidade, não uma explicação causal. Os artefatos `joblib` devem ser gerados localmente pelo próprio projeto e tratados como arquivos confiáveis.
+## Treino com leituras revisadas da ESP32
+
+Configure a variável do Compose `ML_PHYSICAL_TRAINING_COLLECTION` com um
+objeto JSON contendo `device_id` (UUID do medidor físico dedicado, com
+cadência de 30 segundos), `development_start`, `evaluation_start` e
+`evaluation_end` (datas ISO 8601 com fuso). Reserve uma coleta independente
+para o período de avaliação antes de usar o botão.
+
+**Treinar novamente** exporta as revisões vigentes diretamente do banco,
+prepara as janelas e treina um candidato. A ativação exige aprovação.
+Com a variável vazia, o botão mantém o fluxo de treinamento já configurado.

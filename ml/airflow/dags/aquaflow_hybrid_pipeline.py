@@ -32,7 +32,10 @@ def hybrid_telemetry_pipeline():
             [
                 sys.executable,
                 str(ML_ROOT / "build_real_dataset.py"),
-                "--calibration",
+                "--bench-dir",
+                "/opt/airflow/data/dados_reais",
+                "--bench-calibration",
+                str(ML_ROOT / "collection" / "bench-calibration-v1.json"),
                 "--output",
                 str(raw_data),
                 "--seed",

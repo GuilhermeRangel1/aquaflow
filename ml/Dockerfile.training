@@ -13,5 +13,6 @@ COPY feature_transforms.py ./feature_transforms.py
 COPY estimators.py ./estimators.py
 COPY inference_worker.py ./inference_worker.py
 COPY retraining_service.py ./retraining_service.py
+COPY train_reviewed.py prepare_reviewed.py ./
 
 CMD ["python", "train_model.py"]

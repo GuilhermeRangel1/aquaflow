@@ -325,7 +325,7 @@ async def get_device_health(
     latest = await session.scalar(
         select(TelemetryReading)
         .where(TelemetryReading.device_id == device.id)
-        .order_by(TelemetryReading.recorded_at.desc(), TelemetryReading.received_at.desc())
+        .order_by(TelemetryReading.recorded_at.desc(), TelemetryReading.id.desc())
         .limit(1)
     )
     now = datetime.now(UTC)
@@ -435,6 +435,7 @@ async def create_device(
         property_id=property_row.id,
         serial_number=payload.serial_number,
         name=payload.name,
+        description=payload.description,
         expected_interval_seconds=payload.expected_interval_seconds,
         device_key_hash=hash_device_key(device_key),
         created_at=datetime.now(UTC),

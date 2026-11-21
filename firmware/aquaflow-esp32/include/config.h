@@ -7,7 +7,7 @@ constexpr int FLOW_SENSOR_PIN = 27;
 constexpr float FLOW_PULSES_PER_LITER = 450.0f;
 
 // Intervalo entre leituras publicadas no broker, em milissegundos.
-constexpr unsigned long SAMPLE_INTERVAL_MS = 30000;
+constexpr unsigned long SAMPLE_INTERVAL_MS = 5000;
 
 // Tamanho da fila local usada quando a publicacao MQTT falha (sem conexao ou sem PUBACK).
 constexpr size_t PENDING_QUEUE_SIZE = 20;

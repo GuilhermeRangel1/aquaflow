@@ -1,11 +1,12 @@
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.api.deps import current_user, root_user
+from app.api.deps import current_user
 from app.core.config import Settings
 from app.main import create_app
 
@@ -14,7 +15,7 @@ def _dashboard_client(artifacts_dir: Path, mlflow_uri: str | None = None) -> Asy
     app = create_app(
         settings=Settings(ml_artifacts_dir=artifacts_dir, mlflow_tracking_uri=mlflow_uri)
     )
-    app.dependency_overrides[root_user] = lambda: None
+    app.dependency_overrides[current_user] = lambda: SimpleNamespace(email="viewer@example.com")
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
@@ -31,7 +32,10 @@ async def test_authenticated_dashboard_returns_active_model_report(tmp_path: Pat
         "candidates": {"knn": {"validation": {"average_precision": 0.97}}},
     }
     artifact = tmp_path / "training-bench-v2" / "metrics.json"
-    artifact.write_text(json.dumps(report), encoding="utf-8")
+    artifact.write_text(
+        json.dumps({**report, "development": {"source": {"device_id": "private-device"}}}),
+        encoding="utf-8",
+    )
 
     async with _dashboard_client(tmp_path) as client:
         response = await client.get("/api/v1/ml/training-dashboard")
@@ -49,6 +53,7 @@ async def test_authenticated_dashboard_returns_active_model_report(tmp_path: Pat
     assert body["executions"] == []
     assert body["selected_execution_id"] is None
     assert body["report"] == report
+    assert body["active_report"] == report
 
 
 @pytest.mark.asyncio
@@ -187,8 +192,7 @@ def test_worker_status_reads_only_known_health_state(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_dashboard_rejects_regular_authenticated_account(tmp_path: Path) -> None:
-    from types import SimpleNamespace
+async def test_training_job_rejects_regular_authenticated_account(tmp_path: Path) -> None:
     from uuid import uuid4
 
     app = create_app(
@@ -198,7 +202,7 @@ async def test_dashboard_rejects_regular_authenticated_account(tmp_path: Path) -
         id=uuid4(), email="regular@example.com"
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/api/v1/ml/training-dashboard")
+        response = await client.post("/api/v1/ml/training-jobs")
     assert response.status_code == 403
     assert response.json()["code"] == "admin_required"
 

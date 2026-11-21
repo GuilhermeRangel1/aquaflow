@@ -109,7 +109,7 @@ Na conta local de Administração, selecione **Casa da Administração** para ve
 
 ### Demonstrar com o ESP32
 
-1. Em **Medidores**, cadastre um medidor para a placa e configure o intervalo esperado de **30 segundos**.
+1. Em **Medidores**, cadastre um medidor para a placa. Abra **Ver detalhes → Editar medidor** e configure o intervalo esperado de **5 segundos**.
 2. Configure o serial, a chave do medidor e o IP do broker seguindo o [guia do firmware](firmware/aquaflow-esp32/README.md).
 3. Ligue a placa, passe água pelo sensor e atualize a aba **Medidores** depois da próxima publicação. A API salva as leituras no PostgreSQL automaticamente.
 4. Depois de uma janela completa de **cinco minutos** com dados suficientes, o worker avalia o consumo com o modelo já carregado. Se houver alerta experimental, ele aparece em **Acompanhamento** ao recarregar a página.

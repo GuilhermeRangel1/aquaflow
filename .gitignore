@@ -12,4 +12,10 @@ __pycache__/
 node_modules/
 frontend/.env.local
 coverage/
-/data/
+/data/*
+!/data/dados_reais/
+/data/dados_reais/*
+!/data/dados_reais/bench_features_01_ambos_abertos.csv
+!/data/dados_reais/bench_features_02_direita_fechada.csv
+!/data/dados_reais/bench_features_03_esquerda_fechada.csv
+!/data/dados_reais/bench_features_04_esquerda_pouco_aberta.csv

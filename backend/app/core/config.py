@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     ml_artifacts_dir: Path = Path("data/ml")
     mlflow_tracking_uri: str | None = None
     ml_retraining_url: str | None = None
+    ml_physical_training_collection: str = ""
+    ml_training_exports_dir: Path = Path("/app/training-exports")
 
     @field_validator("root_user_email", mode="before")
     @classmethod

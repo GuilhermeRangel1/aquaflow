@@ -62,6 +62,7 @@ async def api_client() -> AsyncIterator[tuple[AsyncClient, UUID, str, str]]:
         settings = Settings(
             database_url=os.getenv("AQUAFLOW_TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:"),
             jwt_secret="test-only-secret-with-enough-entropy-for-tests",
+            root_user_email="owner@example.com",
         )
         app = create_app(settings=settings, session_factory=sessions)
 
@@ -74,7 +75,7 @@ async def api_client() -> AsyncIterator[tuple[AsyncClient, UUID, str, str]]:
                 User(
                     id=user_id,
                     name="Test Owner",
-                    email="owner@example.test",
+                    email="owner@example.com",
                     password_hash="test-password-hash",
                     created_at=datetime.now(UTC),
                 )

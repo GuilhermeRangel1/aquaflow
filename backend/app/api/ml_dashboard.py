@@ -2,12 +2,17 @@ import asyncio
 import json
 import urllib.error
 import urllib.request
+from datetime import datetime
+from pathlib import Path
 from typing import Any
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import AwareDatetime, BaseModel
 
-from app.api.deps import root_user
-from app.db.models import User
+from app.api.deps import current_user, root_user
+from app.db.models import Device, Property, User
+from app.export_training_data import export_reviewed
 from app.schemas.ml_dashboard import MLTrainingDashboardOutput
 from app.services.ml_dashboard import (
     TrainingDashboardUnavailable,
@@ -21,8 +26,50 @@ from app.services.ml_dashboard import (
 router = APIRouter(prefix="/api/v1/ml", tags=["experimental ML dashboard"])
 
 
-def _retrainer_request(url: str, method: str) -> dict[str, Any]:
-    request = urllib.request.Request(f"{url.rstrip('/')}/jobs", method=method)
+class PhysicalTrainingCollection(BaseModel):
+    device_id: UUID
+    development_start: AwareDatetime
+    evaluation_start: AwareDatetime
+    evaluation_end: AwareDatetime
+
+
+async def _export_physical_collection(
+    request: Request, collection: PhysicalTrainingCollection, output: Path
+) -> None:
+    development_start = collection.development_start
+    evaluation_start = collection.evaluation_start
+    evaluation_end = collection.evaluation_end
+    if (
+        not development_start
+        < evaluation_start
+        < evaluation_end
+        <= datetime.now(evaluation_end.tzinfo)
+    ):
+        raise ValueError("Configure períodos cronológicos já concluídos para treino e avaliação.")
+    factory = request.app.state.session_factory
+    async with factory() as session:
+        device = await session.get(Device, collection.device_id)
+        if device is None or device.expected_interval_seconds != 30:
+            raise ValueError("Configure um medidor físico cadastrado com intervalo de 30 segundos.")
+        property_record = await session.get(Property, device.property_id)
+        if property_record is None or property_record.archived_at is not None:
+            raise ValueError("Configure um medidor de uma propriedade ativa.")
+        timezone = property_record.timezone
+    for name, start, end in (
+        ("development", development_start, evaluation_start),
+        ("evaluation", evaluation_start, evaluation_end),
+    ):
+        count = await export_reviewed(
+            factory, collection.device_id, start, end, "physical", output / f"{name}.csv"
+        )
+        if not count:
+            raise ValueError("Treino e avaliação precisam de leituras com rótulos revisados.")
+    (output / "timezone.txt").write_text(timezone, encoding="utf-8")
+
+
+def _retrainer_request(url: str, method: str, collection_id: str | None = None) -> dict[str, Any]:
+    data = collection_id.encode("ascii") if collection_id else None
+    request = urllib.request.Request(f"{url.rstrip('/')}/jobs", data=data, method=method)
     try:
         with urllib.request.urlopen(request, timeout=3) as response:
             payload = json.loads(response.read())
@@ -36,11 +83,31 @@ def _retrainer_request(url: str, method: str) -> dict[str, Any]:
 
 @router.post("/training-jobs", status_code=202)
 async def start_training_job(request: Request, _user: User = Depends(root_user)) -> dict[str, Any]:
-    url = request.app.state.settings.ml_retraining_url
+    settings = request.app.state.settings
+    url = settings.ml_retraining_url
     if not url:
         raise HTTPException(status_code=503, detail={"code": "ml_retraining_unavailable"})
+    collection_id = None
     try:
-        return await asyncio.to_thread(_retrainer_request, url, "POST")
+        if settings.ml_physical_training_collection:
+            collection = PhysicalTrainingCollection.model_validate_json(
+                settings.ml_physical_training_collection
+            )
+            collection_id = str(uuid4())
+            await _export_physical_collection(
+                request, collection, settings.ml_training_exports_dir / collection_id
+            )
+        return await asyncio.to_thread(_retrainer_request, url, "POST", collection_id)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "ml_physical_training_collection_invalid",
+                "message": str(error)
+                if collection_id
+                else ("A configuração da coleta física para treinamento é inválida."),
+            },
+        ) from None
     except (OSError, TimeoutError, urllib.error.URLError):
         raise HTTPException(status_code=503, detail={"code": "ml_retraining_unavailable"}) from None
 
@@ -65,9 +132,10 @@ async def get_training_job(
 async def get_training_dashboard(
     request: Request,
     execution_id: str | None = Query(default=None, min_length=1, max_length=160),
-    user: User = Depends(root_user),
+    user: User = Depends(current_user),
 ) -> MLTrainingDashboardOutput:
-    del user
+    settings = request.app.state.settings
+    is_admin = str(user.email).lower() == str(settings.root_user_email).lower()
     try:
         report, model_hash = load_active_training_report(
             request.app.state.settings.ml_artifacts_dir
@@ -81,7 +149,6 @@ async def get_training_dashboard(
             },
         ) from None
     active_report = report
-    settings = request.app.state.settings
     experiment_id = active_report.get("mlflow_experiment_id")
     experiment_id = experiment_id if isinstance(experiment_id, str) else None
     executions, worker = await asyncio.gather(
@@ -113,6 +180,13 @@ async def get_training_dashboard(
                     status_code=503,
                     detail={"code": "ml_execution_report_unavailable"},
                 ) from None
+    if not is_admin:
+        # Reviewed collection manifests can identify the contributing devices and readings.
+        private_fields = {"development", "evaluation"}
+        active_report = {
+            key: value for key, value in active_report.items() if key not in private_fields
+        }
+        report = {key: value for key, value in report.items() if key not in private_fields}
     return MLTrainingDashboardOutput(
         active_model=active_model_summary(active_report, model_hash),
         active_execution_id=active_execution["id"] if active_execution else None,

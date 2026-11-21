@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -55,6 +56,7 @@ class Device(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     property_id: Mapped[UUID] = mapped_column(ForeignKey("properties.id"), index=True)
     serial_number: Mapped[str] = mapped_column(String(80), unique=True)
+    description: Mapped[str | None] = mapped_column(String(240), nullable=True)
     name: Mapped[str] = mapped_column(String(120))
     device_key_hash: Mapped[str] = mapped_column(String(64))
     expected_interval_seconds: Mapped[int] = mapped_column(Integer, default=300)
@@ -79,6 +81,25 @@ class TelemetryReading(Base):
     battery_percent: Mapped[int | None] = mapped_column(Integer)
     signal_dbm: Mapped[int | None] = mapped_column(Integer)
     firmware_version: Mapped[str | None] = mapped_column(String(40))
+
+
+class TelemetryLabel(Base):
+    """Append-only human review of a stored telemetry reading."""
+
+    __tablename__ = "telemetry_labels"
+    __table_args__ = (
+        CheckConstraint(
+            "label IN ('normal', 'anomaly', 'inconclusive', 'ignored')",
+            name="ck_telemetry_label_value",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    reading_id: Mapped[UUID] = mapped_column(ForeignKey("telemetry_readings.id"), index=True)
+    label: Mapped[str] = mapped_column(String(24))
+    notes: Mapped[str] = mapped_column(String(1000))
+    reviewed_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class MLInference(Base):
