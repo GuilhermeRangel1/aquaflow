@@ -348,7 +348,7 @@ async def run_batch(
                    p.timezone, bucket.window_start
             FROM telemetry_readings AS r
             JOIN devices AS d ON d.id = r.device_id
-            JOIN properties AS p ON p.id = d.property_id
+            JOIN properties AS p ON p.id = d.property_id AND p.archived_at IS NULL
             CROSS JOIN LATERAL (
                 SELECT date_bin(interval '5 minutes', r.recorded_at,
                                 timestamptz '2000-01-01 00:00:00+00') AS window_start
@@ -391,7 +391,9 @@ async def run_batch(
         for reading in readings:
             if reading["expected_interval_seconds"] < MODEL_WINDOW_SECONDS:
                 if reading["timezone"] != report.get("timezone"):
-                    features, reason = None, "Fuso da propriedade diferente do fuso usado no treinamento."
+                    features, reason = None, (
+                        "Fuso da propriedade diferente do fuso usado no treinamento."
+                    )
                 else:
                     features, reason = await _aggregate_window(connection, reading)
                 if features is not None:
@@ -595,7 +597,9 @@ async def serve() -> None:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
     database_url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
     model_path = Path(os.getenv("ML_MODEL_PATH", "data/ml/training-bench-v2/best_model.joblib"))
-    report_path = Path(os.getenv("ML_TRAINING_REPORT_PATH", "data/ml/training-bench-v2/metrics.json"))
+    report_path = Path(
+        os.getenv("ML_TRAINING_REPORT_PATH", "data/ml/training-bench-v2/metrics.json")
+    )
     poll_seconds = max(1, int(os.getenv("ML_POLL_SECONDS", "5")))
     model, report, version = load_model(model_path, report_path)
     pool = await asyncpg.create_pool(database_url, min_size=1, max_size=4)

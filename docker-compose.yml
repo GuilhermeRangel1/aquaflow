@@ -26,7 +26,7 @@ services:
       DEMO_MODE: ${DEMO_MODE:-true}
       DEMO_DATASET_PATH: /app/demo-data/readings.csv
       DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-admin@admin.com}
-      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-admin123}
+      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:?defina DEMO_USER_PASSWORD no .env (veja .env.example)}
       MQTT_INGESTOR_HEALTH_URL: http://mqtt-ingestor:8081/health
       ML_WORKER_HEALTH_URL: http://ml-inference:8081/health
       ROOT_USER_EMAIL: ${ROOT_USER_EMAIL:-${DEMO_USER_EMAIL:-admin@admin.com}}
@@ -36,7 +36,7 @@ services:
     command: >-
       sh -c "alembic upgrade head && python -m app.demo_seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - aquaflow-demo-data:/app/demo-data:ro
       - ./data/ml/training-bench-v2:/app/ml-artifacts/training-bench-v2:ro

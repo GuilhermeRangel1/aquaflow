@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000"]
     demo_mode: bool = False
     demo_dataset_path: Path | None = None
+    demo_cleanup_legacy: bool = False
     demo_user_email: EmailStr | None = None
     demo_user_password: str = Field(default="AquaFlow-demo-123!", min_length=8, max_length=128)
     mqtt_ingestor_health_url: str | None = None

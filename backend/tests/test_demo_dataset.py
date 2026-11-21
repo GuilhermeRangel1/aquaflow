@@ -73,8 +73,12 @@ async def test_demo_dataset_is_idempotent_and_visible_through_public_api(tmp_pat
                 )
             )
         await session.commit()
-    assert await seed_demo_data(sessions, password=password, dataset_path=dataset)
-    assert not await seed_demo_data(sessions, password=password, dataset_path=dataset)
+    assert await seed_demo_data(
+        sessions, password=password, dataset_path=dataset, cleanup_legacy=True
+    )
+    assert not await seed_demo_data(
+        sessions, password=password, dataset_path=dataset, cleanup_legacy=True
+    )
     async with sessions() as session:
         assert set(await session.scalars(select(TelemetryReading.event_id))) == {
             "demo-hybrid-v1-first",

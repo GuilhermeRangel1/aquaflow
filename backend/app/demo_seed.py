@@ -24,6 +24,8 @@ ADMIN_EMAIL = "admin@admin.com"
 LEGACY_ADMIN_EMAIL = "admin@example.com"
 LEGACY_DEMO_EMAIL = "demo@aquaflow.local"
 PROPERTY_TIMEZONE = "America/Sao_Paulo"
+# Short normal uses added to the simulated afternoon of the demo extension (local time).
+AFTERNOON_USES = {(16, 10): Decimal("1.4"), (17, 10): Decimal("0.8")}
 LEGACY_SERIALS = {"AF-DEMO-001", "AF-DEMO-002", "AF-DEMO-003", "AF-DEMO-004", "AF-DEMO-ML-001"}
 LEGACY_EVENT = re.compile(
     r"demo-(?:history-\d{8}-.+|\d{8}-.+|irrigation-\d{8}-\d+|flow-\d{12}|"
@@ -37,13 +39,14 @@ async def seed_demo_data(
     password: str,
     email: str | None = None,
     dataset_path: Path,
+    cleanup_legacy: bool = False,
 ) -> bool:
-    """Populate the hybrid history and remove positively identified legacy fixtures."""
+    """Populate the hybrid history; legacy fixtures are only migrated/removed on request."""
     configured_email = email or ADMIN_EMAIL
     async with session_factory() as session:
         now = datetime.now(UTC).replace(second=0, microsecond=0)
         user = await session.scalar(select(User).where(User.email == configured_email))
-        if user is None and configured_email == ADMIN_EMAIL:
+        if user is None and cleanup_legacy and configured_email == ADMIN_EMAIL:
             user = await session.scalar(
                 select(User)
                 .join(Property, Property.owner_id == User.id)
@@ -53,9 +56,9 @@ async def seed_demo_data(
                     Device.serial_number == "AF-DEMO-HIBRIDO-001",
                 )
             )
-        if user is None:
+        if user is None and cleanup_legacy:
             user = await session.scalar(select(User).where(User.email == DEMO_EMAIL))
-        if user is None:
+        if user is None and cleanup_legacy:
             user = await session.scalar(select(User).where(User.email == LEGACY_DEMO_EMAIL))
         if user is not None and user.email != configured_email:
             if configured_email == ADMIN_EMAIL and user.name in (
@@ -78,7 +81,7 @@ async def seed_demo_data(
         if user.name == "Conta de demonstração":
             user.name = "Administração"
         populated = await _seed_hybrid_property(session, user, dataset_path, now)
-        removed = await _remove_legacy_fixtures(session, user)
+        removed = await _remove_legacy_fixtures(session, user) if cleanup_legacy else False
         await session.commit()
         return populated or removed or created
 
@@ -121,9 +124,8 @@ async def _seed_hybrid_property(
             .limit(1)
         )
         if latest is not None:
-            extended = _extend_hybrid_history(session, device, latest, rows, now)
-            adjusted = await _add_afternoon_usage(session, device, now)
-            return extended or adjusted
+            add_uses = not await _has_recent_non_demo_reading(session, device, now)
+            return _extend_hybrid_history(session, device, latest, rows, now, add_uses=add_uses)
     zone = ZoneInfo(PROPERTY_TIMEZONE)
     shift = now.astimezone(zone).date() - rows[-1][0].astimezone(zone).date()
     # Reserve the recent window for the normal-use profile on the first startup too.
@@ -172,8 +174,7 @@ async def _seed_hybrid_property(
         for timestamp, row in readings
     ]
     session.add_all(historical_readings)
-    _extend_hybrid_history(session, device, historical_readings[-1], rows, now)
-    await _add_afternoon_usage(session, device, now)
+    _extend_hybrid_history(session, device, historical_readings[-1], rows, now, add_uses=True)
     return True
 
 
@@ -183,6 +184,8 @@ def _extend_hybrid_history(
     latest: TelemetryReading,
     rows: list[tuple[datetime, dict[str, str]]],
     now: datetime,
+    *,
+    add_uses: bool,
 ) -> bool:
     if not latest.event_id.startswith(("demo-hybrid-v1-", "demo-hybrid-extension-")):
         return False
@@ -200,7 +203,7 @@ def _extend_hybrid_history(
 
     profile = max(profiles.values(), key=len)
     interval = timedelta(minutes=5)
-    end = now.replace(minute=now.minute // 5 * 5)
+    end = now.replace(minute=now.minute // 5 * 5, second=0, microsecond=0)
     previous = latest.recorded_at
     previous = previous.replace(tzinfo=UTC) if previous.tzinfo is None else previous
     start = previous + interval
@@ -211,6 +214,10 @@ def _extend_hybrid_history(
     while timestamp <= end:
         local = timestamp.astimezone(zone)
         flow = profile.get((local.hour, local.minute // 5 * 5), Decimal(0))
+        if flow == 0 and add_uses:
+            # Short afternoon uses are part of the new reading itself; persisted
+            # readings are never rewritten (raw telemetry stays traceable).
+            flow = AFTERNOON_USES.get((local.hour, local.minute), flow)
         cumulative += flow * 5
         session.add(
             TelemetryReading(
@@ -228,39 +235,22 @@ def _extend_hybrid_history(
     return True
 
 
-async def _add_afternoon_usage(session: AsyncSession, device: Device, now: datetime) -> bool:
-    """Add short normal uses to the simulated extension and carry the meter total forward."""
-    await session.flush()
-    recent = (
-        await session.scalars(
-            select(TelemetryReading)
+async def _has_recent_non_demo_reading(
+    session: AsyncSession, device: Device, now: datetime
+) -> bool:
+    """Real telemetry in the last 24 h means no simulated uses are added."""
+    return (
+        await session.scalar(
+            select(TelemetryReading.id)
             .where(
                 TelemetryReading.device_id == device.id,
                 TelemetryReading.recorded_at >= now - timedelta(hours=24),
+                TelemetryReading.event_id.not_like("demo-hybrid-%"),
             )
-            .order_by(TelemetryReading.recorded_at)
+            .limit(1)
         )
-    ).all()
-    if any(not reading.event_id.startswith("demo-hybrid-") for reading in recent):
-        return False
-
-    zone = ZoneInfo(PROPERTY_TIMEZONE)
-    uses = {(16, 10): Decimal("1.4"), (17, 10): Decimal("0.8")}
-    extra_volume = Decimal(0)
-    for reading in recent:
-        if not reading.event_id.startswith("demo-hybrid-extension-"):
-            continue
-        timestamp = reading.recorded_at
-        if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=UTC)
-        local = timestamp.astimezone(zone)
-        flow = uses.get((local.hour, local.minute))
-        if flow is not None and reading.flow_rate_liters_minute == 0:
-            reading.flow_rate_liters_minute = flow
-            extra_volume += flow * 5
-        if extra_volume and reading.cumulative_volume_liters is not None:
-            reading.cumulative_volume_liters += extra_volume
-    return bool(extra_volume)
+        is not None
+    )
 
 
 def _device(
@@ -339,6 +329,7 @@ async def main() -> None:
             password=settings.demo_user_password,
             email=settings.demo_user_email or ADMIN_EMAIL,
             dataset_path=settings.demo_dataset_path,
+            cleanup_legacy=settings.demo_cleanup_legacy,
         )
         if created:
             print("Histórico híbrido preparado.")
