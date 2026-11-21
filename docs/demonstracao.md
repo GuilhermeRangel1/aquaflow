@@ -46,7 +46,7 @@ Propriedade: Casa da Administração
 
 ## 3. O que aparece na conta demo
 
-Selecione **Casa da Administração** para abrir o **Medidor da série híbrida**. O histórico usa as mesmas vazões e volumes da série de treino, com as datas deslocadas para o período da instalação. Na atualização, a API remove os medidores e alertas identificados como exemplos legados. Telemetria de dispositivos físicos é preservada. Para mostrar o ESP32 ao vivo, cadastre um medidor físico separado na propriedade híbrida com intervalo esperado de 30 segundos.
+Selecione **Casa da Administração** para abrir o **Medidor principal**. O histórico usa as mesmas vazões e volumes da série de treino, com as datas deslocadas para o período da instalação. Na atualização, a API remove os medidores e alertas identificados como exemplos legados. Telemetria de dispositivos físicos é preservada. Para mostrar o ESP32 ao vivo, cadastre um medidor físico separado na propriedade híbrida com intervalo esperado de 30 segundos.
 
 Os registros exibidos nessa propriedade são dados de demonstração, não mensagens transmitidas por um medidor físico. As regras e o worker geram alertas a partir das leituras e janelas avaliadas. As previsões do modelo são experimentais e aparecem separadas dos detectores por regras.
 

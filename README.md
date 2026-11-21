@@ -12,7 +12,7 @@ O protótipo pode ser demonstrado com o histórico carregado pelo Compose ou com
 | Celio Pereira Dias Junior | [@CelioJr12](https://github.com/CelioJr12) |
 | Ester de Araujo Carvalho Menezes | [@ester-acm](https://github.com/ester-acm) |
 | Guilherme Vinícius Rangel Silva | [@GuilhermeRangel1](https://github.com/GuilhermeRangel1) |
-| João Pedro Moraes Barbosa | [@Joao-Vitor-Moraes](https://github.com/Joao-Vitor-Moraes) |
+| João Vitor Moraes Barbosa | [@Joao-Vitor-Moraes](https://github.com/Joao-Vitor-Moraes) |
 | Luana Lima Maynard de Arruda Falcão | [@lua-mf](https://github.com/lua-mf) |
 
 ## Navegação rápida
@@ -105,7 +105,7 @@ Para mudar o e-mail ou a senha, copie `.env.example` para `.env` e altere `DEMO_
 
 ### O que você verá
 
-Na conta local de Administração, selecione **Casa da Administração** para ver o **Medidor da série híbrida**. O Compose carrega esse histórico no PostgreSQL na primeira execução. A série usa vazões calibradas por medições do sensor de bancada, com rotina e datas simuladas. O seed preserva a telemetria física e remove os medidores antigos identificados como exemplos, junto com seus alertas e leituras.
+Na conta local de Administração, selecione **Casa da Administração** para ver o **Medidor principal**. O Compose carrega esse histórico no PostgreSQL na primeira execução. A série usa vazões calibradas por medições do sensor de bancada, com rotina e datas simuladas. O seed preserva a telemetria física e remove os medidores antigos identificados como exemplos, junto com seus alertas e leituras.
 
 ### Demonstrar com o ESP32
 
