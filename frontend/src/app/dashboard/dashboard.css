@@ -1748,15 +1748,6 @@
   box-shadow: none;
 }
 
-.meter-labels-toggle {
-  list-style: none;
-  cursor: pointer;
-}
-
-.meter-labels-toggle::-webkit-details-marker {
-  display: none;
-}
-
 .resident-readings-table {
   width: 100%;
   border-collapse: collapse;
@@ -3208,7 +3199,36 @@
 }
 
 .telemetry-analysis-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
   cursor: pointer;
+  list-style: none;
+}
+
+.telemetry-analysis-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.telemetry-analysis-details > summary::after {
+  width: 7px;
+  height: 7px;
+  margin-top: -3px;
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  content: "";
+  transform: rotate(45deg);
+}
+
+.telemetry-analysis-details[open] > summary::after {
+  margin-top: 3px;
+  transform: rotate(225deg);
+}
+
+.telemetry-analysis-details > summary:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 4px;
 }
 
 .telemetry-analysis-details[open] > :not(summary) {

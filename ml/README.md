@@ -133,14 +133,3 @@ docker compose -f docker-compose.yml -f docker-compose.test.yml --profile test -
 ```
 
 O worker confere o hash e a estrutura do relatório antes de carregar o artefato local. O hash identifica o arquivo e detecta divergências; não significa que o modelo tenha sido validado para consumo real. O método explicativo substitui cada sinal isoladamente pela mediana do treino e mede como a probabilidade muda; isso é uma estimativa de sensibilidade, não uma explicação causal. Os artefatos `joblib` devem ser gerados localmente pelo próprio projeto e tratados como arquivos confiáveis.
-## Treino com leituras revisadas da ESP32
-
-Configure a variável do Compose `ML_PHYSICAL_TRAINING_COLLECTION` com um
-objeto JSON contendo `device_id` (UUID do medidor físico dedicado, com
-cadência de 30 segundos), `development_start`, `evaluation_start` e
-`evaluation_end` (datas ISO 8601 com fuso). Reserve uma coleta independente
-para o período de avaliação antes de usar o botão.
-
-**Treinar novamente** exporta as revisões vigentes diretamente do banco,
-prepara as janelas e treina um candidato. A ativação exige aprovação.
-Com a variável vazia, o botão mantém o fluxo de treinamento já configurado.

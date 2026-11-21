@@ -22,7 +22,6 @@ import { WaterCostCard } from "./water-cost-card";
 import { MLTrainingView } from "./ml-training";
 import { ResidentMeterAnalysis } from "./resident-meter-analysis";
 import { TelemetryView } from "./telemetry-view";
-import { MeterLabels } from "./meter-labels";
 import {
   orderHoursFromMidnight,
   resolveActivePropertyId,
@@ -1439,17 +1438,6 @@ export default function Dashboard() {
                       >
                         <span aria-hidden="true">←</span> Seus medidores
                       </button>
-                      {isAdmin && selectedId && (
-                        <details>
-                          <summary className="meter-labels-toggle">Revisão de rótulos</summary>
-                          <MeterLabels
-                            key={selectedDevice.id}
-                            propertyId={selectedId}
-                            deviceId={selectedDevice.id}
-                            load={api}
-                          />
-                        </details>
-                      )}
                       {deviceNotice?.createdDeviceId === selectedDevice.id && (
                         <p className="meter-created-label" role="status">
                           <span aria-hidden="true">✓</span> {deviceNotice.message}

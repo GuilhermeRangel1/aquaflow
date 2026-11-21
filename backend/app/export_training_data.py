@@ -13,20 +13,17 @@ leitura bruta. O script é somente leitura no banco.
 import argparse
 import asyncio
 import csv
-import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from hashlib import sha256
 from pathlib import Path
 from typing import Any
-from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
-from app.db.models import Device, TelemetryLabel, TelemetryReading
+from app.db.models import Device, TelemetryReading
 from app.db.session import create_session_factory
 
 SCENARIOS = ("normal", "continuous_flow", "night_consumption", "missing_reading")
@@ -193,113 +190,10 @@ async def export(
     return rows
 
 
-def _parse_instant(value: str) -> datetime:
-    instant = datetime.fromisoformat(value)
-    if instant.utcoffset() is None:
-        raise ValueError("informe data e hora com fuso explícito")
-    return instant.astimezone(UTC)
-
-
-async def export_reviewed(
-    factory: async_sessionmaker[AsyncSession],
-    device_id: UUID,
-    start: datetime,
-    end: datetime,
-    origin: str,
-    output: Path,
-) -> int:
-    """Exporta as revisões vigentes em um intervalo semiaberto, sem alterar as leituras."""
-    if start.utcoffset() is None or end.utcoffset() is None or start >= end:
-        raise ValueError("intervalo inválido: use início e fim com fuso, em ordem crescente")
-    if origin not in {"physical", "simulated"}:
-        raise ValueError("declare a origem da coleta: physical ou simulated")
-    latest = (
-        select(TelemetryLabel.id)
-        .where(TelemetryLabel.reading_id == TelemetryReading.id)
-        .order_by(TelemetryLabel.reviewed_at.desc(), TelemetryLabel.id.desc())
-        .limit(1)
-        .correlate(TelemetryReading)
-        .scalar_subquery()
-    )
-    rows = []
-    excluded: dict[str, int] = {}
-    async with factory() as session:
-        device = await session.get(Device, device_id)
-        if device is None:
-            raise ValueError("medidor não encontrado")
-        records = await session.execute(
-            select(TelemetryReading, TelemetryLabel)
-            .outerjoin(TelemetryLabel, TelemetryLabel.id == latest)
-            .where(
-                TelemetryReading.device_id == device_id,
-                TelemetryReading.recorded_at >= start,
-                TelemetryReading.recorded_at < end,
-            )
-            .order_by(TelemetryReading.recorded_at, TelemetryReading.id)
-        )
-        for reading, review in records:
-            if review is None or review.label not in {"normal", "anomaly"}:
-                reason = review.label if review is not None else "unlabeled"
-                excluded[reason] = excluded.get(reason, 0) + 1
-                continue
-            rows.append(
-                {
-                    "reading_id": str(reading.id),
-                    "event_id": reading.event_id,
-                    "recorded_at": _as_utc(reading.recorded_at).isoformat(),
-                    "cumulative_volume_liters": _decimal_field(reading.cumulative_volume_liters),
-                    "flow_rate_liters_minute": _decimal_field(reading.flow_rate_liters_minute),
-                    "quality": reading.quality,
-                    "review_id": str(review.id),
-                    "anomaly_label": int(review.label == "anomaly"),
-                }
-            )
-        interval = device.expected_interval_seconds
-
-    _write_csv(
-        rows,
-        output,
-        (
-            "reading_id",
-            "event_id",
-            "recorded_at",
-            "cumulative_volume_liters",
-            "flow_rate_liters_minute",
-            "quality",
-            "review_id",
-            "anomaly_label",
-        ),
-    )
-    manifest = {
-        "schema_version": 1,
-        "stage": "reviewed_telemetry_export",
-        "declared_origin": origin,
-        "label_source": "administrator_review",
-        "device_id": str(device_id),
-        "expected_interval_seconds": interval,
-        "start": start.astimezone(UTC).isoformat(),
-        "end_exclusive": end.astimezone(UTC).isoformat(),
-        "exported": len(rows),
-        "excluded_by_review_status": excluded,
-        "sha256": sha256(await asyncio.to_thread(output.read_bytes)).hexdigest(),
-    }
-    await asyncio.to_thread(
-        output.with_suffix(output.suffix + ".json").write_text,
-        json.dumps(manifest, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    return len(rows)
-
-
 async def _amain(args: argparse.Namespace) -> None:
     factory = create_session_factory(settings)
     try:
-        if args.device_id is None:
-            count = len(await export(factory, args.sheet, args.output, args.timezone))
-        else:
-            count = await export_reviewed(
-                factory, args.device_id, args.start, args.end, args.origin, args.output
-            )
+        count = len(await export(factory, args.sheet, args.output, args.timezone))
         print(f"{count} leituras rotuladas exportadas para {args.output}")
     finally:
         bind = factory.kw.get("bind")
@@ -312,16 +206,7 @@ def main() -> None:
     parser.add_argument("--sheet", type=Path, default=Path("ml/collection/rotulos-template.csv"))
     parser.add_argument("--output", type=Path, default=Path("data/ml/real/readings_rotulados.csv"))
     parser.add_argument("--timezone", default="America/Sao_Paulo")
-    parser.add_argument("--device-id", type=UUID, help="Exporta rótulos revisados no banco")
-    parser.add_argument("--start", type=_parse_instant)
-    parser.add_argument("--end", type=_parse_instant)
-    parser.add_argument("--origin", choices=("physical", "simulated"))
-    args = parser.parse_args()
-    if args.device_id is not None and not all((args.start, args.end, args.origin)):
-        parser.error("--device-id exige --start, --end e --origin")
-    if args.device_id is None and any((args.start, args.end, args.origin)):
-        parser.error("--start, --end e --origin exigem --device-id")
-    asyncio.run(_amain(args))
+    asyncio.run(_amain(parser.parse_args()))
 
 
 if __name__ == "__main__":

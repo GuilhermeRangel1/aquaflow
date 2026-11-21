@@ -21,7 +21,6 @@ from app.api import (
     ml_inferences,
     resources,
     telemetry,
-    telemetry_labels,
 )
 from app.core.config import Settings, settings
 from app.db.session import create_session_factory
@@ -72,7 +71,6 @@ def create_app(
         allow_headers=["Authorization", "Content-Type", "X-Device-Key"],
     )
     app.include_router(telemetry.router)
-    app.include_router(telemetry_labels.router)
     app.include_router(consumption.router)
     app.include_router(consumption.device_router)
     app.include_router(auth.router)
