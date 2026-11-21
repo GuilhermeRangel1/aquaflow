@@ -56,6 +56,16 @@ async def register(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> AuthOutput:
+    root_email = request.app.state.settings.root_user_email
+    if root_email is not None and str(payload.email).lower() == str(root_email).lower():
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "root_account_reserved",
+                "message": "This email is reserved for the root account",
+            },
+        )
+
     now = datetime.now(UTC)
     user = User(
         name=payload.name,
@@ -183,8 +193,11 @@ async def logout(
 
 
 @router.get("/me", response_model=UserOutput)
-async def get_me(user: User = Depends(current_user)) -> UserOutput:
-    return UserOutput.model_validate(user)
+async def get_me(request: Request, user: User = Depends(current_user)) -> UserOutput:
+    output = UserOutput.model_validate(user)
+    root_email = request.app.state.settings.root_user_email
+    output.is_admin = root_email is not None and str(user.email).lower() == str(root_email).lower()
+    return output
 
 
 @router.patch("/me", response_model=UserOutput)

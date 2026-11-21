@@ -4,6 +4,7 @@ from itertools import pairwise
 from math import ceil
 from typing import Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -12,11 +13,165 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.cursors import decode_timestamp, encode_timestamp
 from app.api.deps import current_user
+from app.api.resources import _owned_device
 from app.db.models import Alert, AnomalyEvent, Device, Property, TelemetryReading, User
 from app.db.session import get_session
 from app.domain.consumption import Sample, aggregate_samples, interval_volume
+from app.services.consumption_classification import classify_consumption
 
 router = APIRouter(prefix="/api/v1/properties", tags=["consumption"])
+device_router = APIRouter(prefix="/api/v1/devices", tags=["consumption"])
+
+
+RECIFE_WATER_BASE = Decimal("61.77")
+RECIFE_WATER_BANDS = (
+    (10_000, 20_000, Decimal("7.09")),
+    (20_000, 30_000, Decimal("8.42")),
+    (30_000, 50_000, Decimal("11.59")),
+    (50_000, 90_000, Decimal("13.74")),
+    (90_000, None, Decimal("26.40")),
+)
+
+
+class WaterCostMonth(BaseModel):
+    month: str
+    liters: float
+    water_cost_cents: int
+
+
+class WaterCostEstimate(BaseModel):
+    current_month: str
+    months: list[WaterCostMonth]
+
+
+def _recife_water_cost_cents(liters: float) -> int:
+    volume = Decimal(str(liters))
+    cost = RECIFE_WATER_BASE
+    for lower, upper, rate in RECIFE_WATER_BANDS:
+        band_end = min(volume, Decimal(upper)) if upper is not None else volume
+        cost += max(Decimal(0), band_end - lower) / 1000 * rate
+    return int((cost * 100).quantize(Decimal(1), rounding="ROUND_HALF_UP"))
+
+
+@router.get("/{property_id}/water-cost-estimate", response_model=WaterCostEstimate)
+async def get_water_cost_estimate(
+    property_id: UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+) -> WaterCostEstimate:
+    timezone_name = await session.scalar(
+        select(Property.timezone).where(
+            Property.id == property_id, Property.owner_id == user.id, Property.archived_at.is_(None)
+        )
+    )
+    if timezone_name is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "property_not_found", "message": "Property was not found"},
+        )
+    timezone = ZoneInfo(timezone_name)
+    end = datetime.now(timezone)
+    start = end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    for _ in range(3):
+        start = (start - timedelta(days=1)).replace(day=1)
+    consumption = await get_consumption(
+        property_id, start, end, granularity="month", limit=4, session=session, user=user
+    )
+    return WaterCostEstimate(
+        current_month=end.strftime("%Y-%m"),
+        months=[
+            WaterCostMonth(
+                month=item.bucket_start.astimezone(timezone).strftime("%Y-%m"),
+                liters=item.volume_liters,
+                water_cost_cents=_recife_water_cost_cents(item.volume_liters),
+            )
+            for item in consumption.items
+        ],
+    )
+
+
+class ConsumptionClassification(BaseModel):
+    normal_liters: float
+    flagged_liters: float
+    unclassified_liters: float
+
+
+@router.get("/{property_id}/consumption-classification", response_model=ConsumptionClassification)
+async def get_consumption_classification(
+    property_id: UUID,
+    days: int = Query(default=7, ge=1, le=90),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+) -> ConsumptionClassification:
+    owner = await session.scalar(
+        select(Property.id).where(
+            Property.id == property_id, Property.owner_id == user.id, Property.archived_at.is_(None)
+        )
+    )
+    if owner is None:
+        raise HTTPException(status_code=404, detail={"code": "property_not_found"})
+    end = datetime.now(UTC)
+    start = end - timedelta(days=days)
+    totals = await classify_consumption(session, property_id, start, end)
+    return ConsumptionClassification(
+        normal_liters=float(totals["normal"]),
+        flagged_liters=float(totals["flagged"]),
+        unclassified_liters=float(totals["unclassified"]),
+    )
+
+
+class MonthlyMeterConsumption(BaseModel):
+    total_volume_liters: float | None
+
+
+@device_router.get("/{device_id}/monthly-consumption", response_model=MonthlyMeterConsumption)
+async def get_monthly_meter_consumption(
+    device_id: UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+) -> MonthlyMeterConsumption:
+    device = await _owned_device(session, user, device_id)
+    timezone_name = await session.scalar(
+        select(Property.timezone).where(Property.id == device.property_id)
+    )
+    timezone_name = timezone_name or "UTC"
+    end = datetime.now(UTC)
+    start = (
+        end.astimezone(ZoneInfo(timezone_name))
+        .replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        .astimezone(UTC)
+    )
+    rows = await session.execute(
+        select(
+            TelemetryReading.recorded_at,
+            TelemetryReading.cumulative_volume_liters,
+            TelemetryReading.flow_rate_liters_minute,
+        )
+        .where(
+            TelemetryReading.device_id == device_id,
+            TelemetryReading.quality == "valid",
+            TelemetryReading.recorded_at
+            >= start - timedelta(seconds=device.expected_interval_seconds * 2),
+            TelemetryReading.recorded_at <= end,
+        )
+        .order_by(TelemetryReading.recorded_at, TelemetryReading.id)
+    )
+    samples = [
+        Sample(
+            recorded_at=at if at.tzinfo else at.replace(tzinfo=UTC),
+            cumulative_volume_liters=volume,
+            flow_rate_liters_minute=flow,
+        )
+        for at, volume, flow in rows
+    ]
+    buckets = aggregate_samples(
+        samples, device.expected_interval_seconds, timezone_name, "month", start=start, end=end
+    )
+    return MonthlyMeterConsumption(
+        total_volume_liters=float(sum(bucket.volume_liters for bucket in buckets))
+        if buckets
+        else None
+    )
 
 
 class ConsumptionItem(BaseModel):

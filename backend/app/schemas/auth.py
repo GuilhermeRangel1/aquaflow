@@ -44,6 +44,7 @@ class UserOutput(BaseModel):
     name: str
     email: EmailStr
     created_at: datetime
+    is_admin: bool = False
 
 
 class ProfileUpdateInput(BaseModel):

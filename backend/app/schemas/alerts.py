@@ -10,6 +10,7 @@ class AlertOutput(BaseModel):
     anomaly_id: UUID
     property_id: UUID
     device_id: UUID
+    device_name: str | None = None
     detector_type: str
     score: float = Field(ge=0, le=1)
     severity: Literal["low", "medium", "high"]

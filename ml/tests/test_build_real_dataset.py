@@ -10,9 +10,9 @@ ML = Path(__file__).resolve().parents[1]
 if str(ML) not in sys.path:
     sys.path.insert(0, str(ML))
 
-import build_real_dataset as builder  # noqa: E402
-import generate_mock_data as mock  # noqa: E402
-import prepare_dataset  # noqa: E402
+import build_real_dataset as builder
+import generate_mock_data as mock
+import prepare_dataset
 
 START = mock._start("2026-09-01T00:00:00-03:00")
 
@@ -40,6 +40,56 @@ def test_load_real_pools_groups_and_filters(tmp_path: Path) -> None:
     pools = builder.load_real_pools(real)
     assert pools["normal"] == [0.1, 0.2]
     assert pools["continuous_flow"] == [0.5]
+
+
+def test_raw_bench_csvs_reproduce_the_versioned_calibration() -> None:
+    repository = ML.parent
+    source_dir = repository / "data" / "dados_reais"
+    calibration_path = ML / "collection" / "bench-calibration-v1.json"
+    calibration = builder.load_bench_calibration(calibration_path)
+    excluded = calibration["excluded_measurements"]
+    rates = builder.load_bench_rates(source_dir, [], excluded)
+
+    assert rates == calibration["median_active_flow_liters_minute"]
+
+
+def test_bench_csvs_build_the_configured_hybrid_dataset(tmp_path: Path) -> None:
+    repository = ML.parent
+    source_dir = repository / "data" / "dados_reais"
+    calibration_path = ML / "collection" / "bench-calibration-v1.json"
+    output = tmp_path / "raw" / "readings.csv"
+
+    manifest = builder.build(
+        None,
+        output,
+        seed=42,
+        start=START,
+        days=16,
+        interval_minutes=5,
+        timezone="America/Sao_Paulo",
+        bench_dir=source_dir,
+        bench_calibration=calibration_path,
+    )
+
+    assert manifest["generated_rows"] == 16 * 24 * 12
+    assert manifest["skeleton"] == {
+        "seed": 42,
+        "start": START.isoformat(),
+        "days": 16,
+        "interval_minutes": 5,
+        "timezone": "America/Sao_Paulo",
+        "profile": "standard",
+    }
+    assert manifest["median_active_flow_liters_minute"] == {
+        "bench_features_01_ambos_abertos.csv": 4.13,
+        "bench_features_02_direita_fechada.csv": 4.8,
+        "bench_features_03_esquerda_fechada.csv": 5.33,
+        "bench_features_04_esquerda_pouco_aberta.csv": 1.0,
+    }
+    assert manifest["excluded_measurements"] == builder.load_bench_calibration(
+        calibration_path
+    )["excluded_measurements"]
+    assert prepare_dataset.analyze(output, tmp_path / "eda")["status"] == "passed"
 
 
 def test_inject_replaces_flow_and_recomputes_volume() -> None:

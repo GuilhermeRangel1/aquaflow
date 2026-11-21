@@ -144,7 +144,18 @@ def test_cli_compares_models_on_chronological_holdout(
         assert 0.0 <= metrics["average_precision"] <= 1.0
         assert len(metrics["confusion_matrix"]) == 2
         assert all(len(row) == 2 for row in metrics["confusion_matrix"])
+        if "cv_folds" in candidate:
+            assert len(candidate["cv_folds"]) == 3
+            assert all(
+                0.0 <= fold["validation_average_precision"] <= 1.0
+                for fold in candidate["cv_folds"]
+            )
     assert set(report["test_evaluation"]) == {report["selected_model"], "dummy_prior"}
+    curves = report["evaluation_curves"]
+    assert len(curves["test"]["precision_recall"]["recall"]) > 2
+    assert len(curves["test"]["roc"]["false_positive_rate"]) > 2
+    assert 0.0 <= curves["test"]["roc_auc"] <= 1.0
+    assert len(curves["stress"]["roc"]["true_positive_rate"]) > 2
     assert set(report["generalization_validation"]) == {
         "profile",
         "data_sha256",

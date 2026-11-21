@@ -9,7 +9,6 @@ import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from itertools import pairwise
 from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
@@ -18,6 +17,7 @@ from uuid import uuid4
 import joblib
 import numpy as np
 from feature_transforms import FEATURE_NAMES, transform_reading
+from feature_transforms import transform_window
 
 logger = logging.getLogger("aquaflow.ml.inference")
 MODEL_WINDOW_SECONDS = 300
@@ -247,6 +247,15 @@ async def _backfill_existing_ml_alerts(
 
 def load_model(model_path: Path, report_path: Path) -> tuple[Any, dict[str, Any], str]:
     """Load only a model whose local training report records its matching hash."""
+    pointer_path = model_path.parent / "active-model.json"
+    if pointer_path.is_file():
+        pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+        relative = Path(pointer["directory"])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("active model pointer is invalid")
+        active_dir = model_path.parent / relative
+        model_path = active_dir / "best_model.joblib"
+        report_path = active_dir / "metrics.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
     model_hash = hashlib.sha256(model_path.read_bytes()).hexdigest()
     if report.get("model_sha256") != model_hash:
@@ -278,7 +287,6 @@ async def _aggregate_window(
 ) -> tuple[dict[str, float] | None, str | None]:
     end = reading["recorded_at"]
     tolerance = timedelta(seconds=reading["expected_interval_seconds"] * 1.5)
-    window = timedelta(seconds=MODEL_WINDOW_SECONDS)
     boundary = reading["window_start"]
     coverage_tolerance = min(tolerance, timedelta(seconds=60))
     history = await connection.fetch(
@@ -290,35 +298,7 @@ async def _aggregate_window(
         """,
         reading["device_id"], boundary - coverage_tolerance, end,
     )
-    candidates = [
-        i for i, sample in enumerate(history)
-        if sample["recorded_at"] < boundary
-    ]
-    if not candidates or end - boundary < window - coverage_tolerance:
-        return None, "Cobertura insuficiente para a janela de cinco minutos."
-    # Reuse the previous bucket's last sample as the next volume baseline.
-    samples = [*history[candidates[-1]:], reading]
-    for before, after in pairwise(samples):
-        step = after["recorded_at"] - before["recorded_at"]
-        if not timedelta(0) < step <= tolerance:
-            return None, "Lacuna ou timestamp duplicado na janela de cinco minutos."
-    if any(
-        sample["quality"] != "valid" or sample["cumulative_volume_liters"] is None
-        for sample in samples
-    ):
-        return None, "Volume acumulado válido insuficiente na janela de cinco minutos."
-    volumes = [sample["cumulative_volume_liters"] for sample in samples]
-    if any(after < before for before, after in pairwise(volumes)):
-        return None, "O contador de volume diminuiu dentro da janela de cinco minutos."
-    elapsed = (end - samples[0]["recorded_at"]).total_seconds() / 60
-    delta = float(volumes[-1] - volumes[0])
-    return transform_reading(
-        flow_rate_liters_minute=delta / elapsed,
-        volume_delta_liters=delta,
-        elapsed_minutes=elapsed,
-        recorded_at=boundary + window,
-        timezone=reading["timezone"],
-    ), None
+    return transform_window(history, reading, MODEL_WINDOW_SECONDS)
 
 
 async def run_batch(
@@ -622,6 +602,14 @@ async def serve() -> None:
                     backfill_complete = True
                     if count:
                         logger.info("Backfilled %d actionable ML alerts", count)
+                refreshed_model, refreshed_report, refreshed_version = load_model(model_path, report_path)
+                if refreshed_version != version:
+                    model, report, version = refreshed_model, refreshed_report, refreshed_version
+                    backfill_complete = False
+                    with _health_lock:
+                        _health["model_name"] = report["selected_model"]
+                        _health["model_version"] = version
+                    logger.info("Activated experimental model %s version %s", report["selected_model"], version)
                 processed = await run_batch(pool, model=model, report=report, model_version=version)
                 with _health_lock:
                     _health["status"] = "healthy"

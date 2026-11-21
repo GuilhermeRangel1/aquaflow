@@ -15,7 +15,7 @@ O Compose inicia o worker com seu próprio artefato. O DAG treina com as tabelas
 
 ## Etapas do pipeline
 
-1. **Geração:** `ml/build_real_dataset.py --calibration` cria 16 dias de horários simulados com seed fixa, cadência esperada de cinco minutos e fuso `America/Sao_Paulo`.
+1. **Geração:** `ml/build_real_dataset.py --bench-dir data/dados_reais --bench-calibration ml/collection/bench-calibration-v1.json` lê os quatro CSVs versionados, aplica as exclusões de bancada e confere as medianas de calibração. Em seguida, cria 16 dias de horários simulados com seed 42, cadência esperada de cinco minutos e fuso `America/Sao_Paulo`. Os CSVs calibram as vazões dos eventos; rotina, rótulos e calendário continuam simulados.
 2. **Análise e validação:** `ml/prepare_dataset.py analyze` verifica schema, ordem e duplicidade temporal, IDs, plausibilidade de valores e coerência dos rótulos. O relatório inclui cobertura, lacunas, cenários e estatísticas.
 3. **Preparação:** `ml/prepare_dataset.py prepare` exclui intervalos sem leitura e a primeira observação sem predecessor. Deriva a variação de volume e a duração real do intervalo e cria hora/dia da semana cíclicos no fuso local.
 4. **Treino e seleção:** `ml/train_model.py` usa uma divisão cronológica local de oito dias de treino, quatro de validação e quatro de teste. A busca de hiperparâmetros usa validação cruzada temporal somente dentro do bloco de treino.

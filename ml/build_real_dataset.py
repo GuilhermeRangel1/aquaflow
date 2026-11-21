@@ -1,11 +1,11 @@
-"""Monta o CSV de treino injetando vazão real no esqueleto temporal do mock.
+"""Monta uma série híbrida a partir de coletas de bancada ou dados rotulados.
 
 Reusa ``generate_mock_data`` para o esqueleto (dias, cadência e agenda de
-cenários) e substitui a vazão sintética pela vazão real medida — a saída do
-exportador do backend (``backend/app/export_training_data.py``). Apenas a vazão
-e o volume acumulado derivado são reais; horário, cenário, ``event_id`` e os
-metadados de dispositivo vêm do esqueleto. Isto não decide vazamento: só monta
-o dataset preservando a origem real das medições de vazão.
+cenários). A fonte de bancada fornece as medianas positivas por corrida que
+calibram os eventos simulados; a fonte ``--real`` fornece pools de vazões
+rotuladas pelo cenário. Horário, cenário, ``event_id`` e metadados de
+dispositivo continuam vindos do esqueleto. Isto não decide vazamento: os
+rótulos e a rotina doméstica da série calibrada são simulados.
 
 Limitações registradas: a vazão é amostrada de forma independente por intervalo
 a partir do pool real de cada cenário, então a autocorrelação temporal das
@@ -32,15 +32,23 @@ BASE_VOLUME_LITERS = 1000.0
 DEFAULT_CALIBRATION = Path(__file__).parent / "collection" / "bench-calibration-v1.json"
 
 
-def load_bench_rates(directory: Path, exclude_flows: list[float]) -> dict[str, float]:
-    """Use the median positive reading from each run as an active-use rate."""
+def load_bench_rates(
+    directory: Path,
+    exclude_flows: list[float],
+    excluded_measurements: dict[str, list[int]] | None = None,
+) -> dict[str, float]:
+    """Use configured median positive readings from each real bench run."""
     rates = {}
+    excluded_measurements = excluded_measurements or {}
     for path in sorted(directory.glob("bench_features_*.csv")):
         with path.open(newline="", encoding="utf-8-sig") as source:
-            values = [
-                float(row["flow_rate_liters_minute"])
-                for row in csv.DictReader(source)
-            ]
+            rows = list(csv.DictReader(source))
+        excluded_rows = set(excluded_measurements.get(path.name, []))
+        values = []
+        for row in rows:
+            if excluded_rows and int(row["medicao"]) in excluded_rows:
+                continue
+            values.append(float(row["flow_rate_liters_minute"]))
         valid = [
             value for value in values
             if math.isfinite(value) and value > 0 and value not in exclude_flows
@@ -51,6 +59,14 @@ def load_bench_rates(directory: Path, exclude_flows: list[float]) -> dict[str, f
     if not rates:
         raise ValueError(f"nenhum CSV bench_features encontrado em {directory}")
     return rates
+
+
+def load_bench_calibration(path: Path) -> dict[str, object]:
+    calibration = json.loads(path.read_text(encoding="utf-8"))
+    rates = calibration.get("median_active_flow_liters_minute", {})
+    if not rates or any(not math.isfinite(rate) or rate <= 0 for rate in rates.values()):
+        raise ValueError("calibração sem vazões positivas e finitas")
+    return calibration
 
 
 def simulate_household(
@@ -164,18 +180,34 @@ def build(
     bench_dir: Path | None = None,
     exclude_flows: list[float] | None = None,
     calibration: Path | None = None,
+    bench_calibration: Path | None = None,
 ) -> dict[str, object]:
     """Gera o esqueleto do mock e injeta a vazão real; grava o CSV e o manifesto."""
     if sum(source is not None for source in (real_csv, bench_dir, calibration)) != 1:
         raise ValueError("informe exatamente uma fonte de vazão")
     exclusions = exclude_flows or []
     pools = load_real_pools(real_csv) if real_csv is not None else {}
-    bench_rates = load_bench_rates(bench_dir, exclusions) if bench_dir is not None else {}
+    calibration_data: dict[str, object] = {}
+    active_calibration = calibration or bench_calibration
     if calibration is not None:
-        calibration_data = json.loads(calibration.read_text(encoding="utf-8"))
+        calibration_data = load_bench_calibration(calibration)
         bench_rates = calibration_data["median_active_flow_liters_minute"]
-        if not bench_rates or any(not math.isfinite(rate) or rate <= 0 for rate in bench_rates.values()):
-            raise ValueError("calibração sem vazões positivas e finitas")
+    elif bench_dir is not None:
+        calibration_data = load_bench_calibration(bench_calibration or DEFAULT_CALIBRATION)
+        excluded = calibration_data.get("excluded_measurements", {})
+        bench_rates = load_bench_rates(
+            bench_dir,
+            exclusions,
+            excluded if isinstance(excluded, dict) else {},
+        )
+        expected_rates = calibration_data["median_active_flow_liters_minute"]
+        if set(bench_rates) != set(expected_rates) or any(
+            not math.isclose(bench_rates[name], expected_rates[name], abs_tol=0.005)
+            for name in bench_rates
+        ):
+            raise ValueError("CSV de bancada não corresponde às medianas da calibração versionada")
+    else:
+        bench_rates = {}
     with tempfile.TemporaryDirectory() as tmp:
         skeleton_path = Path(tmp) / "skeleton.csv"
         mock.generate(
@@ -242,8 +274,8 @@ def build(
                 "valor não identifica todos os sopros. Não valida detecção em campo."
             ),
         )
-    if calibration is not None:
-        manifest["source_calibration"] = calibration.name
+    if active_calibration is not None:
+        manifest["source_calibration"] = active_calibration.name
         manifest["excluded_measurements"] = calibration_data["excluded_measurements"]
     (output.parent / "build_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -258,6 +290,7 @@ def main() -> None:
     source.add_argument("--real", type=Path)
     source.add_argument("--bench-dir", type=Path)
     source.add_argument("--calibration", type=Path, nargs="?", const=DEFAULT_CALIBRATION)
+    parser.add_argument("--bench-calibration", type=Path, default=DEFAULT_CALIBRATION)
     parser.add_argument("--exclude-flow", type=float, action="append", default=[])
     parser.add_argument("--output", type=Path, default=Path("data/ml/real/readings.csv"))
     parser.add_argument("--seed", type=int, default=42)
@@ -280,6 +313,7 @@ def main() -> None:
         bench_dir=args.bench_dir,
         exclude_flows=args.exclude_flow,
         calibration=args.calibration,
+        bench_calibration=args.bench_calibration,
     )
     print(json.dumps(manifest, ensure_ascii=False, sort_keys=True))
 

@@ -148,9 +148,7 @@ def _row(window: LabelWindow, reading: TelemetryReading) -> dict[str, Any]:
     }
 
 
-async def _readings_in_window(
-    session: AsyncSession, window: LabelWindow
-) -> list[TelemetryReading]:
+async def _readings_in_window(session: AsyncSession, window: LabelWindow) -> list[TelemetryReading]:
     statement = (
         select(TelemetryReading)
         .join(Device, TelemetryReading.device_id == Device.id)
@@ -164,11 +162,13 @@ async def _readings_in_window(
     return list((await session.scalars(statement)).all())
 
 
-def _write_csv(rows: list[dict[str, Any]], output_path: Path) -> None:
+def _write_csv(
+    rows: list[dict[str, Any]], output_path: Path, fields: tuple[str, ...] = OUTPUT_FIELDS
+) -> None:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="", encoding="utf-8") as destination:
-        writer = csv.DictWriter(destination, fieldnames=OUTPUT_FIELDS)
+        writer = csv.DictWriter(destination, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
 
@@ -190,11 +190,11 @@ async def export(
     return rows
 
 
-async def _amain(sheet_path: Path, output_path: Path, timezone: str) -> None:
+async def _amain(args: argparse.Namespace) -> None:
     factory = create_session_factory(settings)
     try:
-        rows = await export(factory, sheet_path, output_path, timezone)
-        print(f"{len(rows)} leituras rotuladas exportadas para {output_path}")
+        count = len(await export(factory, args.sheet, args.output, args.timezone))
+        print(f"{count} leituras rotuladas exportadas para {args.output}")
     finally:
         bind = factory.kw.get("bind")
         if bind is not None:
@@ -203,15 +203,10 @@ async def _amain(sheet_path: Path, output_path: Path, timezone: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--sheet", type=Path, default=Path("ml/collection/rotulos-template.csv")
-    )
-    parser.add_argument(
-        "--output", type=Path, default=Path("data/ml/real/readings_rotulados.csv")
-    )
+    parser.add_argument("--sheet", type=Path, default=Path("ml/collection/rotulos-template.csv"))
+    parser.add_argument("--output", type=Path, default=Path("data/ml/real/readings_rotulados.csv"))
     parser.add_argument("--timezone", default="America/Sao_Paulo")
-    args = parser.parse_args()
-    asyncio.run(_amain(args.sheet, args.output, args.timezone))
+    asyncio.run(_amain(parser.parse_args()))
 
 
 if __name__ == "__main__":

@@ -93,6 +93,7 @@ async def test_offline_alert_is_opened_and_resolved_after_meter_reconnects(
     alerts = alerts_response.json()["items"]
     assert len(alerts) == 1
     offline_alert = alerts[0]
+    assert offline_alert["device_name"] == devices.json()["items"][0]["name"]
     assert offline_alert["detector_type"] == "device_offline"
     assert offline_alert["status"] == "open"
     assert offline_alert["evidence"]["expected_interval_seconds"] == 300

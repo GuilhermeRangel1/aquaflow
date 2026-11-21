@@ -28,7 +28,7 @@ Esta e uma fatia fora do MVP atual da API/dashboard; ainda nao foi validada em h
 - [PlatformIO](https://platformio.org/) (extensao do VS Code ou `pip install platformio`).
 - Placa ESP32-WROOM-32 e um sensor de vazao por pulso (ex.: YF-S201/YF-S401) no pino definido em `include/config.h`.
 - Um dispositivo ja cadastrado via `POST /devices` na API do AquaFlow, com a chave anotada (ela so e exibida uma vez).
-  Cadastre `expected_interval_seconds: 30` para o intervalo padrão do firmware. O worker de ML usa essa configuração para agregar as leituras em janelas de cinco minutos.
+  Cadastre `expected_interval_seconds: 5` para o intervalo padrão do firmware. O worker de ML usa essa configuração para agregar as leituras em janelas de cinco minutos.
 - O broker MQTT acessivel na rede. No prototipo local, suba o Compose e exponha a porta
   do broker (`docker compose` ja publica `1883:1883`); use o IP da maquina do Docker em
   `MQTT_BROKER_HOST`.
@@ -65,6 +65,14 @@ pio device monitor      # acompanha o log serial em 115200 bps
 ```
 
 ## Calibracao
+
+### Ensaio na aplicação
+
+1. Suba o AquaFlow e cadastre um medidor dedicado ao ESP32, com intervalo de cinco segundos. Use o serial e a chave desse medidor no firmware.
+2. Conecte a placa e o computador à mesma rede. A placa precisa alcançar o broker na porta 1883 e sincronizar o relógio por NTP.
+3. Abra **Medidores → Ver detalhes** no medidor cadastrado. Aguarde a primeira publicação para estabelecer a referência do contador, depois passe um volume conhecido pelo sensor.
+4. Confira se o horário da última leitura e a vazão mudam na tela, sem recarregar a página. A placa tenta publicar a cada cinco segundos e o detalhe consulta a API a cada cinco segundos.
+5. Se a leitura não aparecer, confira Wi-Fi, NTP e PUBACK no monitor serial. Um PUBACK confirma o recebimento pelo broker. Consulte os logs do ingestor para verificar a aceitação pela API.
 
 O valor `FLOW_PULSES_PER_LITER` em `include/config.h` comeca em `450` (nominal do
 YF-S201). O fator real varia por sensor, pressao e montagem, entao calibre com uma

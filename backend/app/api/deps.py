@@ -46,3 +46,13 @@ async def current_user(
             detail={"code": "invalid_token", "message": "Access token is invalid or expired"},
         )
     return user
+
+
+async def root_user(request: Request, user: User = Depends(current_user)) -> User:
+    root_email = request.app.state.settings.root_user_email
+    if root_email is None or str(user.email).lower() != str(root_email).lower():
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "admin_required", "message": "Administrative access required"},
+        )
+    return user

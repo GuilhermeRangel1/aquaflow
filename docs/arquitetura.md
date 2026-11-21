@@ -85,7 +85,7 @@ No primeiro `docker compose up --build`, se não houver `best_model.joblib` e `m
 5. Registro de parâmetros, métricas e artefatos no MLflow.
 6. Inicialização do worker, que avalia as leituras armazenadas ainda não processadas.
 
-O modelo usa vazão, variação do volume acumulado, duração do intervalo e hora/dia da semana codificados ciclicamente no fuso da propriedade. Identificadores, serial, timestamp bruto, bateria, sinal, firmware e rótulos não entram como features. As transformações compartilhadas ficam em `ml/feature_transforms.py`.
+Os estimadores usam vazão, variação do volume acumulado e duração. A codificação cíclica de horário e dia da semana permanece no contrato, mas é excluída no pipeline dos estimadores. Identificadores, serial, timestamp bruto, bateria, sinal, firmware e rótulos não entram como features. As transformações compartilhadas ficam em `ml/feature_transforms.py`.
 
 O notebook [`ml/notebooks/01_exploracao_e_avaliacao.ipynb`](../ml/notebooks/01_exploracao_e_avaliacao.ipynb) documenta a exploração e a preparação e cria gráficos de avaliação. O DAG manual do Airflow usa os mesmos scripts do treinamento automático e guarda o candidato e as tabelas em um diretório próprio da execução.
 

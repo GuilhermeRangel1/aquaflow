@@ -26,3 +26,26 @@ class MLInferenceOutput(BaseModel):
 class MLInferenceList(BaseModel):
     items: list[MLInferenceOutput]
     limit: int
+    cursor: str | None = None
+    has_more: bool = False
+
+
+class MeterAnalysis(BaseModel):
+    reading_id: UUID
+    recorded_at: datetime
+    status: Literal["normal", "possible_anomaly", "insufficient_data"]
+    alert_id: UUID | None = None
+
+
+class MeterInferenceSummary(BaseModel):
+    reading_id: UUID | None = None
+    status: Literal["no_reading", "pending", "normal", "possible_anomaly", "insufficient_data"]
+    latest_analysis: MeterAnalysis | None = None
+
+
+class MeterRecentReading(BaseModel):
+    reading_id: UUID
+    recorded_at: datetime
+    flow_rate_liters_minute: float | None
+    status: Literal["pending", "normal", "possible_anomaly", "insufficient_data"]
+    alert_id: UUID | None = None

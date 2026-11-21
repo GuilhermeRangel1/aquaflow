@@ -55,6 +55,7 @@ class Device(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     property_id: Mapped[UUID] = mapped_column(ForeignKey("properties.id"), index=True)
     serial_number: Mapped[str] = mapped_column(String(80), unique=True)
+    description: Mapped[str | None] = mapped_column(String(240), nullable=True)
     name: Mapped[str] = mapped_column(String(120))
     device_key_hash: Mapped[str] = mapped_column(String(64))
     expected_interval_seconds: Mapped[int] = mapped_column(Integer, default=300)

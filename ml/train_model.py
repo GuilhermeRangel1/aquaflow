@@ -31,6 +31,9 @@ from sklearn.metrics import (
     f1_score,
     precision_score,
     recall_score,
+    precision_recall_curve,
+    roc_auc_score,
+    roc_curve,
 )
 from sklearn.model_selection import ParameterGrid, ParameterSampler, TimeSeriesSplit
 from sklearn.pipeline import Pipeline
@@ -244,7 +247,27 @@ def _metrics(targets: np.ndarray, probabilities: np.ndarray) -> dict[str, Any]:
         "recall": float(recall_score(targets, predictions, zero_division=0)),
         "f1": float(f1_score(targets, predictions, zero_division=0)),
         "average_precision": float(average_precision_score(targets, probabilities)),
+        "roc_auc": float(roc_auc_score(targets, probabilities)),
         "confusion_matrix": matrix.tolist(),
+    }
+
+
+def _sampled_curve_points(points: tuple[np.ndarray, ...], max_points: int = 101) -> list[list[float]]:
+    """Keep evaluation curves useful in the UI without bloating the report."""
+    length = len(points[0])
+    indices = np.unique(np.linspace(0, length - 1, min(length, max_points), dtype=int))
+    return [[float(point[index]) for index in indices] for point in points]
+
+
+def _evaluation_curves(targets: np.ndarray, probabilities: np.ndarray) -> dict[str, Any]:
+    precision, recall, _ = precision_recall_curve(targets, probabilities)
+    false_positive_rate, true_positive_rate, _ = roc_curve(targets, probabilities)
+    precision_points, recall_points = _sampled_curve_points((precision, recall))
+    fpr_points, tpr_points = _sampled_curve_points((false_positive_rate, true_positive_rate))
+    return {
+        "precision_recall": {"precision": precision_points, "recall": recall_points},
+        "roc": {"false_positive_rate": fpr_points, "true_positive_rate": tpr_points},
+        "roc_auc": float(roc_auc_score(targets, probabilities)),
     }
 
 
@@ -366,6 +389,17 @@ def train(
             "cv_mean_train_average_precision": best_cv_train_score,
             "cv_mean_validation_average_precision": best_cv_score,
             "cv_validation_average_precision_std": best_cv_std,
+            "cv_folds": [
+                {
+                    "fold": fold,
+                    "train_average_precision": float(train_score),
+                    "validation_average_precision": float(validation_score),
+                }
+                for fold, (train_score, validation_score) in enumerate(
+                    zip(chosen["train_scores"], chosen["validation_scores"], strict=True),
+                    start=1,
+                )
+            ],
             "cv_generalization_gap": best_cv_train_score - best_cv_score,
             "validation": validation_metrics,
             "generalization_validation": generalization_metrics,
@@ -421,11 +455,15 @@ def train(
         targets[test_indices], dummy_final.predict_proba(values[test_indices])[:, 1]
     )
     selected_final.fit(final_train_values, final_train_targets)
-    selected_test = _metrics(
-        targets[test_indices], selected_final.predict_proba(values[test_indices])[:, 1]
+    selected_test_probabilities = selected_final.predict_proba(values[test_indices])[:, 1]
+    selected_test = _metrics(targets[test_indices], selected_test_probabilities)
+    stress_test_probabilities = (
+        selected_final.predict_proba(stress_values)[:, 1]
+        if stress_values is not None and stress_targets is not None
+        else None
     )
     stress_test_metrics = (
-        _metrics(stress_targets, selected_final.predict_proba(stress_values)[:, 1])
+        _metrics(stress_targets, stress_test_probabilities)
         if stress_values is not None and stress_targets is not None
         else None
     )
@@ -541,6 +579,14 @@ def train(
         "candidates": candidates,
         "candidate_holdout_evaluation": candidate_holdout_evaluation,
         "test_evaluation": {selected_model: selected_test, "dummy_prior": dummy_test},
+        "evaluation_curves": {
+            "test": _evaluation_curves(targets[test_indices], selected_test_probabilities),
+            "stress": (
+                _evaluation_curves(stress_targets, stress_test_probabilities)
+                if stress_targets is not None and stress_test_probabilities is not None
+                else None
+            ),
+        },
         "generalization_validation": (
             {
                 "profile": "shifted",

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.cursors import decode_time_id, encode_time_id
 from app.api.deps import current_user
-from app.db.models import Alert, AnomalyEvent, Property, User
+from app.db.models import Alert, AnomalyEvent, Device, Property, User
 from app.db.session import get_session
 from app.schemas.alerts import AlertList, AlertOutput, AnomalyList, AnomalyOutput
 from app.services.alerts import AlertNotFound, InvalidAlertTransition, transition_alert
@@ -86,6 +86,7 @@ async def get_anomaly(
 async def list_property_alerts(
     property_id: UUID,
     status: AlertStatus | None = None,
+    alert_id: UUID | None = None,
     limit: int = Query(default=100, ge=1, le=200),
     cursor: str | None = None,
     user: User = Depends(current_user),
@@ -100,13 +101,18 @@ async def list_property_alerts(
         raise _not_found("property_not_found", "Property was not found")
 
     statement = (
-        select(Alert, AnomalyEvent)
+        select(Alert, AnomalyEvent, Device.name)
         .join(AnomalyEvent, AnomalyEvent.id == Alert.anomaly_id)
+        .outerjoin(
+            Device, and_(Device.id == AnomalyEvent.device_id, Device.property_id == property_id)
+        )
         .where(AnomalyEvent.property_id == property_id)
         .order_by(Alert.created_at.desc())
     )
     if status is not None:
         statement = statement.where(Alert.status == status)
+    if alert_id is not None:
+        statement = statement.where(Alert.id == alert_id)
     if cursor is not None:
         try:
             cursor_at, cursor_id = decode_time_id(cursor)
@@ -128,7 +134,7 @@ async def list_property_alerts(
     page = rows[:limit]
     has_more = len(rows) > limit
     return AlertList(
-        items=[_to_output(alert, anomaly) for alert, anomaly in page],
+        items=[_to_output(alert, anomaly, device_name) for alert, anomaly, device_name in page],
         limit=limit,
         cursor=encode_time_id(page[-1][0].created_at, page[-1][0].id)
         if has_more and page
@@ -181,15 +187,21 @@ async def _transition_alert(
         raise _not_found("alert_not_found", "Alert was not found") from None
     except InvalidAlertTransition as error:
         raise _invalid_transition(error.current, error.target) from None
-    return _to_output(alert, anomaly)
+    device_name = await session.scalar(
+        select(Device.name).where(
+            Device.id == anomaly.device_id, Device.property_id == anomaly.property_id
+        )
+    )
+    return _to_output(alert, anomaly, device_name)
 
 
-def _to_output(alert: Alert, anomaly: AnomalyEvent) -> AlertOutput:
+def _to_output(alert: Alert, anomaly: AnomalyEvent, device_name: str | None) -> AlertOutput:
     return AlertOutput(
         id=alert.id,
         anomaly_id=anomaly.id,
         property_id=anomaly.property_id,
         device_id=anomaly.device_id,
+        device_name=device_name,
         detector_type=anomaly.detector_type,
         score=float(anomaly.score),
         severity=anomaly.severity,
