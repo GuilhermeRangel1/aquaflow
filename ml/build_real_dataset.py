@@ -1,4 +1,4 @@
-"""Monta uma série híbrida a partir de coletas de bancada ou dados rotulados.
+"""Monta uma série calibrada a partir de coletas de bancada ou dados rotulados.
 
 Reusa ``generate_mock_data`` para o esqueleto (dias, cadência e agenda de
 cenários). A fonte de bancada fornece as medianas positivas por corrida que
@@ -268,7 +268,7 @@ def build(
             excluded_flow_values=exclusions,
             weekend_daytime_background_multiplier=1.2,
             policy=(
-                "Série híbrida: medianas de vazão positiva por corrida calibram os eventos "
+                "Série calibrada: medianas de vazão positiva por corrida calibram os eventos "
                 "de uso. Duração, frequência, calendário, rótulos e fluxo anômalo adicional "
                 "são simulados. A condição da bancada não define o rótulo. A exclusão por "
                 "valor não identifica todos os sopros. Não valida detecção em campo."

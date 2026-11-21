@@ -1,4 +1,4 @@
-"""Reproducible hybrid telemetry pipeline for the AquaFlow academic demo."""
+"""Reproducible demo telemetry pipeline for the AquaFlow academic demo."""
 
 import hashlib
 import os
@@ -15,14 +15,14 @@ TRAINING_PYTHON = "/home/airflow/aquaflow-training/bin/python"
 
 
 @dag(
-    dag_id="aquaflow_hybrid_telemetry_pipeline",
-    description="Gera, analisa e prepara telemetria híbrida e treina um modelo candidato.",
+    dag_id="aquaflow_demo_telemetry_pipeline",
+    description="Gera, analisa e prepara telemetria de demonstração e treina um modelo candidato.",
     start_date=datetime(2026, 1, 1, tzinfo=UTC),
     schedule=None,
     catchup=False,
-    tags=["aquaflow", "dados-hibridos", "ml"],
+    tags=["aquaflow", "demonstracao", "ml"],
 )
-def hybrid_telemetry_pipeline():
+def demo_telemetry_pipeline():
     @task
     def generate_data() -> str:
         run_id = get_current_context()["run_id"]
@@ -113,7 +113,7 @@ def hybrid_telemetry_pipeline():
                 "--timezone",
                 "America/Sao_Paulo",
                 "--experiment-name",
-                "aquaflow-hybrid-airflow",
+                "aquaflow-demo-airflow",
                 "--tracking-uri",
                 os.environ["MLFLOW_TRACKING_URI"],
             ],
@@ -127,4 +127,4 @@ def hybrid_telemetry_pipeline():
     train_candidate(prepare_data(raw_file, report_file))
 
 
-hybrid_telemetry_pipeline()
+demo_telemetry_pipeline()

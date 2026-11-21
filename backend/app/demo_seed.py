@@ -1,4 +1,4 @@
-"""Populate the local demonstration with the calibrated hybrid dataset."""
+"""Populate the local demonstration with the calibrated dataset."""
 
 import asyncio
 import csv
@@ -41,7 +41,7 @@ async def seed_demo_data(
     dataset_path: Path,
     cleanup_legacy: bool = False,
 ) -> bool:
-    """Populate the hybrid history; legacy fixtures are only migrated/removed on request."""
+    """Populate the demo history; legacy fixtures are only migrated/removed on request."""
     configured_email = email or ADMIN_EMAIL
     async with session_factory() as session:
         now = datetime.now(UTC).replace(second=0, microsecond=0)
@@ -90,11 +90,14 @@ async def _seed_hybrid_property(
     session: AsyncSession, user: User, dataset_path: Path, now: datetime
 ) -> bool:
     name = "Casa da Administração"
-    serial = "AF-DEMO-HIBRIDO-001"
+    serial = "AF-DEMO-PRINCIPAL-001"
+    legacy_serial = "AF-DEMO-HIBRIDO-001"
     property_row = await session.scalar(
         select(Property).where(Property.owner_id == user.id, Property.name == name)
     )
     device = await session.scalar(select(Device).where(Device.serial_number == serial))
+    if device is None:
+        device = await session.scalar(select(Device).where(Device.serial_number == legacy_serial))
     if device is not None:
         if property_row is None:
             property_row = await session.scalar(
@@ -107,7 +110,8 @@ async def _seed_hybrid_property(
             if property_row is not None:
                 property_row.name = name
         if property_row is None or device.property_id != property_row.id:
-            raise RuntimeError("Dispositivo híbrido pertence a outra propriedade.")
+            raise RuntimeError("Medidor de demonstração pertence a outra propriedade.")
+        device.serial_number = serial
     with dataset_path.open(newline="", encoding="utf-8") as source:
         rows = [
             (datetime.fromisoformat(row["recorded_at"]), row)
@@ -115,7 +119,7 @@ async def _seed_hybrid_property(
             if row["reading_present"] == "1"
         ]
     if not rows:
-        raise ValueError("Dataset da demonstração híbrida sem leituras.")
+        raise ValueError("Dataset da demonstração sem leituras.")
     if device is not None:
         latest = await session.scalar(
             select(TelemetryReading)
@@ -137,7 +141,7 @@ async def _seed_hybrid_property(
         if historical:
             readings = historical
     if not readings:
-        raise ValueError("Dataset da demonstração híbrida sem leituras até o horário atual.")
+        raise ValueError("Dataset da demonstração sem leituras até o horário atual.")
     if property_row is None:
         property_row = Property(
             owner_id=user.id,
@@ -161,7 +165,7 @@ async def _seed_hybrid_property(
     historical_readings = [
         TelemetryReading(
             device_id=device.id,
-            event_id=f"demo-hybrid-v1-{row['event_id']}",
+            event_id=f"demo-calibrado-v1-{row['event_id']}",
             recorded_at=timestamp,
             received_at=now,
             cumulative_volume_liters=Decimal(row["cumulative_volume_liters"]),
@@ -187,7 +191,7 @@ def _extend_hybrid_history(
     *,
     add_uses: bool,
 ) -> bool:
-    if not latest.event_id.startswith(("demo-hybrid-v1-", "demo-hybrid-extension-")):
+    if not latest.event_id.startswith(("demo-hybrid-", "demo-calibrado-")):
         return False
     zone = ZoneInfo(PROPERTY_TIMEZONE)
     profiles: dict[date, dict[tuple[int, int], Decimal]] = {}
@@ -222,7 +226,7 @@ def _extend_hybrid_history(
         session.add(
             TelemetryReading(
                 device_id=device.id,
-                event_id=f"demo-hybrid-extension-{timestamp:%Y%m%d%H%M}",
+                event_id=f"demo-calibrado-extension-{timestamp:%Y%m%d%H%M}",
                 recorded_at=timestamp,
                 received_at=now,
                 cumulative_volume_liters=cumulative,
@@ -246,6 +250,7 @@ async def _has_recent_non_demo_reading(
                 TelemetryReading.device_id == device.id,
                 TelemetryReading.recorded_at >= now - timedelta(hours=24),
                 TelemetryReading.event_id.not_like("demo-hybrid-%"),
+                TelemetryReading.event_id.not_like("demo-calibrado-%"),
             )
             .limit(1)
         )
@@ -321,7 +326,7 @@ async def main() -> None:
     if not settings.demo_mode:
         return
     if settings.demo_dataset_path is None:
-        raise RuntimeError("Configure DEMO_DATASET_PATH com a série híbrida.")
+        raise RuntimeError("Configure DEMO_DATASET_PATH com a série calibrada.")
     factory = create_session_factory(settings)
     try:
         created = await seed_demo_data(
@@ -332,9 +337,9 @@ async def main() -> None:
             cleanup_legacy=settings.demo_cleanup_legacy,
         )
         if created:
-            print("Histórico híbrido preparado.")
+            print("Histórico de demonstração preparado.")
         else:
-            print("Histórico híbrido já está atualizado.")
+            print("Histórico de demonstração já está atualizado.")
     finally:
         bind = factory.kw.get("bind")
         if bind is not None:

@@ -81,8 +81,8 @@ async def test_demo_dataset_is_idempotent_and_visible_through_public_api(tmp_pat
     )
     async with sessions() as session:
         assert set(await session.scalars(select(TelemetryReading.event_id))) == {
-            "demo-hybrid-v1-first",
-            "demo-hybrid-v1-next",
+            "demo-calibrado-v1-first",
+            "demo-calibrado-v1-next",
             "physical-reading",
         }
     app = create_app(settings=Settings(), session_factory=sessions)
@@ -94,12 +94,12 @@ async def test_demo_dataset_is_idempotent_and_visible_through_public_api(tmp_pat
         assert login.status_code == 200
         headers = {"Authorization": f"Bearer {login.json()['tokens']['access_token']}"}
         devices = (await client.get("/api/v1/devices", headers=headers)).json()["items"]
-        assert {d["serial_number"] for d in devices} == {"AF-DEMO-HIBRIDO-001", "ESP32-BANCADA"}
-        hybrid = next(d for d in devices if d["serial_number"] == "AF-DEMO-HIBRIDO-001")
+        assert {d["serial_number"] for d in devices} == {"AF-DEMO-PRINCIPAL-001", "ESP32-BANCADA"}
+        hybrid = next(d for d in devices if d["serial_number"] == "AF-DEMO-PRINCIPAL-001")
         result = await client.get(f"/api/v1/devices/{hybrid['id']}/readings", headers=headers)
         assert result.status_code == 200
         assert {r["event_id"] for r in result.json()["items"]} == {
-            "demo-hybrid-v1-first",
-            "demo-hybrid-v1-next",
+            "demo-calibrado-v1-first",
+            "demo-calibrado-v1-next",
         }
     await engine.dispose()

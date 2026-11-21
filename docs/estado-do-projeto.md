@@ -5,11 +5,11 @@ O AquaFlow é um protótipo acadêmico de monitoramento de água. Para subir o a
 | Área | O que a aplicação entrega |
 | --- | --- |
 | Aquisição | API HTTP e ingestão MQTT com validação, idempotência e persistência no PostgreSQL. O firmware ESP32 está implementado com publicação padrão a cada cinco segundos. |
-| Demonstração | O Compose carrega uma série híbrida na conta demo e treina o modelo se o artefato inicial estiver ausente. Os quatro CSVs e a calibração estão no Git. A rotina e os rótulos são simulados. |
+| Demonstração | O Compose carrega uma série calibrada na conta demo e treina o modelo se o artefato inicial estiver ausente. Os quatro CSVs e a calibração estão no Git. A rotina e os rótulos são simulados. |
 | Medidores e telemetria | Conexão, vazão e leituras recentes atualizadas automaticamente. A Área Técnica mostra a associação entre leitura, inferência e versão do modelo. |
 | Visão geral | Consumo e detalhes expansíveis, rosca com volumes dentro do padrão, sinalizados e sem análise, e estimativa de água pela tarifa residencial de referência de Recife. |
 | Alertas | Regras determinísticas funcionam em paralelo com previsões experimentais. Cada aviso identifica o medidor e pode ser reconhecido, resolvido ou marcado como falso positivo. |
-| Treinamento | Comparação temporal de modelos e rastreamento no MLflow. O DAG manual do Airflow gera um candidato separado. Na aplicação, o administrador pode solicitar retreinamento da série híbrida e promoção após validação. |
+| Treinamento | Comparação temporal de modelos e rastreamento no MLflow. O DAG manual do Airflow gera um candidato separado. Na aplicação, o administrador pode solicitar retreinamento da série calibrada e promoção após validação. |
 
 Para telemetria de alta frequência, a inferência exige uma janela válida de cinco minutos. O painel consegue exibir as leituras antes disso. Um volume sinalizado representa água que passou durante um intervalo para verificar, sem comprovar vazamento ou quantificar desperdício.
 

@@ -27,9 +27,9 @@ O protótipo pode ser demonstrado com o histórico carregado pelo Compose ou com
 | [Arquitetura](docs/arquitetura.md) | Serviços, caminhos de dados e decisões da integração. |
 | [Estado atual](docs/estado-do-projeto.md) | O que está implementado, o que é experimental e o que falta validar. |
 | [Métricas e parâmetros](docs/metricas-e-parametros.md) | Limites, valores padrão e métricas usados no projeto. |
-| [Avaliação do dataset híbrido](#resultado-de-referência) | Resultado atual e limites da avaliação. |
+| [Avaliação do dataset calibrado](#resultado-de-referência) | Resultado atual e limites da avaliação. |
 | [Histórico do experimento sintético](ml/docs/resultado-experimento.md) | Execução anterior à calibração de bancada. |
-| [Dados e modelos](ml/README.md) | Série híbrida, pipeline, notebook, treinamento e inferência. |
+| [Dados e modelos](ml/README.md) | Série calibrada, pipeline, notebook, treinamento e inferência. |
 | [Contrato MQTT](docs/contrato-mqtt.md) | Tópicos, autenticação e payload aceito pelo broker local. |
 | [Especificação](especificacao-monitoramento-consumo-agua.md) | Requisitos e contratos de referência do produto e da API. |
 
@@ -55,7 +55,7 @@ Esse desenho representa a integração de desenvolvimento local. O detalhe dos s
 
 ## O que o protótipo demonstra
 
-- Conta local de Administração com propriedade e histórico da série híbrida.
+- Conta local de Administração com propriedade e histórico da série calibrada.
 - Cadastro e acompanhamento de medidores, ingestão HTTP e consulta de leituras.
 - Ingestão MQTT encaminhada para a mesma API HTTP de validação e persistência.
 - Cálculo de consumo entre leituras compatíveis, mantendo lacunas sem tratá-las como consumo zero.
@@ -81,7 +81,7 @@ Copy-Item .env.example .env
 docker compose up --build
 ```
 
-Na primeira execução, o Compose inicia PostgreSQL, API, dashboard, broker MQTT, consumidor MQTT, Airflow e MLflow. O serviço `demo-data` gera a série híbrida e a API grava o histórico na conta local. Se o modelo ainda não existir, o serviço `ml-trainer` prepara a mesma série, compara os modelos e registra o experimento. O worker `ml-inference` inicia depois do treinamento. Nas próximas execuções, o modelo salvo é reutilizado.
+Na primeira execução, o Compose inicia PostgreSQL, API, dashboard, broker MQTT, consumidor MQTT, Airflow e MLflow. O serviço `demo-data` gera a série calibrada e a API grava o histórico na conta local. Se o modelo ainda não existir, o serviço `ml-trainer` prepara a mesma série, compara os modelos e registra o experimento. O worker `ml-inference` inicia depois do treinamento. Nas próximas execuções, o modelo salvo é reutilizado.
 
 | Serviço | Endereço local |
 | --- | --- |
@@ -120,7 +120,7 @@ Em **Alertas**, a origem do aviso indica se ele veio de uma regra ou de uma aná
 
 - **Telemetria e inferências** mostra a conexão, a vazão ao vivo e as análises por leitura. **Medidores** apresenta o histórico e os resultados em linguagem simples.
 - **Visão geral** reúne o consumo, os detalhes expansíveis, os litros sinalizados e a estimativa mensal de água pela tarifa residencial de referência de Recife.
-- **Modelos e treinamento** mostra as métricas experimentais. O administrador pode solicitar retreinamento da série híbrida. O Compose também treina quando o artefato está ausente.
+- **Modelos e treinamento** mostra as métricas experimentais. O administrador pode solicitar retreinamento da série calibrada. O Compose também treina quando o artefato está ausente.
 - A criação de alertas por regras funciona em paralelo com a inferência. Água registrada num período sinalizado merece verificação; isso não comprova vazamento.
 
 ### Resultado de referência
@@ -190,7 +190,7 @@ Para o ambiente do notebook e os comandos completos do pipeline, consulte [Dados
 
 - O firmware ESP32 publica por MQTT. Confira a calibração do sensor e a conexão da placa na rede usada na apresentação.
 - A ingestão MQTT foi exercitada com um publicador de teste na rede local do Compose; não há conexão física validada nem TLS para um dispositivo externo.
-- O histórico da demonstração e o treino partem da mesma série híbrida. A demonstração desloca as datas para perto do dia de instalação e preserva as lacunas e as medições da série.
+- O histórico da demonstração e o treino partem da mesma série calibrada. A demonstração desloca as datas para perto do dia de instalação e preserva as lacunas e as medições da série.
 - O classificador foi avaliado somente com cenários artificiais. Dados reais precisarão de coleta, verificação de qualidade, decisão de rotulagem e teste temporal independente.
 - Airflow, MLflow, credenciais e serviços do Compose são configurados para apresentação local, não para produção.
 

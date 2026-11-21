@@ -96,7 +96,7 @@ async def test_extension_fills_last_day_on_grid_with_afternoon_uses(seeded) -> N
 
     readings = sorted((await _snapshot(sessions)).items(), key=lambda item: item[1][0])
     extension = [
-        (key, value) for key, value in readings if key.startswith("demo-hybrid-extension-")
+        (key, value) for key, value in readings if key.startswith("demo-calibrado-extension-")
     ]
     assert extension, "a extensão das últimas 24 h deveria ter sido criada"
     for _, (recorded_at, _, _) in extension:
@@ -149,7 +149,7 @@ async def test_skipped_uses_are_never_applied_retroactively(seeded) -> None:
     slot_1610 = next(
         value
         for key, value in before.items()
-        if key.startswith("demo-hybrid-extension-")
+        if key.startswith("demo-calibrado-extension-")
         and value[0].astimezone(ZONE).strftime("%d %H:%M") == "20 16:10"
     )
     assert slot_1610[1] == Decimal("0")

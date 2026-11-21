@@ -48,7 +48,7 @@ class Settings(BaseSettings):
             and self.demo_dataset_path is not None
             and self.demo_user_email == "admin@admin.com"
         ):
-            raise ValueError("Short seed passwords are only allowed for the local hybrid account")
+            raise ValueError("Short seed passwords are only allowed for the local demo account")
         return self
 
 

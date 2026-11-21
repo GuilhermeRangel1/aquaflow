@@ -1191,7 +1191,7 @@ export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
         </p>
       </aside>
       <footer className="ml-reference-footer">
-        <p>Série híbrida · Rotinas e rótulos simulados; vazões calibradas em bancada.</p>
+        <p>Série calibrada · Rotinas e rótulos simulados; vazões calibradas em bancada.</p>
         <p>
           Referência visual: execução validada em 20/11/2026. Na aplicação, os dados acompanham a
           execução consultada.

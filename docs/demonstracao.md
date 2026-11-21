@@ -21,10 +21,10 @@ docker compose up --build
 O Compose constrói e inicia os serviços integrados. Na ordem lógica:
 
 1. PostgreSQL fica pronto.
-2. O serviço `demo-data` gera a série híbrida com a calibração do treino. A API aplica as migrations e grava esse histórico no PostgreSQL da conta demo.
+2. O serviço `demo-data` gera a série calibrada com a calibração do treino. A API aplica as migrations e grava esse histórico no PostgreSQL da conta demo.
 3. Broker MQTT e consumidor ficam disponíveis; o consumidor encaminha mensagens para a API HTTP.
 4. MLflow fica disponível para registrar experimentos.
-5. Se não houver artefato treinado, `ml-trainer` gera a série híbrida calibrada em bancada, analisa, prepara e compara os modelos. Ele termina normalmente ao concluir.
+5. Se não houver artefato treinado, `ml-trainer` gera a série calibrada calibrada em bancada, analisa, prepara e compara os modelos. Ele termina normalmente ao concluir.
 6. `ml-inference` inicia depois do treinamento e avalia as leituras compatíveis já persistidas e as que chegarem depois.
 7. Frontend e Airflow ficam acessíveis localmente. O DAG Airflow não é acionado automaticamente; ele deve ser habilitado e executado pela interface.
 
@@ -46,7 +46,7 @@ Propriedade: Casa da Administração
 
 ## 3. O que aparece na conta demo
 
-Selecione **Casa da Administração** para abrir o **Medidor principal**. O histórico usa as mesmas vazões e volumes da série de treino, com as datas deslocadas para o período da instalação. Na atualização, a API remove os medidores e alertas identificados como exemplos legados. Telemetria de dispositivos físicos é preservada. Para mostrar o ESP32 ao vivo, cadastre um medidor físico separado na propriedade híbrida com intervalo esperado de 5 segundos.
+Selecione **Casa da Administração** para abrir o **Medidor principal**. O histórico usa as mesmas vazões e volumes da série de treino, com as datas deslocadas para o período da instalação. Na atualização, a API remove os medidores e alertas identificados como exemplos legados. Telemetria de dispositivos físicos é preservada. Para mostrar o ESP32 ao vivo, cadastre um medidor físico separado na propriedade de demonstração com intervalo esperado de 5 segundos.
 
 Os registros exibidos nessa propriedade são dados de demonstração, não mensagens transmitidas por um medidor físico. As regras e o worker geram alertas a partir das leituras e janelas avaliadas. As previsões do modelo são experimentais e aparecem separadas dos detectores por regras.
 
@@ -68,8 +68,8 @@ O dashboard pode indicar que a análise do modelo ainda está indisponível dura
 
 ### Roteiro para a apresentação
 
-1. Acione o DAG híbrido no Airflow e mostre as etapas de geração, análise, preparação e treino do candidato.
-2. Abra o experimento `aquaflow-hybrid-airflow` no MLflow e expanda uma execução por modelo para mostrar as tentativas de busca, as métricas por divisão temporal e a combinação escolhida.
+1. Acione o DAG de demonstração no Airflow e mostre as etapas de geração, análise, preparação e treino do candidato.
+2. Abra o experimento `aquaflow-demo-airflow` no MLflow e expanda uma execução por modelo para mostrar as tentativas de busca, as métricas por divisão temporal e a combinação escolhida.
 3. Selecione no dashboard a propriedade do ESP32. Passe água pelo sensor e confirme a chegada da leitura via MQTT e sua persistência pela API.
 4. Mantenha a coleta até fechar uma janela válida de cinco minutos com uma leitura anterior disponível como referência. Consulte `GET /api/v1/properties/{property_id}/ml-inferences` com autenticação e compare os identificadores das leituras com os resultados. Confira a mesma inferência em **Telemetria e inferências** e o resultado simplificado no detalhe do medidor.
 5. Apresente a diferença entre o desempenho no teste padrão e no perfil de estresse. Se usar um publicador de teste, identifique essa etapa como simulação e registre o ensaio físico como pendente.
@@ -78,7 +78,7 @@ Os parâmetros e limites atuais estão em [Métricas e parâmetros](metricas-e-p
 
 As evidências da execução integrada de 20/11/2026 estão em [Validação da integração](validacao-integracao.md).
 
-Para abrir o notebook de exploração e gráficos, configure as dependências em [ml/README.md](../ml/README.md#notebook-de-exploração-e-avaliação-visual). A primeira parte gera e prepara sua própria série híbrida; a seção de avaliação precisa dos artefatos de treinamento acima.
+Para abrir o notebook de exploração e gráficos, configure as dependências em [ml/README.md](../ml/README.md#notebook-de-exploração-e-avaliação-visual). A primeira parte gera e prepara sua própria série calibrada; a seção de avaliação precisa dos artefatos de treinamento acima.
 
 ## 5. Demonstrar a ingestão com o ESP32
 
@@ -86,11 +86,11 @@ Cadastre o ESP32 em **Medidores**, copie a chave do dispositivo e configure o fi
 
 ## 6. Executar o DAG do Airflow
 
-Abra [http://localhost:8080](http://localhost:8080), habilite `aquaflow_hybrid_telemetry_pipeline` e dispare uma execução. A última tarefa treina com as features, rótulos e metadados gerados pelas tarefas anteriores. O candidato e o relatório ficam em `data/ml/airflow/<execução>/training/` e o MLflow registra o experimento. O candidato do DAG fica separado do modelo ativo até uma ativação explícita.
+Abra [http://localhost:8080](http://localhost:8080), habilite `aquaflow_demo_telemetry_pipeline` e dispare uma execução. A última tarefa treina com as features, rótulos e metadados gerados pelas tarefas anteriores. O candidato e o relatório ficam em `data/ml/airflow/<execução>/training/` e o MLflow registra o experimento. O candidato do DAG fica separado do modelo ativo até uma ativação explícita.
 
 ## 7. Retreinar os modelos
 
-Na conta administradora, use **Modelos e treinamento → Treinar novamente**. O serviço prepara a série híbrida, avalia o candidato e atualiza o modelo ativo quando aprovado. Para forçar a geração do artefato inicial pelo terminal:
+Na conta administradora, use **Modelos e treinamento → Treinar novamente**. O serviço prepara a série calibrada, avalia o candidato e atualiza o modelo ativo quando aprovado. Para forçar a geração do artefato inicial pelo terminal:
 
 ```powershell
 docker compose run --build --rm -e ML_RETRAIN_MODEL=true ml-trainer
@@ -116,7 +116,7 @@ O segundo comando remove os containers e volumes exclusivos do projeto de teste.
 
 ## Limites da demonstração
 
-- O histórico inicial e o treinamento usam a mesma série híbrida.
+- O histórico inicial e o treinamento usam a mesma série calibrada.
 - O modelo classifica cenários definidos artificialmente; seu resultado não confirma vazamento e não foi validado em telemetria real.
 - A tela pode exibir dados insuficientes quando uma leitura não tem predecessor adequado ou o intervalo entre amostras é longo.
 - O broker configurado no Compose é local e sem TLS para conexão física remota; não conecte hardware fora dessa rede sem preparar autenticação por dispositivo e transporte seguro.

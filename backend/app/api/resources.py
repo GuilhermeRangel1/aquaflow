@@ -111,7 +111,7 @@ async def archive_property(
     protected_device = await session.scalar(
         select(Device.id).where(
             Device.property_id == property_id,
-            Device.serial_number == "AF-DEMO-HIBRIDO-001",
+            Device.serial_number.in_(("AF-DEMO-HIBRIDO-001", "AF-DEMO-PRINCIPAL-001")),
         )
     )
     if protected_device is not None:

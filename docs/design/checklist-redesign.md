@@ -48,7 +48,7 @@ abaixo.
 - [x] Exportar as 32 pranchas originais.
 - [x] Ajustar a proporção da barra lateral e os espaçamentos compartilhados no desktop.
 - [x] Implementar e conferir as cinco primeiras telas de produto no Docker: login, cadastro, visão geral, lista e detalhe do medidor.
-- [x] Conferir dados híbridos na visão geral e leituras reais do medidor no gráfico de detalhe.
+- [x] Conferir dados de demonstração na visão geral e leituras reais do medidor no gráfico de detalhe.
 - [ ] Comparar o layout compartilhado renderizado com as pranchas desktop e mobile.
 - [ ] Conferir no mobile e no tema escuro as cinco telas implementadas.
 - [x] Implementar as telas restantes e seus estados descritos abaixo.

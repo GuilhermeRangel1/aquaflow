@@ -1,6 +1,6 @@
-# Série híbrida e cenários simulados
+# Série calibrada e cenários simulados
 
-O fluxo atual de demonstração e treinamento usa uma série híbrida: as vazões ativas são calibradas pelas medianas positivas das quatro coletas de bancada e a rotina doméstica, o calendário, as lacunas e os rótulos são simulados. Portanto, não é telemetria contínua de uma residência nem uma validação de detecção em campo.
+O fluxo atual de demonstração e treinamento usa uma série calibrada: as vazões ativas são calibradas pelas medianas positivas das quatro coletas de bancada e a rotina doméstica, o calendário, as lacunas e os rótulos são simulados. Portanto, não é telemetria contínua de uma residência nem uma validação de detecção em campo.
 
 A calibração versionada está em [`ml/collection/bench-calibration-v1.json`](../collection/bench-calibration-v1.json). Os quatro CSVs originais da bancada são versionados em `data/dados_reais/`. O pipeline lê esses arquivos, aplica as exclusões registradas e verifica que as medianas calculadas correspondem à calibração antes de gerar a série. Também é possível usar apenas o JSON de calibração para reproduzir a série sem ler os CSVs. O manifesto registra as fontes, exclusões e hipóteses da simulação.
 
