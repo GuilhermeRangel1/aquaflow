@@ -1,10 +1,15 @@
-from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from datetime import UTC, datetime, timedelta, tzinfo
+from decimal import Decimal
+from typing import cast
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
-from httpx import AsyncClient
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
+from app.db.models import Alert, AnomalyEvent, MLInference, TelemetryReading
 from tests.conftest import reading_payload
 
 
@@ -332,3 +337,86 @@ async def test_ingestion_rejects_unknown_device_key(
 
     assert response.status_code == 401
     assert response.json()["code"] == "invalid_device_key"
+
+
+@pytest.mark.asyncio
+async def test_classification_clips_window_and_respects_false_positive(
+    api_client: tuple[AsyncClient, UUID, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, property_id, device_key, token = api_client
+    now = datetime.now(UTC)
+    boundary = now - timedelta(days=1)
+
+    class FixedClock(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return now.astimezone(tz) if tz else now.replace(tzinfo=None)
+
+    monkeypatch.setattr("app.api.consumption.datetime", FixedClock)
+    headers = {"Authorization": f"Bearer {token}"}
+    for minutes, volume in ((-2, 100), (3, 110)):
+        result = await client.post(
+            "/api/v1/ingestion/telemetry",
+            headers={"X-Device-Key": device_key},
+            json=reading_payload(
+                str(uuid4()),
+                (boundary + timedelta(minutes=minutes)).isoformat(),
+                cumulative_volume_liters=volume,
+            ),
+        )
+        assert result.status_code == 202
+    transport = client._transport
+    assert isinstance(transport, ASGITransport)
+    app = cast(FastAPI, transport.app)
+    async with app.state.session_factory.begin() as session:
+        reading = (
+            await session.scalars(select(TelemetryReading).order_by(TelemetryReading.recorded_at))
+        ).all()[-1]
+        inference_id = uuid4()
+        session.add(
+            MLInference(
+                id=inference_id,
+                reading_id=reading.id,
+                model_version="test",
+                status="scored",
+                predicted_anomaly=True,
+                feature_values={"elapsed_minutes": 3},
+                explanation={"input_derivation": "cumulative_volume_5min_window"},
+                reason="Test inference",
+                inferred_at=now,
+            )
+        )
+        anomaly = AnomalyEvent(
+            property_id=property_id,
+            device_id=reading.device_id,
+            detector_type="ml_anomaly",
+            score=Decimal("0.9"),
+            severity="medium",
+            reason="Test anomaly",
+            window_start=boundary,
+            window_end=reading.recorded_at,
+            evidence={"ml_inference_ids": [str(inference_id)]},
+            detected_at=now,
+        )
+        session.add(anomaly)
+        await session.flush()
+        alert = Alert(anomaly_id=anomaly.id, status="open", created_at=now)
+        session.add(alert)
+        await session.flush()
+        alert_id = alert.id
+    path = f"/api/v1/properties/{property_id}/consumption-classification?days=1"
+    assert (await client.get(path, headers=headers)).json() == {
+        "normal_liters": 0,
+        "flagged_liters": 6,
+        "unclassified_liters": 0,
+    }
+    async with app.state.session_factory.begin() as session:
+        stored_alert = await session.get(Alert, alert_id)
+        assert stored_alert is not None
+        stored_alert.status = "false_positive"
+    assert (await client.get(path, headers=headers)).json() == {
+        "normal_liters": 0,
+        "flagged_liters": 0,
+        "unclassified_liters": 6,
+    }

@@ -128,6 +128,26 @@ async def get_consumption_classification(
             )
         )
     ).all()
+    alert_reviews = (
+        await session.execute(
+            select(Alert.status, AnomalyEvent.evidence)
+            .join(AnomalyEvent, AnomalyEvent.id == Alert.anomaly_id)
+            .where(
+                AnomalyEvent.property_id == property_id,
+                AnomalyEvent.detector_type == "ml_anomaly",
+                AnomalyEvent.window_end >= start,
+            )
+            .order_by(Alert.created_at.desc(), Alert.id.desc())
+        )
+    ).all()
+    review_by_inference: dict[str, str] = {}
+    for status, evidence in alert_reviews:
+        inference_ids = evidence.get("ml_inference_ids")
+        if isinstance(inference_ids, list):
+            for inference_id in inference_ids:
+                if isinstance(inference_id, str):
+                    review_by_inference.setdefault(inference_id, status)
+
     for device in devices:
         readings = list(
             (
@@ -138,7 +158,7 @@ async def get_consumption_classification(
                         TelemetryReading.quality == "valid",
                         TelemetryReading.recorded_at
                         >= start - timedelta(seconds=device.expected_interval_seconds * 2),
-                        TelemetryReading.recorded_at <= end,
+                        TelemetryReading.recorded_at <= end + timedelta(minutes=10),
                     )
                     .order_by(TelemetryReading.recorded_at, TelemetryReading.id)
                 )
@@ -151,7 +171,7 @@ async def get_consumption_classification(
                 .where(
                     TelemetryReading.device_id == device.id,
                     TelemetryReading.recorded_at > start,
-                    TelemetryReading.recorded_at <= end,
+                    TelemetryReading.recorded_at <= end + timedelta(minutes=10),
                 )
                 .order_by(MLInference.inferred_at.desc(), MLInference.id.desc())
             )
@@ -162,6 +182,8 @@ async def get_consumption_classification(
             if inference.reading_id in latest:
                 continue
             latest[inference.reading_id] = inference
+            if review_by_inference.get(str(inference.id)) == "false_positive":
+                continue
             minutes = inference.feature_values.get("elapsed_minutes")
             if (
                 inference.predicted_anomaly is not None
@@ -188,7 +210,8 @@ async def get_consumption_classification(
             previous_at = _as_utc(previous.recorded_at)
             current_at = _as_utc(current.recorded_at)
             overlap_start = max(previous_at, start)
-            if current_at <= overlap_start:
+            overlap_end = min(current_at, end)
+            if overlap_end <= overlap_start:
                 continue
             volume = interval_volume(
                 Sample(
@@ -210,13 +233,14 @@ async def get_consumption_classification(
                 and inference_for_reading.explanation.get("input_derivation")
                 != "cumulative_volume_5min_window"
             ):
-                prediction = inference_for_reading.predicted_anomaly
+                if review_by_inference.get(str(inference_for_reading.id)) != "false_positive":
+                    prediction = inference_for_reading.predicted_anomaly
             elif window_index < len(windows):
                 window_start, window_end, predicted = windows[window_index]
-                if window_start <= previous_at and current_at <= window_end:
+                if window_start <= overlap_start and overlap_end <= window_end:
                     prediction = predicted
             flagged_by_rule = any(
-                rule_start <= overlap_start and current_at <= rule_end
+                rule_start <= overlap_start and overlap_end <= rule_end
                 for rule_start, rule_end in rule_windows
             )
             category = (
@@ -228,7 +252,7 @@ async def get_consumption_classification(
             )
             totals[category] += (
                 volume
-                * Decimal(str((current_at - overlap_start).total_seconds()))
+                * Decimal(str((overlap_end - overlap_start).total_seconds()))
                 / Decimal(str((current_at - previous_at).total_seconds()))
             )
     return ConsumptionClassification(

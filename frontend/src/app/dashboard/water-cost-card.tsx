@@ -55,6 +55,7 @@ export function WaterCostCard({
         <p role="status">Carregando estimativa…</p>
       ) : current ? (
         <>
+          <span>Recife · tarifa residencial de referência da Compesa</span>
           <strong className="water-cost-value">
             {currency.format(current.water_cost_cents / 100)}
           </strong>
@@ -124,9 +125,7 @@ export function WaterCostCard({
         Exemplo: com 12.000 L no mês, são R$ 61,77 fixos + R$ 14,18 pelos 2.000 L extras. Total
         estimado só de água: R$ 75,95.
       </p>
-      <small>
-        Consumo registrado no mês civil · Tarifa residencial de referência da Compesa para Recife.
-      </small>
+      <small>Consumo registrado no mês civil.</small>
     </article>
   );
 }
