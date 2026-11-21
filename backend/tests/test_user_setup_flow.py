@@ -133,7 +133,7 @@ async def test_user_can_register_create_property_and_provision_device(
     )
     assert created_property.status_code == 201
     property_body = created_property.json()
-    assert property_body["timezone"] == "America/Sao_Paulo"
+    assert property_body["timezone"] == "America/Recife"
     assert property_body["volume_unit"] == "L"
     assert Decimal(property_body["continuous_flow_threshold_liters_minute"]) == Decimal("0.25")
     assert property_body["continuous_flow_duration_minutes"] == 120

@@ -33,7 +33,6 @@ type Property = {
   name: string;
   address: string | null;
   timezone: string;
-  volume_unit: string;
   notification_threshold_liters: number | null;
   continuous_flow_threshold_liters_minute: number;
   continuous_flow_duration_minutes: number;
@@ -43,8 +42,6 @@ type PropertyPatch = Pick<
   Property,
   | "name"
   | "address"
-  | "timezone"
-  | "volume_unit"
   | "continuous_flow_threshold_liters_minute"
   | "continuous_flow_duration_minutes"
   | "late_reading_window_days"
@@ -52,7 +49,6 @@ type PropertyPatch = Pick<
 type PropertySettingsDraft = {
   name: string;
   address: string;
-  timezone: string;
   flowThreshold: string;
   flowDuration: string;
   lateWindow: string;
@@ -112,75 +108,6 @@ type DashboardRefresh = { checked_at: string };
 type ApiError = { code?: string; message?: string; detail?: { code?: string; message?: string } };
 
 const SUCCESS_NOTICE_DURATION_MS = 3_000;
-
-const brazilianTimezoneNames = new Map([
-  ["America/Araguaina", "Araguaína"],
-  ["America/Bahia", "Bahia"],
-  ["America/Belem", "Belém"],
-  ["America/Boa_Vista", "Boa Vista"],
-  ["America/Campo_Grande", "Campo Grande"],
-  ["America/Cuiaba", "Cuiabá"],
-  ["America/Eirunepe", "Eirunepé"],
-  ["America/Fortaleza", "Fortaleza"],
-  ["America/Maceio", "Maceió"],
-  ["America/Manaus", "Manaus"],
-  ["America/Noronha", "Fernando de Noronha"],
-  ["America/Porto_Velho", "Porto Velho"],
-  ["America/Recife", "Recife"],
-  ["America/Rio_Branco", "Rio Branco"],
-  ["America/Santarem", "Santarém"],
-  ["America/Sao_Paulo", "São Paulo"],
-]);
-
-function timezoneName(timezone: string): string {
-  return (
-    brazilianTimezoneNames.get(timezone) ??
-    (timezone.split("/").pop() ?? timezone).replaceAll("_", " ")
-  );
-}
-
-function getTimezoneOptions(currentTimezone: string): string[] {
-  const zones = new Set<string>(["UTC", ...brazilianTimezoneNames.keys()]);
-  if (typeof Intl.supportedValuesOf === "function") {
-    Intl.supportedValuesOf("timeZone").forEach((timezone) => zones.add(timezone));
-  } else {
-    [
-      "Europe/Lisbon",
-      "Europe/London",
-      "Europe/Paris",
-      "America/New_York",
-      "America/Chicago",
-      "America/Denver",
-      "America/Los_Angeles",
-      "Asia/Tokyo",
-      "Asia/Shanghai",
-      "Asia/Kolkata",
-      "Australia/Sydney",
-    ].forEach((timezone) => zones.add(timezone));
-  }
-  zones.add(currentTimezone);
-  return [...zones].sort((left, right) =>
-    timezoneName(left).localeCompare(timezoneName(right), "pt-BR"),
-  );
-}
-
-function timezoneLabel(timezone: string, includeOffset: boolean): string {
-  const name = timezoneName(timezone);
-  if (!includeOffset || timezone === "UTC") return name;
-  try {
-    const offset = new Intl.DateTimeFormat("en", {
-      timeZone: timezone,
-      timeZoneName: "shortOffset",
-    })
-      .formatToParts(new Date())
-      .find((part) => part.type === "timeZoneName")
-      ?.value.replace("GMT", "UTC")
-      .replace("-", "−");
-    return offset ? `${name} (${offset})` : name;
-  } catch {
-    return name;
-  }
-}
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/backend/${path}`, {
@@ -2717,7 +2644,6 @@ function toSettingsDraft(property: Property): PropertySettingsDraft {
   return {
     name: property.name,
     address: property.address ?? "",
-    timezone: property.timezone,
     flowThreshold: String(property.continuous_flow_threshold_liters_minute),
     flowDuration: String(property.continuous_flow_duration_minutes),
     lateWindow: String(property.late_reading_window_days),
@@ -2760,8 +2686,6 @@ function PropertySettingsForm({
   }
 
   const [draft, setDraft] = useState(() => toSettingsDraft(property));
-  const [timezoneOptions, setTimezoneOptions] = useState([property.timezone]);
-  const [timezoneOptionsLoaded, setTimezoneOptionsLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: "success" | "error"; message: string } | null>(
     null,
@@ -2777,25 +2701,6 @@ function PropertySettingsForm({
     setDraft((current) => ({ ...current, [field]: value }));
   const flowDurationMinutes = Number(draft.flowDuration);
   const showDurationInHours = flowDurationMinutes >= 60 && flowDurationMinutes % 60 === 0;
-  const timezoneGroups = useMemo(() => {
-    const brazil = [];
-    const other = [];
-    for (const value of timezoneOptions) {
-      const option = { value, label: timezoneLabel(value, timezoneOptionsLoaded) };
-      if (brazilianTimezoneNames.has(value)) brazil.push(option);
-      else other.push(option);
-    }
-    return [
-      ["Brasil", brazil],
-      ["Outros fusos", other],
-    ] as const;
-  }, [timezoneOptions, timezoneOptionsLoaded]);
-
-  useEffect(() => {
-    setTimezoneOptions(getTimezoneOptions(property.timezone));
-    setTimezoneOptionsLoaded(true);
-  }, [property.timezone]);
-
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
@@ -2804,8 +2709,6 @@ function PropertySettingsForm({
       const updated = await onSave({
         name: draft.name.trim(),
         address: draft.address.trim() || null,
-        timezone: draft.timezone.trim(),
-        volume_unit: property.volume_unit,
         continuous_flow_threshold_liters_minute: Number(draft.flowThreshold),
         continuous_flow_duration_minutes: Number(draft.flowDuration),
         late_reading_window_days: Number(draft.lateWindow),
@@ -2855,39 +2758,6 @@ function PropertySettingsForm({
               maxLength={300}
               placeholder="Rua, número, cidade"
             />
-          </label>
-          <label className="field">
-            Horário local
-            <select
-              value={draft.timezone}
-              onChange={(event) => update("timezone", event.target.value)}
-              required
-            >
-              {!timezoneOptions.includes(draft.timezone) && (
-                <option value={draft.timezone}>
-                  {timezoneLabel(draft.timezone, timezoneOptionsLoaded)}
-                </option>
-              )}
-              {timezoneGroups.map(
-                ([label, options]) =>
-                  options.length > 0 && (
-                    <optgroup key={label} label={label}>
-                      {options.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ),
-              )}
-            </select>
-            <span className="field-hint">
-              Escolha a cidade que tem o mesmo horário da sua casa.
-            </span>
-          </label>
-          <label className="field">
-            Unidade de consumo
-            <input value="Litros (L)" readOnly aria-readonly="true" />
           </label>
           <label className="field">
             Vazão mínima para gerar aviso (L/min)

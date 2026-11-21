@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 class PropertyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     address: str | None = Field(default=None, max_length=300)
-    timezone: str = Field(default="America/Sao_Paulo", max_length=64)
+    timezone: str = Field(default="America/Recife", max_length=64)
     volume_unit: str = Field(default="L", pattern="^L$")
     notification_threshold_liters: Decimal | None = Field(
         default=None, gt=0, max_digits=14, decimal_places=3
