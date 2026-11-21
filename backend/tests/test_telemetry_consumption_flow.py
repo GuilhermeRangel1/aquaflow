@@ -122,6 +122,30 @@ async def test_latest_telemetry_is_the_same_in_meter_health_and_reading_history(
     assert health.json()["latest_reading"]["event_id"] == payload["event_id"]
     assert health.json()["latest_reading"]["flow_rate_liters_minute"] == "0.420"
 
+    received_at = datetime.fromisoformat(readings.json()["items"][0]["received_at"])
+    if received_at.tzinfo is None:
+        received_at = received_at.replace(tzinfo=UTC)
+    path = f"/api/v1/devices/{device_id}/readings"
+    headers = {"Authorization": f"Bearer {token}"}
+    late_arrivals = await client.get(
+        path,
+        headers=headers,
+        params={
+            "window_minutes": 15,
+            "received_since": (received_at - timedelta(seconds=1)).isoformat(),
+        },
+    )
+    assert late_arrivals.status_code == 200
+    assert datetime.fromisoformat(late_arrivals.json()["queried_at"]) >= received_at
+    assert late_arrivals.json()["items"] == readings.json()["items"]
+    no_arrivals = await client.get(
+        path,
+        headers=headers,
+        params={"received_since": (received_at + timedelta(seconds=1)).isoformat()},
+    )
+    assert no_arrivals.status_code == 200
+    assert no_arrivals.json()["items"] == []
+
 
 @pytest.mark.asyncio
 async def test_consumption_summary_compares_with_the_equivalent_previous_period(
@@ -385,6 +409,18 @@ async def test_classification_clips_window_and_respects_false_positive(
                 explanation={"input_derivation": "cumulative_volume_5min_window"},
                 reason="Test inference",
                 inferred_at=now,
+            )
+        )
+        session.add(
+            MLInference(
+                reading_id=reading.id,
+                model_version="older",
+                status="scored",
+                predicted_anomaly=False,
+                feature_values={"elapsed_minutes": 3},
+                explanation={"input_derivation": "cumulative_volume_5min_window"},
+                reason="Older inference",
+                inferred_at=now - timedelta(minutes=1),
             )
         )
         anomaly = AnomalyEvent(

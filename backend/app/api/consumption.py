@@ -14,9 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.cursors import decode_timestamp, encode_timestamp
 from app.api.deps import current_user
 from app.api.resources import _owned_device
-from app.db.models import Alert, AnomalyEvent, Device, MLInference, Property, TelemetryReading, User
+from app.db.models import Alert, AnomalyEvent, Device, Property, TelemetryReading, User
 from app.db.session import get_session
 from app.domain.consumption import Sample, aggregate_samples, interval_volume
+from app.services.consumption_classification import classify_consumption
 
 router = APIRouter(prefix="/api/v1/properties", tags=["consumption"])
 device_router = APIRouter(prefix="/api/v1/devices", tags=["consumption"])
@@ -111,150 +112,7 @@ async def get_consumption_classification(
         raise HTTPException(status_code=404, detail={"code": "property_not_found"})
     end = datetime.now(UTC)
     start = end - timedelta(days=days)
-    devices = list(
-        (await session.scalars(select(Device).where(Device.property_id == property_id))).all()
-    )
-    totals = {"normal": Decimal(0), "flagged": Decimal(0), "unclassified": Decimal(0)}
-    rules = (
-        await session.scalars(
-            select(AnomalyEvent)
-            .outerjoin(Alert, Alert.anomaly_id == AnomalyEvent.id)
-            .where(
-                AnomalyEvent.property_id == property_id,
-                AnomalyEvent.detector_type.in_(("continuous_flow", "night_consumption")),
-                AnomalyEvent.window_end > start,
-                AnomalyEvent.window_start < end,
-                (Alert.id.is_(None) | (Alert.status != "false_positive")),
-            )
-        )
-    ).all()
-    alert_reviews = (
-        await session.execute(
-            select(Alert.status, AnomalyEvent.evidence)
-            .join(AnomalyEvent, AnomalyEvent.id == Alert.anomaly_id)
-            .where(
-                AnomalyEvent.property_id == property_id,
-                AnomalyEvent.detector_type == "ml_anomaly",
-                AnomalyEvent.window_end >= start,
-            )
-            .order_by(Alert.created_at.desc(), Alert.id.desc())
-        )
-    ).all()
-    review_by_inference: dict[str, str] = {}
-    for status, evidence in alert_reviews:
-        inference_ids = evidence.get("ml_inference_ids")
-        if isinstance(inference_ids, list):
-            for inference_id in inference_ids:
-                if isinstance(inference_id, str):
-                    review_by_inference.setdefault(inference_id, status)
-
-    for device in devices:
-        readings = list(
-            (
-                await session.scalars(
-                    select(TelemetryReading)
-                    .where(
-                        TelemetryReading.device_id == device.id,
-                        TelemetryReading.quality == "valid",
-                        TelemetryReading.recorded_at
-                        >= start - timedelta(seconds=device.expected_interval_seconds * 2),
-                        TelemetryReading.recorded_at <= end + timedelta(minutes=10),
-                    )
-                    .order_by(TelemetryReading.recorded_at, TelemetryReading.id)
-                )
-            ).all()
-        )
-        results = (
-            await session.execute(
-                select(MLInference, TelemetryReading.recorded_at)
-                .join(TelemetryReading, TelemetryReading.id == MLInference.reading_id)
-                .where(
-                    TelemetryReading.device_id == device.id,
-                    TelemetryReading.recorded_at > start,
-                    TelemetryReading.recorded_at <= end + timedelta(minutes=10),
-                )
-                .order_by(MLInference.inferred_at.desc(), MLInference.id.desc())
-            )
-        ).all()
-        latest: dict[UUID, MLInference] = {}
-        windows: list[tuple[datetime, datetime, bool]] = []
-        for inference, at in results:
-            if inference.reading_id in latest:
-                continue
-            latest[inference.reading_id] = inference
-            if review_by_inference.get(str(inference.id)) == "false_positive":
-                continue
-            minutes = inference.feature_values.get("elapsed_minutes")
-            if (
-                inference.predicted_anomaly is not None
-                and inference.explanation.get("input_derivation") == "cumulative_volume_5min_window"
-                and isinstance(minutes, (int, float))
-                and 0 < minutes <= 10
-            ):
-                window_end = _as_utc(at)
-                windows.append(
-                    (
-                        window_end - timedelta(minutes=minutes),
-                        window_end,
-                        inference.predicted_anomaly,
-                    )
-                )
-        windows.sort(key=lambda window: window[1])
-        window_index = 0
-        rule_windows = [
-            (_as_utc(rule.window_start), _as_utc(rule.window_end))
-            for rule in rules
-            if rule.device_id == device.id
-        ]
-        for previous, current in pairwise(readings):
-            previous_at = _as_utc(previous.recorded_at)
-            current_at = _as_utc(current.recorded_at)
-            overlap_start = max(previous_at, start)
-            overlap_end = min(current_at, end)
-            if overlap_end <= overlap_start:
-                continue
-            volume = interval_volume(
-                Sample(
-                    previous_at, previous.cumulative_volume_liters, previous.flow_rate_liters_minute
-                ),
-                Sample(
-                    current_at, current.cumulative_volume_liters, current.flow_rate_liters_minute
-                ),
-                device.expected_interval_seconds,
-            )
-            if volume is None:
-                continue
-            while window_index < len(windows) and windows[window_index][1] < current_at:
-                window_index += 1
-            inference_for_reading = latest.get(current.id)
-            prediction = None
-            if (
-                inference_for_reading is not None
-                and inference_for_reading.explanation.get("input_derivation")
-                != "cumulative_volume_5min_window"
-            ):
-                if review_by_inference.get(str(inference_for_reading.id)) != "false_positive":
-                    prediction = inference_for_reading.predicted_anomaly
-            elif window_index < len(windows):
-                window_start, window_end, predicted = windows[window_index]
-                if window_start <= overlap_start and overlap_end <= window_end:
-                    prediction = predicted
-            flagged_by_rule = any(
-                rule_start <= overlap_start and overlap_end <= rule_end
-                for rule_start, rule_end in rule_windows
-            )
-            category = (
-                "flagged"
-                if flagged_by_rule or prediction is True
-                else "normal"
-                if prediction is False
-                else "unclassified"
-            )
-            totals[category] += (
-                volume
-                * Decimal(str((overlap_end - overlap_start).total_seconds()))
-                / Decimal(str((current_at - previous_at).total_seconds()))
-            )
+    totals = await classify_consumption(session, property_id, start, end)
     return ConsumptionClassification(
         normal_liters=float(totals["normal"]),
         flagged_liters=float(totals["flagged"]),

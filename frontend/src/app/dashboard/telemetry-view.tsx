@@ -29,7 +29,12 @@ type Analysis = {
   predicted_anomaly: boolean | null;
   anomaly_probability: number | null;
 };
-type ReadingPage = { items: Reading[]; cursor: string | null; has_more: boolean };
+type ReadingPage = {
+  items: Reading[];
+  cursor: string | null;
+  has_more: boolean;
+  queried_at: string;
+};
 
 export function TelemetryView({
   devices,
@@ -179,22 +184,8 @@ function LiveReadings({
             `properties/${propertyId}/ml-inferences?device_id=${deviceId}&limit=100`,
           ).catch(() => null),
         ]);
-        const end = Date.now();
-        const params = new URLSearchParams({
-          start: new Date(end - minutes * 60_000).toISOString(),
-          end: new Date(end).toISOString(),
-          limit: "500",
-        });
-        const samples: Reading[] = [];
-        while (active) {
-          const chunk = await load<ReadingPage>(`devices/${deviceId}/readings?${params}`);
-          samples.push(...chunk.items);
-          if (!chunk.has_more || !chunk.cursor) break;
-          params.set("cursor", chunk.cursor);
-        }
         if (active) {
           setUpdatedAt(Date.now());
-          setSeries(samples);
           setPage(page);
           setAnalyses(analysis?.items ?? null);
           setHealth(status);
@@ -211,7 +202,74 @@ function LiveReadings({
       active = false;
       window.clearTimeout(timer);
     };
-  }, [deviceId, load, paused, refresh, minutes, propertyId]);
+  }, [deviceId, load, paused, refresh, propertyId]);
+
+  const chartCache = useRef<{
+    deviceId: string;
+    minutes: number;
+    refresh: number;
+    fetchedAt: number;
+    samples: Reading[];
+  } | null>(null);
+  const [chartFailed, setChartFailed] = useState(false);
+  useEffect(() => {
+    if (paused) return;
+    let active = true;
+    let timer: number | undefined;
+    async function updateChart() {
+      const cached = chartCache.current;
+      const previous =
+        cached?.deviceId === deviceId && cached.minutes === minutes && cached.refresh === refresh
+          ? cached
+          : null;
+      const params = new URLSearchParams({ window_minutes: String(minutes), limit: "500" });
+      if (previous) {
+        // Revisit recent arrivals so retries and late commits do not leave gaps.
+        params.set("received_since", new Date(previous.fetchedAt - 60_000).toISOString());
+      }
+      try {
+        const samples = new Map((previous?.samples ?? []).map((reading) => [reading.id, reading]));
+        let queriedAt: number | undefined;
+        while (active) {
+          const chunk = await load<ReadingPage>(`devices/${deviceId}/readings?${params}`);
+          if (queriedAt === undefined) {
+            queriedAt = Date.parse(chunk.queried_at);
+            params.set("start", new Date(queriedAt - minutes * 60_000).toISOString());
+            params.delete("window_minutes");
+          }
+          for (const reading of chunk.items) samples.set(reading.id, reading);
+          if (!chunk.has_more || !chunk.cursor) break;
+          params.set("cursor", chunk.cursor);
+        }
+        if (active && queriedAt !== undefined) {
+          const serverTime = queriedAt;
+          const start = serverTime - minutes * 60_000;
+          const merged = [...samples.values()].filter(
+            (reading) => Date.parse(reading.recorded_at) >= start,
+          );
+          chartCache.current = {
+            deviceId,
+            minutes,
+            refresh,
+            fetchedAt: serverTime,
+            samples: merged,
+          };
+          setSeries(merged.filter((reading) => Date.parse(reading.recorded_at) < serverTime));
+          setChartFailed(false);
+        }
+      } catch {
+        if (active) setChartFailed(true);
+      } finally {
+        if (active) timer = window.setTimeout(updateChart, 5000);
+      }
+    }
+    void updateChart();
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [deviceId, load, minutes, paused, refresh]);
+
   const history = older.at(-1) ?? page;
   const latest = page?.items[0];
   const latestAnalysisId = analyses?.[0]?.reading_id ?? latest?.id;
@@ -223,7 +281,9 @@ function LiveReadings({
       ).values(),
     ).sort((a, b) => Date.parse(b.recorded_at) - Date.parse(a.recorded_at));
   const chart: { time: number; flow: number | null }[] = [];
-  for (const reading of [...series].reverse()) {
+  for (const reading of [...series].sort(
+    (a, b) => Date.parse(a.recorded_at) - Date.parse(b.recorded_at),
+  )) {
     const time = Date.parse(reading.recorded_at);
     const previous = chart.at(-1);
     if (previous && time - previous.time > interval * 1500) {
@@ -331,6 +391,7 @@ function LiveReadings({
             ))}
           </div>
         </header>
+        {chartFailed && <p role="alert">Não foi possível atualizar o gráfico de vazão.</p>}
         {failed && <p role="alert">Não foi possível consultar o medidor.</p>}
         {!readings && !failed && <p role="status">Consultando leituras…</p>}
         {readings?.length === 0 && <p>Nenhuma leitura registrada.</p>}

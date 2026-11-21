@@ -1,5 +1,5 @@
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -354,9 +354,12 @@ async def list_device_readings(
     end: datetime | None = None,
     limit: int = Query(default=100, ge=1, le=500),
     cursor: str | None = None,
+    received_since: datetime | None = None,
+    window_minutes: int | None = Query(default=None, ge=1, le=360),
     user: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> DeviceReadingList:
+    queried_at = datetime.now(UTC)
     device = await _owned_device(session, user, device_id)
     if start is not None and (start.tzinfo is None or start.utcoffset() is None):
         raise HTTPException(
@@ -368,7 +371,17 @@ async def list_device_readings(
             status_code=422,
             detail={"code": "timezone_required", "message": "end must include a timezone"},
         )
+    if received_since is not None and received_since.utcoffset() is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "timezone_required",
+                "message": "received_since must include a timezone",
+            },
+        )
     start_utc = start.astimezone(UTC) if start is not None else None
+    if start_utc is None and window_minutes is not None:
+        start_utc = queried_at - timedelta(minutes=window_minutes)
     end_utc = end.astimezone(UTC) if end is not None else None
     if start_utc is not None and end_utc is not None and start_utc >= end_utc:
         raise HTTPException(
@@ -381,6 +394,8 @@ async def list_device_readings(
         statement = statement.where(TelemetryReading.recorded_at >= start_utc)
     if end_utc is not None:
         statement = statement.where(TelemetryReading.recorded_at < end_utc)
+    if received_since is not None:
+        statement = statement.where(TelemetryReading.received_at >= received_since.astimezone(UTC))
     if cursor is not None:
         cursor_at, cursor_id = _decode_reading_cursor(cursor)
         statement = statement.where(
@@ -405,6 +420,7 @@ async def list_device_readings(
     page = readings[:limit]
     next_cursor = _encode_reading_cursor(page[-1]) if has_more and page else None
     return DeviceReadingList(
+        queried_at=queried_at,
         items=[DeviceReadingOutput.model_validate(reading) for reading in page],
         limit=limit,
         cursor=next_cursor,

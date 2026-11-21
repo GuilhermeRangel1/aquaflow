@@ -205,6 +205,7 @@ class DeviceHealthOutput(BaseModel):
 
 
 class DeviceReadingList(BaseModel):
+    queried_at: datetime
     items: list[DeviceReadingOutput]
     limit: int
     cursor: str | None = None
