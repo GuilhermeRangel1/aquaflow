@@ -30,7 +30,7 @@ O DAG `aquaflow_hybrid_telemetry_pipeline` gera a série com seed fixa, valida o
 docker compose up --build -d
 ```
 
-Acesse [http://localhost:8080](http://localhost:8080), habilite o DAG e acione uma execução. A tarefa `train_candidate` lê as tabelas produzidas por essa execução e publica as métricas e artefatos no experimento `aquaflow-hybrid-airflow` do MLflow. Os arquivos ficam em `data/ml/airflow/<execução>/`, nas pastas `raw`, `analysis`, `prepared` e `training`. O log da tarefa indica o caminho da execução. O worker continua lendo o modelo de inicialização em `data/ml/training-bench-v2/`. O treinamento automático do Compose usa os mesmos scripts e roda independentemente do DAG.
+Acesse [http://localhost:8080](http://localhost:8080), habilite o DAG e acione uma execução. A tarefa `train_candidate` lê as tabelas produzidas por essa execução e publica as métricas e artefatos no experimento `aquaflow-hybrid-airflow` do MLflow. Os arquivos ficam em `data/ml/airflow/<execução>/`, nas pastas `raw`, `analysis`, `prepared` e `training`. O log da tarefa indica o caminho da execução. O DAG guarda seu candidato separado do modelo ativo. O worker carrega o artefato inicial ou o candidato promovido pelo retreinamento da aplicação. O treinamento automático do Compose usa os mesmos scripts e roda independentemente do DAG.
 
 As execuções por modelo recebem a tag `airflow_run_id` no MLflow para localizar o treino a partir do identificador exibido no Airflow. O contêiner usa o modo `standalone` com SQLite persistido em volume e um ambiente Python separado para as dependências do treino. A interface local tem autenticação desativada e porta vinculada ao loopback. A inicialização pode consumir vários GB de memória.
 
@@ -114,7 +114,7 @@ A CLI verifica o fuso, o conjunto de features e o hash do modelo contra o relat�
 
 ## Acompanhar inferências da aplicação
 
-Para medidores cadastrados com intervalo esperado inferior a cinco minutos, o worker agrupa as leituras em janelas fixas de cinco minutos. Isso inclui o ESP32 cadastrado com cadência de 30 segundos. O worker calcula o consumo pela diferença do contador acumulado entre os pontos finais de janelas consecutivas e divide pelo tempo observado para obter a vazão média. A inferência fica associada à última leitura válida da janela e aguarda um intervalo esperado após o fechamento. Cobertura insuficiente, lacunas, volume ausente e queda no contador deixam a janela como não avaliada. Leituras atrasadas ficam no histórico. Uma janela já avaliada não é reprocessada pela mesma versão. Medidores com cadência de cinco minutos ou mais seguem com inferência por leitura.
+Para medidores cadastrados com intervalo esperado inferior a cinco minutos, o worker agrupa as leituras em janelas fixas de cinco minutos. Isso inclui o ESP32 cadastrado com cadência de cinco segundos. O worker calcula o consumo pela diferença do contador acumulado entre os pontos finais de janelas consecutivas e divide pelo tempo observado para obter a vazão média. A inferência fica associada à última leitura válida da janela e aguarda um intervalo esperado após o fechamento. Cobertura insuficiente, lacunas, volume ausente e queda no contador deixam a janela como não avaliada. Leituras atrasadas ficam no histórico. Uma janela já avaliada não é reprocessada pela mesma versão. Medidores com cadência de cinco minutos ou mais seguem com inferência por leitura.
 
 O worker processa leituras novas persistidas no PostgreSQL. Ele fica separado da imagem da API e é iniciado pelo Compose depois que o treinamento termina com sucesso. Para iniciar a solução completa, use:
 
@@ -122,9 +122,9 @@ O worker processa leituras novas persistidas no PostgreSQL. Ele fica separado da
 docker compose up --build
 ```
 
-Quando o modelo já existe, o Compose reutiliza o artefato. Para treinar novamente e depois carregar o novo modelo no worker, execute o comando de retreinamento acima e reinicie o serviço com `docker compose restart ml-inference`.
+Para retreinar e promover um candidato, use **Modelos e treinamento → Treinar novamente** na conta administradora. O worker confere o artefato ativo ao processar leituras. O comando de treino do Compose atualiza o artefato inicial, usado quando não existe um candidato ativo.
 
-Com o worker ativo, leituras válidas ainda sem avaliação são processadas uma vez por versão do modelo. Previsões positivas criam alertas experimentais de severidade média e podem ser reconhecidas, resolvidas ou marcadas como falso positivo pelo mesmo fluxo dos alertas por regras. Previsões positivas do mesmo medidor são agrupadas enquanto o alerta estiver aberto ou reconhecido. Previsões normais continuam registradas como inferências, sem criar alertas. O endpoint autenticado `GET /api/v1/properties/{property_id}/ml-inferences` lista os resultados, a versão, os dados avaliados e uma estimativa de sensibilidade dos sinais. Quando existe volume acumulado anterior, o worker deriva a vazão média do intervalo se a leitura não trouxer vazão instantânea. Se houver apenas vazão, estima a variação do volume somente quando o intervalo respeita a frequência esperada do medidor. Lacunas longas, dados insuficientes ou fuso incompatível são registrados como não avaliados. Se o worker estiver parado ou falhar, as regras do MVP continuam processando as leituras e gerando alertas.
+O worker registra uma avaliação por leitura e versão. Previsões positivas podem abrir ou atualizar um aviso experimental do medidor. A API autenticada `GET /api/v1/properties/{property_id}/ml-inferences` expõe os resultados e atributos para as telas da propriedade. As regras determinísticas continuam funcionando sem o worker.
 
 Para conferir o fluxo completo usando o broker, a API e um PostgreSQL de teste isolado, primeiro treine o artefato atualizado como acima e depois execute:
 

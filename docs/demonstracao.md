@@ -46,7 +46,7 @@ Propriedade: Casa da Administração
 
 ## 3. O que aparece na conta demo
 
-Selecione **Casa da Administração** para abrir o **Medidor principal**. O histórico usa as mesmas vazões e volumes da série de treino, com as datas deslocadas para o período da instalação. Na atualização, a API remove os medidores e alertas identificados como exemplos legados. Telemetria de dispositivos físicos é preservada. Para mostrar o ESP32 ao vivo, cadastre um medidor físico separado na propriedade híbrida com intervalo esperado de 30 segundos.
+Selecione **Casa da Administração** para abrir o **Medidor principal**. O histórico usa as mesmas vazões e volumes da série de treino, com as datas deslocadas para o período da instalação. Na atualização, a API remove os medidores e alertas identificados como exemplos legados. Telemetria de dispositivos físicos é preservada. Para mostrar o ESP32 ao vivo, cadastre um medidor físico separado na propriedade híbrida com intervalo esperado de 5 segundos.
 
 Os registros exibidos nessa propriedade são dados de demonstração, não mensagens transmitidas por um medidor físico. As regras e o worker geram alertas a partir das leituras e janelas avaliadas. As previsões do modelo são experimentais e aparecem separadas dos detectores por regras.
 
@@ -71,7 +71,7 @@ O dashboard pode indicar que a análise do modelo ainda está indisponível dura
 1. Acione o DAG híbrido no Airflow e mostre as etapas de geração, análise, preparação e treino do candidato.
 2. Abra o experimento `aquaflow-hybrid-airflow` no MLflow e expanda uma execução por modelo para mostrar as tentativas de busca, as métricas por divisão temporal e a combinação escolhida.
 3. Selecione no dashboard a propriedade do ESP32. Passe água pelo sensor e confirme a chegada da leitura via MQTT e sua persistência pela API.
-4. Mantenha a coleta até fechar uma janela válida de cinco minutos com uma leitura anterior disponível como referência. Consulte `GET /api/v1/properties/{property_id}/ml-inferences` com autenticação e compare os identificadores das leituras com os resultados. O dashboard atual mostra avisos gerados por previsões positivas.
+4. Mantenha a coleta até fechar uma janela válida de cinco minutos com uma leitura anterior disponível como referência. Consulte `GET /api/v1/properties/{property_id}/ml-inferences` com autenticação e compare os identificadores das leituras com os resultados. Confira a mesma inferência em **Telemetria e inferências** e o resultado simplificado no detalhe do medidor.
 5. Apresente a diferença entre o desempenho no teste padrão e no perfil de estresse. Se usar um publicador de teste, identifique essa etapa como simulação e registre o ensaio físico como pendente.
 
 Os parâmetros e limites atuais estão em [Métricas e parâmetros](metricas-e-parametros.md), e uma execução de referência com métricas, hashes e interpretação está registrada em [Resultado do experimento](../ml/docs/resultado-experimento.md).
@@ -82,22 +82,22 @@ Para abrir o notebook de exploração e gráficos, configure as dependências em
 
 ## 5. Demonstrar a ingestão com o ESP32
 
-Cadastre o ESP32 em **Medidores**, copie a chave do dispositivo e configure o firmware conforme o [guia de montagem](../firmware/aquaflow-esp32/README.md). Use a cadência esperada de 30 segundos. Depois da próxima publicação, recarregue **Medidores** para conferir a leitura salva pela API.
+Cadastre o ESP32 em **Medidores**, copie a chave do dispositivo e configure o firmware conforme o [guia de montagem](../firmware/aquaflow-esp32/README.md). Configure o intervalo esperado de **5 segundos**. Acompanhe a leitura em **Telemetria e inferências** ou em **Medidores → Ver detalhes**, que consultam a API automaticamente.
 
 ## 6. Executar o DAG do Airflow
 
-Abra [http://localhost:8080](http://localhost:8080), habilite `aquaflow_hybrid_telemetry_pipeline` e dispare uma execução. A última tarefa treina com as features, rótulos e metadados gerados pelas tarefas anteriores. O candidato e o relatório ficam em `data/ml/airflow/<execução>/training/` e o MLflow registra o experimento. A aplicação segue usando o artefato inicial até uma ativação explícita.
+Abra [http://localhost:8080](http://localhost:8080), habilite `aquaflow_hybrid_telemetry_pipeline` e dispare uma execução. A última tarefa treina com as features, rótulos e metadados gerados pelas tarefas anteriores. O candidato e o relatório ficam em `data/ml/airflow/<execução>/training/` e o MLflow registra o experimento. O candidato do DAG fica separado do modelo ativo até uma ativação explícita.
 
 ## 7. Retreinar os modelos
 
-Para forçar uma nova execução de geração, preparação, comparação e registro no MLflow:
+Na conta administradora, use **Modelos e treinamento → Treinar novamente**. O serviço prepara a série híbrida, avalia o candidato e atualiza o modelo ativo quando aprovado. Para forçar a geração do artefato inicial pelo terminal:
 
 ```powershell
 docker compose run --build --rm -e ML_RETRAIN_MODEL=true ml-trainer
 docker compose restart ml-inference
 ```
 
-A reinicialização recarrega o artefato recém-treinado pelo worker. Os detalhes da avaliação e do notebook ficam em [Dados e modelos](../ml/README.md).
+O worker prefere o candidato apontado por `active-model.json` quando esse arquivo já existe. O comando acima atualiza o artefato inicial; para trocar o candidato ativo, use o botão de retreinamento. Os detalhes da avaliação e do notebook ficam em [Dados e modelos](../ml/README.md).
 
 ## 8. Verificar o trajeto MQTT → API → banco
 

@@ -111,51 +111,21 @@ Na conta local de Administração, selecione **Casa da Administração** para ve
 
 1. Em **Medidores**, cadastre um medidor para a placa. Abra **Ver detalhes → Editar medidor** e configure o intervalo esperado de **5 segundos**.
 2. Configure o serial, a chave do medidor e o IP do broker seguindo o [guia do firmware](firmware/aquaflow-esp32/README.md).
-3. Ligue a placa, passe água pelo sensor e atualize a aba **Medidores** depois da próxima publicação. A API salva as leituras no PostgreSQL automaticamente.
-4. Depois de uma janela completa de **cinco minutos** com dados suficientes, o worker avalia o consumo com o modelo já carregado. Se houver alerta experimental, ele aparece em **Acompanhamento** ao recarregar a página.
+3. Ligue a placa, passe água pelo sensor e acompanhe a próxima publicação em **Telemetria e inferências** ou no detalhe do medidor. A API salva as leituras no PostgreSQL automaticamente.
+4. Depois de uma janela completa de **cinco minutos** com dados suficientes, o worker avalia o consumo com o modelo já carregado. Se houver alerta experimental, ele aparece em **Alertas**.
 
-Na aba de acompanhamento, alertas de regras e análises experimentais de ML aparecem separados. Uma previsão positiva pode abrir um alerta experimental tratável; isso não muda os detectores por regras. Resultados insuficientes indicam que faltam dados válidos para calcular as features necessárias, e não que o modelo previu comportamento normal. Veja [como executar e demonstrar](docs/demonstracao.md) para os passos de MQTT, Airflow, logs e reinicialização.
+Em **Alertas**, a origem do aviso indica se ele veio de uma regra ou de uma análise experimental. Uma previsão positiva pode abrir um alerta experimental tratável; isso não muda os detectores por regras. Resultados insuficientes indicam que faltam dados válidos para calcular as features necessárias, e não que o modelo previu comportamento normal. Veja [como executar e demonstrar](docs/demonstracao.md) para os passos de MQTT, Airflow, logs e reinicialização.
 
-## Como entram e são tratados os dados
+## Telemetria, alertas e modelos
 
-### HTTP
-
-Um dispositivo provisionado envia a leitura à API com seu número de série, um `event_id` estável, timestamp com fuso e volume acumulado, vazão instantânea ou ambos. A API valida a chave individual, verifica limites e timestamps, evita duplicar eventos reenviados e preserva a telemetria bruta. O consumo é calculado a partir de leituras válidas compatíveis.
-
-### MQTT
-
-O broker local recebe uma publicação no tópico do medidor. O consumidor valida a mensagem e encaminha a leitura para a API HTTP, que continua responsável por autenticação, validação, idempotência e armazenamento. O teste automatizado MQTT usa um banco isolado.
-
-Para os tópicos, o corpo JSON e uma publicação de exemplo, consulte o [contrato MQTT](docs/contrato-mqtt.md).
-
-### Regras de monitoramento
-
-Os principais detectores atuais são fluxo contínuo acima do limite configurado, aumento persistente do consumo durante a janela noturna local e ausência de leituras por mais de dois intervalos esperados. As regras produzem explicações e evidências; seus padrões e condições estão em [Métricas e parâmetros](docs/metricas-e-parametros.md).
-
-O AquaFlow sinaliza comportamentos que merecem verificação. Não confirma nem localiza fisicamente um vazamento.
-
-## Experimento de machine learning
-
-O modelo é um classificador binário por leitura válida. O gerador cria períodos normais, fluxo contínuo, consumo noturno e lacunas; `anomaly_label` marca os cenários artificiais. Os classificadores usam vazão, delta do volume acumulado e duração do intervalo. As codificações cíclicas de calendário são preservadas no contrato dos dados e excluídas dentro do pipeline para reduzir a memorização da agenda simulada.
-
-O treinamento padrão usa 16 dias simulados com vazões calibradas em bancada, partição cronológica de 8/4/4 dias, validação cruzada temporal e comparação entre KNN, Árvore de Decisão, Random Forest e um baseline de prevalência. A seleção considera average precision na validação temporal e num perfil simulado com rotina alterada. Um perfil de estresse fica separado para avaliação posterior.
+- **Telemetria e inferências** mostra a conexão, a vazão ao vivo e as análises por leitura. **Medidores** apresenta o histórico e os resultados em linguagem simples.
+- **Visão geral** reúne o consumo, os detalhes expansíveis, os litros sinalizados e a estimativa mensal de água pela tarifa residencial de referência de Recife.
+- **Modelos e treinamento** mostra as métricas experimentais. O administrador pode solicitar retreinamento da série híbrida. O Compose também treina quando o artefato está ausente.
+- A criação de alertas por regras funciona em paralelo com a inferência. Água registrada num período sinalizado merece verificação; isso não comprova vazamento.
 
 ### Resultado de referência
 
-O Dummy Classifier usa a prevalência do treino como referência para medir o ganho de modelos que usam as features. O MLflow guarda cada combinação da busca aleatória, suas métricas por divisão temporal e a combinação vencedora de cada modelo. A seleção final usa a média da AP na validação padrão e na validação com rotina alterada. O teste cronológico e o perfil de estresse ficam reservados para avaliação posterior.
-
-Na execução regularizada de 20/11/2026, o KNN foi selecionado com AP média de **0,937** na validação. No teste cronológico, a AP foi **0,994** e o recall **97,6%**. No perfil de estresse, a AP foi **0,929** e o recall **91,8%**, com limiar de 0,5. A vizinhança proporcional reduziu o desvio da AP entre folds para **0,017**. As métricas descrevem perfis simulados calibrados em bancada e não estabelecem ausência de sobreajuste em campo. O relatório local está em `data/ml/training-bench-v2/training_report.md`, e o histórico da revisão está em [Validação da integração](docs/validacao-integracao.md).
-
-O relatório mostra a diferença entre treino e validação e a variação da AP entre divisões temporais. A queda no perfil de estresse indica sensibilidade a mudanças de rotina simuladas. A generalização para residências depende de validação em campo.
-
-### Airflow, treinamento e notebook
-
-- **Airflow:** acione o DAG manualmente para gerar, analisar e preparar a série híbrida, treinar um modelo candidato com esses arquivos e registrar as execuções no MLflow. As saídas ficam em `data/ml/airflow/<execução>/`, separadas do modelo em uso.
-- **Treinamento do Compose:** executa automaticamente quando o artefato não existe ou pode ser forçado com o comando descrito em [Dados e modelos](ml/README.md).
-- **Notebook:** documenta a exploração e o preparo e gera gráficos de avaliação a partir do modelo treinado. Não substitui o pipeline nem envia seus gráficos ao dashboard.
-- **Inferência na aplicação:** o worker avalia leituras persistidas com dados suficientes e registra a versão do modelo. As regras permanecem ativas se o worker falhar.
-
-Para os valores de configuração, métricas, unidades e limitações do experimento, consulte [Métricas e parâmetros](docs/metricas-e-parametros.md). O [estado atual do projeto](docs/estado-do-projeto.md) explica o que será necessário para migrar de dados simulados para telemetria real.
+Na execução de referência, o KNN obteve AP **0,994** e recall **97,6%** no teste cronológico. No estresse simulado, a AP foi **0,929** e o recall **91,8%**. Consulte [Dados e modelos](ml/README.md) para reproduzir, [Validação da integração](docs/validacao-integracao.md) para as evidências e [Estado atual](docs/estado-do-projeto.md) para as pendências.
 
 ## Configurações locais
 

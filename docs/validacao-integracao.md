@@ -1,4 +1,4 @@
-# Validação da integração antes das telas técnicas
+# Histórico de validação da integração
 
 Execução de 20/11/2026 sobre o commit `0fae51e`, na branch
 `feat/frontend-redesign`. O ambiente principal usa o projeto Compose
@@ -109,7 +109,7 @@ O evento recém-enviado tem ID `00cc7aa528e0494d9833bae8535d40d4`.
 A API expõe seus horários de medição e recepção. Os cenários de classificação
 usaram timestamps passados controlados e aceitos pela janela de ingestão.
 
-## O que fica pronto para as próximas telas
+## Estado das telas na data deste ensaio
 
 - A telemetria pode usar as consultas existentes de leituras e estado do medidor.
 - A tela de inferências pode consultar os resultados, a versão, as features e
