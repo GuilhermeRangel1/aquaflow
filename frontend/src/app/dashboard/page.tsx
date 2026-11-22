@@ -2282,6 +2282,36 @@ function formatObservedDuration(minutes: number): string {
   return `${minutes.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} min`;
 }
 
+function groupConsumption(
+  hourlyData: Array<{ hour: string; volume_liters: number | null }>,
+  granularity: "dia" | "semana",
+) {
+  const byDay = new Map<string, number | null>();
+  for (const point of hourlyData) {
+    const day = point.hour.split(" ")[0];
+    const previous = byDay.get(day) ?? null;
+    byDay.set(day, point.volume_liters === null ? previous : (previous ?? 0) + point.volume_liters);
+  }
+
+  const days = Array.from(byDay, ([hour, volume_liters]) => ({ hour, volume_liters }));
+  if (granularity === "dia") return days;
+
+  const weeks = [];
+  for (let end = days.length; end > 0; end -= 7) {
+    const week = days.slice(Math.max(0, end - 7), end);
+    const first = week[0].hour;
+    const last = week[week.length - 1].hour;
+    weeks.push({
+      hour: first === last ? first : `${first}–${last}`,
+      volume_liters: week.reduce<number | null>(
+        (total, day) => (day.volume_liters === null ? total : (total ?? 0) + day.volume_liters),
+        null,
+      ),
+    });
+  }
+  return weeks.reverse();
+}
+
 function OverviewInsights({
   hours,
   hourlyData,
@@ -2293,14 +2323,19 @@ function OverviewInsights({
   hourlyLoading: boolean;
   hourlyError: string;
 }) {
-  const hourlyPlot = hourlyData.map((point) => ({
+  const granularity = hours === 24 ? "hora" : hours === 168 ? "dia" : "semana";
+  const chartData = granularity === "hora" ? hourlyData : groupConsumption(hourlyData, granularity);
+  const chartTicks = chartData
+    .filter((_point, index) => granularity !== "hora" || index % 4 === 0)
+    .map((point) => point.hour);
+  const hourlyPlot = chartData.map((point) => ({
     ...point,
     chartValue: point.volume_liters ?? 0,
   }));
 
   const observedHours = hourlyData.filter((point) => point.volume_liters !== null).length;
   let recordedTotal = 0;
-  const cumulative = hourlyData.map((point) => {
+  const cumulative = chartData.map((point) => {
     recordedTotal += point.volume_liters ?? 0;
     return { hour: point.hour, total: point.volume_liters === null ? null : recordedTotal };
   });
@@ -2319,7 +2354,7 @@ function OverviewInsights({
     <div className="overview-insights-grid">
       <article className="overview-insight-card">
         <div className="overview-insight-heading">
-          <h3>Consumo por horário</h3>
+          <h3>{granularity === "hora" ? "Consumo por horário" : `Consumo por ${granularity}`}</h3>
           <span>{consumptionWindowLabel(hours)} · litros</span>
         </div>
         {hourlyLoading ? (
@@ -2331,12 +2366,12 @@ function OverviewInsights({
             Não foi possível carregar o consumo por horário.
           </p>
         ) : hourlyPlot.length === 0 ? (
-          <p className="overview-insight-message">Sem leituras nas últimas 24 horas.</p>
+          <p className="overview-insight-message">Sem leituras neste período.</p>
         ) : (
           <div
             className="overview-insight-chart"
             role="img"
-            aria-label={`Consumo em litros por hora. ${consumptionWindowLabel(hours)}. Marcas cinza indicam horas sem dados suficientes.`}
+            aria-label={`Consumo em litros por ${granularity}. ${consumptionWindowLabel(hours)}. Marcas cinza indicam períodos sem dados suficientes.`}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={hourlyPlot} margin={{ top: 8, right: 4, left: -20, bottom: 0 }}>
@@ -2348,13 +2383,7 @@ function OverviewInsights({
                   tick={{ fill: "var(--muted)", fontSize: 11 }}
                   interval="preserveStartEnd"
                   minTickGap={36}
-                  ticks={hourlyData
-                    .filter((point, index) =>
-                      hours === 24 ? index % 4 === 0 : point.periodHour === 0,
-                    )
-                    .filter((_point, index) => index % Math.max(1, Math.ceil(hours / 24 / 7)) === 0)
-                    .map((point) => point.hour)}
-                  tickFormatter={(value: string) => (hours === 24 ? value : value.split(" ")[0])}
+                  ticks={chartTicks}
                 />
                 <YAxis
                   axisLine={false}
@@ -2427,17 +2456,7 @@ function OverviewInsights({
                         tickLine={false}
                         interval="preserveStartEnd"
                         minTickGap={36}
-                        ticks={hourlyData
-                          .filter((point, index) =>
-                            hours === 24 ? index % 4 === 0 : point.periodHour === 0,
-                          )
-                          .filter(
-                            (_point, index) => index % Math.max(1, Math.ceil(hours / 24 / 7)) === 0,
-                          )
-                          .map((point) => point.hour)}
-                        tickFormatter={(value: string) =>
-                          hours === 24 ? value : value.split(" ")[0]
-                        }
+                        ticks={chartTicks}
                         tick={{ fill: "var(--muted)", fontSize: 11 }}
                       />
                       <YAxis
