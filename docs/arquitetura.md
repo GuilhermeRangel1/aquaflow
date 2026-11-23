@@ -1,6 +1,6 @@
 # Arquitetura do AquaFlow
 
-O AquaFlow é um protótipo integrado para demonstrar aquisição de telemetria, armazenamento, cálculo de consumo, monitoramento por regras, avaliação experimental de ML e apresentação no dashboard. O fluxo pode ser executado localmente com Docker Compose. A demonstração e o treinamento usam a série calibrada calibrada em bancada. O firmware ESP32 publica telemetria física por MQTT.
+O AquaFlow é um protótipo integrado para demonstrar aquisição de telemetria, armazenamento, cálculo de consumo, monitoramento por regras, avaliação experimental de ML e apresentação no dashboard. O fluxo pode ser executado localmente com Docker Compose. A demonstração e o treinamento usam a série calibrada em bancada. O firmware ESP32 publica telemetria física por MQTT.
 
 ## Visão geral
 
