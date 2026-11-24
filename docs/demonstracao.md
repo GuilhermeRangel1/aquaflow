@@ -8,7 +8,7 @@ Este guia explica como iniciar o protótipo, observar o que cada processo está 
 - Memória suficiente para PostgreSQL, frontend, API, treinamento e Airflow. A primeira inicialização pode levar mais tempo porque imagens e artefatos de ML ainda precisam ser preparados.
 - Portas locais `3000`, `5000`, `5432`, `8000`, `8080` e `1883` disponíveis. O ESP32 acessa o broker MQTT pela porta `1883` no IP local do computador.
 
-Na raiz do repositório, opcionalmente copie `.env.example` para `.env` caso queira alterar senha do banco, JWT, conta demonstrativa ou credenciais MQTT. Os padrões são somente para desenvolvimento local.
+Na raiz do repositório, copie `.env.example` para `.env` se o arquivo ainda não existir. O Compose exige `DEMO_USER_PASSWORD`. As credenciais de exemplo são para desenvolvimento local.
 
 ## 2. Subir a aplicação
 
@@ -24,7 +24,7 @@ O Compose constrói e inicia os serviços integrados. Na ordem lógica:
 2. O serviço `demo-data` gera a série calibrada com a calibração do treino. A API aplica as migrations e grava esse histórico no PostgreSQL da conta demo.
 3. Broker MQTT e consumidor ficam disponíveis; o consumidor encaminha mensagens para a API HTTP.
 4. MLflow fica disponível para registrar experimentos.
-5. Se não houver artefato treinado, `ml-trainer` gera a série calibrada calibrada em bancada, analisa, prepara e compara os modelos. Ele termina normalmente ao concluir.
+5. Se não houver artefato treinado, `ml-trainer` analisa e prepara a série calibrada em bancada e compara os modelos. Ele termina normalmente ao concluir.
 6. `ml-inference` inicia depois do treinamento e avalia as leituras compatíveis já persistidas e as que chegarem depois.
 7. Frontend e Airflow ficam acessíveis localmente. O DAG Airflow não é acionado automaticamente; ele deve ser habilitado e executado pela interface.
 
@@ -49,6 +49,14 @@ Propriedade: Casa da Administração
 Selecione **Casa da Administração** para abrir o **Medidor principal**. O histórico usa as mesmas vazões e volumes da série de treino, com as datas deslocadas para o período da instalação. Na atualização, a API remove os medidores e alertas identificados como exemplos legados. Telemetria de dispositivos físicos é preservada. Para mostrar o ESP32 ao vivo, cadastre um medidor físico separado na propriedade de demonstração com intervalo esperado de 5 segundos.
 
 Os registros exibidos nessa propriedade são dados de demonstração, não mensagens transmitidas por um medidor físico. As regras e o worker geram alertas a partir das leituras e janelas avaliadas. As previsões do modelo são experimentais e aparecem separadas dos detectores por regras.
+
+| Tela | O que conferir |
+| --- | --- |
+| Visão geral | Consumo por período, detalhes do gráfico, volumes sinalizados e estimativa da cobrança de água de Recife. |
+| Medidores | Estado da conexão, vazão recente e resultados das últimas leituras. |
+| Alertas | Medidor, motivo do aviso e ações de acompanhamento. |
+| Telemetria e inferências | Vazão ao vivo e detalhes da inferência associada a cada leitura. |
+| Modelos e treinamento | Métricas do modelo e solicitação de retreinamento pela conta administradora. |
 
 ## 4. Acompanhar inicialização e treinamento
 
@@ -86,7 +94,7 @@ Cadastre o ESP32 em **Medidores**, copie a chave do dispositivo e configure o fi
 
 ## 6. Executar o DAG do Airflow
 
-Abra [http://localhost:8080](http://localhost:8080), habilite `aquaflow_demo_telemetry_pipeline` e dispare uma execução. A última tarefa treina com as features, rótulos e metadados gerados pelas tarefas anteriores. O candidato e o relatório ficam em `data/ml/airflow/<execução>/training/` e o MLflow registra o experimento. O candidato do DAG fica separado do modelo ativo até uma ativação explícita.
+Abra [http://localhost:8080](http://localhost:8080), habilite `aquaflow_demo_telemetry_pipeline` e dispare uma execução. A última tarefa treina com as features, rótulos e metadados gerados pelas tarefas anteriores. O candidato e o relatório ficam em `data/ml/airflow/<execução>/training/` e o MLflow registra o experimento. O DAG guarda o candidato para avaliação. O modelo usado pelo painel é gerenciado pelo fluxo de retreinamento da aplicação.
 
 ## 7. Retreinar os modelos
 

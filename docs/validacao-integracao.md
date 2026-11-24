@@ -1,10 +1,9 @@
 # Histórico de validação da integração
 
-Execução de 20/11/2026 sobre o commit `0fae51e`, na branch
-`feat/frontend-redesign`. O ambiente principal usa o projeto Compose
+Execução de 20/11/2026 sobre o commit `0fae51e`. O ambiente principal usou o projeto Compose
 `aquaflow-hybrid-check`. Os testes de publicação usam também
 `aquaflow-preflight-test`, com PostgreSQL, API, broker e consumidor próprios.
-O publicador usado nesta rodada é um simulador MQTT.
+O publicador usado nesta rodada foi um simulador MQTT. Para a situação atual das telas e das entregas, consulte o [estado do projeto](estado-do-projeto.md).
 
 ## Airflow e MLflow
 
@@ -192,9 +191,9 @@ e validação, consulte as
 [curvas de aprendizado do scikit-learn](https://scikit-learn.org/stable/modules/learning_curve.html)
 e as [orientações sobre vazamento de informação](https://scikit-learn.org/stable/common_pitfalls.html).
 
-## Correção do sobreajuste — branch híbrida
+## Correção do sobreajuste
 
-As alterações seguintes estão locais em `feat/ml-dataset-hibrido`.
+Esta etapa registra os resultados do ensaio após a regularização dos modelos.
 O teste de regressão reproduziu a diferença de AP de 0,841 do KNN antes
 da correção. A nova busca usa medições em vez do calendário, votos uniformes
 com vizinhanças maiores e árvores de profundidade dois ou três. A escolha

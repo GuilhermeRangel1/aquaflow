@@ -4,11 +4,11 @@ Esta pasta concentra o experimento de machine learning do AquaFlow: séries cali
 
 O Compose inicia o treinamento automaticamente quando não encontra os artefatos esperados e depois inicia o worker. Cada execução manual do DAG do Airflow gera, analisa e prepara os dados, treina um candidato e registra a avaliação no MLflow. O notebook documenta a preparação e visualiza as avaliações. Veja [arquitetura](../docs/arquitetura.md), [estado atual do projeto](../docs/estado-do-projeto.md) e [pipeline detalhado](docs/pipeline.md).
 
-O [relatório de resultado do experimento](docs/resultado-experimento.md) registra uma execução reproduzível do código atual, com comparação de candidatos, avaliação em perfis distintos, hashes e limitações. Os [parâmetros e métricas do projeto](../docs/metricas-e-parametros.md) explicam os padrões usados no experimento e no restante da aplicação.
+O [relatório SBC](../reports/aquaflow-sbc.pdf) apresenta a avaliação de referência da série calibrada. O [registro do experimento anterior](docs/resultado-experimento.md) preserva os resultados da série sintética anterior à calibração. Os [parâmetros e métricas do projeto](../docs/metricas-e-parametros.md) explicam os padrões usados na aplicação.
 
 ## Gerar dados simulados
 
-Na raiz do repositório:
+Execute os comandos do Compose na raiz do repositório. Antes da primeira execução, [configure o arquivo de ambiente](../README.md#início-rápido), pois o Compose exige `DEMO_USER_PASSWORD`.
 
 ```powershell
 docker compose run --build --rm ml-data-generator

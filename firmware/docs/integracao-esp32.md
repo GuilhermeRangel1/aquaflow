@@ -2,18 +2,18 @@
 
 > **Estado atual:** já existe um firmware PlatformIO em [`firmware/aquaflow-esp32/`](../aquaflow-esp32/) para ESP32-WROOM-32, mas ele ainda **não foi validado em hardware real** (placa e sensor não conectados). Este documento serve tanto como roteiro para testar a API com uma requisição manual quanto como contrato de referência para o firmware. A conta demo e as leituras de exemplo são sintéticas; os exemplos manuais abaixo não validam medição física.
 
-O roteiro usa a API atual do AquaFlow para enviar leituras por HTTP — o mesmo caminho que o firmware em `firmware/aquaflow-esp32/` percorre. O firmware já define placa (ESP32-WROOM-32), sensor de vazão por pulso e pino em `include/config.h`; o fator de calibração começa no valor nominal e deve ser confirmado por medição física (ver a seção "Calibracao" do README do firmware). Para iniciar a aplicação local completa, siga primeiro o [guia de execução](../../docs/demonstracao.md).
+O roteiro envia leituras diretamente à API HTTP para verificar a ingestão sem a placa. O firmware publica por MQTT e o consumidor encaminha as mensagens à mesma API. O firmware já define placa (ESP32-WROOM-32), sensor de vazão por pulso e pino em `include/config.h`; o fator de calibração começa no valor nominal e deve ser confirmado por medição física (ver a seção "Calibracao" do README do firmware). Para iniciar a aplicação local completa, siga primeiro o [guia de execução](../../docs/demonstracao.md).
 
 ## Preparar um medidor
 
-1. Inicie a aplicação com `docker compose up` e entre no AquaFlow.
+1. Prepare o arquivo de ambiente e suba a aplicação pelo [guia de demonstração](../../docs/demonstracao.md). Depois, entre no AquaFlow.
 2. Abra **Medidores** e adicione um medidor de teste com um número de série exclusivo, por exemplo `ESP32-AGUA-0001`.
 3. Copie a chave exibida. Ela é apresentada uma única vez; mantenha-a no dispositivo e não a publique no código ou no Git.
 4. Na máquina que executa o Docker, descubra o IPv4 da rede local com `ipconfig`. O ESP32 e essa máquina precisam estar na mesma rede Wi-Fi.
 
 Se a chave for exposta, gere outra com `POST /api/v1/devices/{device_id}/rotate-key`, autenticado como proprietário. A nova chave é exibida uma única vez e a anterior deixa de autenticar imediatamente. Consulte o ID do medidor em **Medidores** ou na resposta de `GET /api/v1/devices`.
 
-No computador, a API fica em `http://localhost:8000`. No ESP32, `localhost` aponta para o próprio ESP32; use o IPv4 da máquina que executa o Docker, como `http://192.168.1.20:8000`. O firewall do Windows também precisa permitir a conexão na rede privada.
+Faça o teste HTTP no computador que executa o Docker, em `http://localhost:8000`. Para a placa, configure o IPv4 desse computador como endereço do broker MQTT e use a porta `1883`. O firewall precisa permitir essa conexão na rede privada.
 
 ## Contrato de telemetria
 
@@ -49,7 +49,7 @@ Com o token de usuário, a API oferece `GET /api/v1/devices/{device_id}/health` 
 O exemplo abaixo usa PowerShell e o endpoint real da API. Troque o IPv4, o número de série e a chave pelos dados do medidor que você acabou de provisionar:
 
 ```powershell
-$api = "http://192.168.1.20:8000"
+$api = "http://localhost:8000"
 $deviceKey = "COLE_A_CHAVE_DO_MEDIDOR"
 $serial = "ESP32-AGUA-0001"
 $headers = @{ "X-Device-Key" = $deviceKey }
@@ -99,4 +99,4 @@ Use HTTPS quando a API estiver fora da rede local de desenvolvimento. HTTP no Co
 
 ## O que falta validar no firmware da placa
 
-O firmware em `firmware/aquaflow-esp32/` já implementa placa, pino, contagem de pulsos por interrupção e envio HTTP. O que falta é a **validação física**: gravar na placa, confirmar a telemetria chegando (`202`) e **calibrar** o fator pulsos/litro contra um volume conhecido — o valor em `FLOW_PULSES_PER_LITER` ainda é o nominal do sensor e não deve ser tratado como definitivo. O procedimento de calibração está no README do firmware.
+O firmware em `firmware/aquaflow-esp32/` já implementa placa, pino, contagem de pulsos por interrupção e publicação MQTT a cada cinco segundos. O que falta é a **validação física**: gravar na placa e confirmar que as leituras publicadas por MQTT chegam ao painel e **calibrar** o fator pulsos/litro contra um volume conhecido — o valor em `FLOW_PULSES_PER_LITER` ainda é o nominal do sensor e não deve ser tratado como definitivo. O procedimento de calibração está no README do firmware.

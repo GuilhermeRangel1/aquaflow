@@ -1,4 +1,6 @@
-# Resultado de referência do experimento de ML
+# Experimento anterior à etapa de calibração de bancada
+
+Para os comandos e resultados usados na demonstração atual, consulte o [guia de dados e modelos](../README.md).
 
 Este relatório registra uma execução do pipeline atual para que os resultados possam ser discutidos e comparados. **Todos os dados e rótulos são simulados pelo AquaFlow.** As métricas indicam somente como os modelos reconheceram os padrões construídos pelo gerador; não estimam detecção de vazamentos em residências.
 

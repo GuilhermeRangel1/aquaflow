@@ -21,6 +21,8 @@ O protótipo pode ser demonstrado com o histórico carregado pelo Compose ou com
 
 [Ideação e definição do problema](https://sites.google.com/cesar.school/projetos6-gp14/sr1/defini%C3%A7%C3%A3o-do-problema)
 
+[Protótipo no Figma](https://www.figma.com/design/Qd38nnUgejHw74QV5gCYAb?node-id=2-75) · [Relatório SBC](reports/aquaflow-sbc.pdf)
+
 | Guia | O que você encontra |
 | --- | --- |
 | [Como executar](docs/demonstracao.md) | Inicialização com Docker Compose, conta de demonstração e comandos do fluxo principal. |
@@ -74,10 +76,10 @@ Essas funções mostram o funcionamento integrado do protótipo. Elas não compr
 - Porta `1883` disponível para o broker MQTT local.
 - Memória suficiente para a aplicação, o Airflow e o treinamento inicial. A geração do modelo pode levar alguns minutos.
 
-Na raiz do repositório, copie `.env.example` para `.env` (o Compose exige `DEMO_USER_PASSWORD`) e inicie a solução completa:
+Na raiz do repositório, copie `.env.example` para `.env` se o arquivo ainda não existir (o Compose exige `DEMO_USER_PASSWORD`) e inicie a solução completa:
 
 ```powershell
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 docker compose up --build
 ```
 
@@ -101,7 +103,7 @@ Senha: admin123
 Propriedade: Casa da Administração
 ```
 
-Para mudar o e-mail ou a senha, copie `.env.example` para `.env` e altere `DEMO_USER_EMAIL` e `DEMO_USER_PASSWORD` antes de iniciar. Os valores padrão são destinados apenas à máquina local.
+Para mudar o e-mail ou a senha, edite o `.env` e altere `DEMO_USER_EMAIL` e `DEMO_USER_PASSWORD` antes de iniciar. Os valores padrão são destinados apenas à máquina local.
 
 ### O que você verá
 
