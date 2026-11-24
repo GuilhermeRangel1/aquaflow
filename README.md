@@ -30,7 +30,7 @@ O protótipo pode ser demonstrado com o histórico carregado pelo Compose ou com
 | [Estado atual](docs/estado-do-projeto.md) | O que está implementado, o que é experimental e o que falta validar. |
 | [Métricas e parâmetros](docs/metricas-e-parametros.md) | Limites, valores padrão e métricas usados no projeto. |
 | [Avaliação do dataset calibrado](#resultado-de-referência) | Resultado atual e limites da avaliação. |
-| [Histórico do experimento sintético](ml/docs/resultado-experimento.md) | Execução anterior à calibração de bancada. |
+| [Relatório SBC](reports/aquaflow-sbc.pdf) | Avaliação documentada do experimento com dados simulados calibrados em bancada. |
 | [Dados e modelos](ml/README.md) | Série calibrada, pipeline, notebook, treinamento e inferência. |
 | [Contrato MQTT](docs/contrato-mqtt.md) | Tópicos, autenticação e payload aceito pelo broker local. |
 | [Especificação](especificacao-monitoramento-consumo-agua.md) | Requisitos e contratos de referência do produto e da API. |

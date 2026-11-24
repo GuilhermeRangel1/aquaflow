@@ -37,7 +37,7 @@ O backend é um monólito modular: autenticação, propriedades, medidores, inge
 - **Dados gerados para o primeiro ciclo:** geradores reproduzíveis permitem exercitar preparação, treinamento e interface sem aguardar hardware; em contrapartida, não sustentam alegações de desempenho no mundo real.
 - **Airflow manual e treinamento no Compose:** o DAG encadeia geração, análise, preparação e treino de um candidato no MLflow. O serviço de treinamento do Compose fornece o artefato de inicialização do worker.
 
-Os valores usados por essas decisões e os resultados de referência do classificador estão em [Métricas e parâmetros](metricas-e-parametros.md) e [Resultado do experimento](../ml/docs/resultado-experimento.md).
+Os valores usados por essas decisões e os resultados de referência do classificador estão em [Métricas e parâmetros](metricas-e-parametros.md) e [Relatório SBC](../reports/aquaflow-sbc.pdf).
 
 ## Caminho de uma leitura
 
@@ -87,7 +87,7 @@ No primeiro `docker compose up --build`, se não houver `best_model.joblib` e `m
 
 Os estimadores usam vazão, variação do volume acumulado e duração. A codificação cíclica de horário e dia da semana permanece no contrato, mas é excluída no pipeline dos estimadores. Identificadores, serial, timestamp bruto, bateria, sinal, firmware e rótulos não entram como features. As transformações compartilhadas ficam em `ml/feature_transforms.py`.
 
-O notebook [`ml/notebooks/01_exploracao_e_avaliacao.ipynb`](../ml/notebooks/01_exploracao_e_avaliacao.ipynb) documenta a exploração e a preparação e cria gráficos de avaliação. O DAG manual do Airflow usa os mesmos scripts do treinamento automático e guarda o candidato e as tabelas em um diretório próprio da execução.
+O notebook [`ml/notebooks/01_ciclo_completo_de_ml_aquaflow.ipynb`](../ml/notebooks/01_ciclo_completo_de_ml_aquaflow.ipynb) documenta a exploração e a preparação e cria gráficos de avaliação. O DAG manual do Airflow usa os mesmos scripts do treinamento automático e guarda o candidato e as tabelas em um diretório próprio da execução.
 
 ## Serviços locais
 

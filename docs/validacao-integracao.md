@@ -55,7 +55,7 @@ aberta em [MLflow local](http://localhost:5000/#/experiments/2).
 ## Notebook e visualizações
 
 As 13 células de código de
-`ml/notebooks/01_exploracao_e_avaliacao.ipynb` foram executadas em sequência
+`ml/notebooks/01_ciclo_completo_de_ml_aquaflow.ipynb` foram executadas em sequência
 no ambiente Python de treino do Airflow, com backend gráfico Agg.
 A preparação passou, com 4.511 observações e cobertura de 97,9%.
 A seção de teste avaliou 1.128 amostras, com AP de 0,999.
@@ -117,7 +117,7 @@ usaram timestamps passados controlados e aceitos pela janela de ingestão.
   MLflow. O acesso administrativo e a API que apresentará esses dados ao
   frontend ainda precisam ser implementados.
 
-A validação física com ESP32, sensor e Wi-Fi continua pendente. O relatório
+A equipe confirmou a atualização da tela de telemetria com o ESP32 e o sensor físicos. Ao soprar no sensor, a tela exibiu cerca de 50 L/min. O ensaio confirma a resposta da leitura ao estímulo e sua chegada à interface. A vazão de água precisa ser verificada separadamente com volume conhecido e tempo medido. O relatório
 SBC, as telas técnicas e o ensaio completo da apresentação seguem como entregas
 futuras.
 

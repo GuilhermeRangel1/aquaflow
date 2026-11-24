@@ -99,4 +99,4 @@ Use HTTPS quando a API estiver fora da rede local de desenvolvimento. HTTP no Co
 
 ## O que falta validar no firmware da placa
 
-O firmware em `firmware/aquaflow-esp32/` já implementa placa, pino, contagem de pulsos por interrupção e publicação MQTT a cada cinco segundos. O que falta é a **validação física**: gravar na placa e confirmar que as leituras publicadas por MQTT chegam ao painel e **calibrar** o fator pulsos/litro contra um volume conhecido — o valor em `FLOW_PULSES_PER_LITER` ainda é o nominal do sensor e não deve ser tratado como definitivo. O procedimento de calibração está no README do firmware.
+O firmware em `firmware/aquaflow-esp32/` já implementa placa, pino, contagem de pulsos por interrupção e publicação MQTT a cada cinco segundos. A equipe confirmou que as leituras do sensor físico chegam à tela de telemetria. Para validar a vazão de água, calibre o fator pulsos/litro com um volume conhecido. O valor em `FLOW_PULSES_PER_LITER` é nominal. O procedimento de calibração está no README do firmware.

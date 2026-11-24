@@ -15,6 +15,6 @@ Para telemetria de alta frequência, a inferência exige uma janela válida de c
 
 ## Validação e próximos passos
 
-- O trajeto MQTT → API → PostgreSQL → inferência foi exercitado com simulador. Falta repetir com ESP32 e sensor físicos, verificando calibração, reconexão e chegada das leituras durante a apresentação.
+- O trajeto MQTT → API → PostgreSQL → inferência foi exercitado com simulador. A equipe também confirmou a chegada das leituras do ESP32 e do sensor físicos à tela de telemetria. A calibração volumétrica e o ensaio de reconexão continuam pendentes.
 - O desempenho de ML foi medido em séries simuladas calibradas em bancada. Para inferir desempenho em residências, o modelo precisa de avaliação física independente. Veja a [execução de referência](validacao-integracao.md).
 - O Compose é destinado à demonstração local. Antes de qualquer uso em produção, revise segredos, autenticação dos serviços, isolamento de rede e TLS.

@@ -66,7 +66,7 @@ docker compose restart ml-inference
 
 ## Notebook e gráficos
 
-O notebook [`ml/notebooks/01_exploracao_e_avaliacao.ipynb`](../notebooks/01_exploracao_e_avaliacao.ipynb) usa o gerador e o preparador existentes. Ele cria gráficos exploratórios e, em uma seção separada, compara os candidatos e mostra a matriz de confusão, a curva precisão-recall e a curva ROC do bloco de teste usando o artefato treinado. Ele não reimplementa o treinamento. Consulte [instruções de execução e interpretação](../README.md).
+O notebook [`ml/notebooks/01_ciclo_completo_de_ml_aquaflow.ipynb`](../notebooks/01_ciclo_completo_de_ml_aquaflow.ipynb) usa o gerador e o preparador existentes. Ele cria gráficos exploratórios e, em uma seção separada, compara os candidatos e mostra a matriz de confusão, a curva precisão-recall e a curva ROC do bloco de teste usando o artefato treinado. Ele não reimplementa o treinamento. Consulte [instruções de execução e interpretação](../README.md).
 
 ## Inferência offline e worker da aplicação
 
@@ -80,4 +80,4 @@ Previsões positivas podem abrir alertas experimentais tratáveis; previsões no
 
 O Airflow roda no modo `standalone`, com SQLite persistido e autenticação local desativada. Sua porta é vinculada ao loopback. O MLflow também é local. Essas opções são adequadas para a demonstração, não para uma implantação compartilhada ou de produção. Consulte [Estado atual do projeto](../../docs/estado-do-projeto.md) antes de interpretar o alcance do experimento.
 
-As métricas, parâmetros selecionados e limitações de uma execução de referência estão em [Resultado do experimento](resultado-experimento.md). Consulte também [Métricas e parâmetros](../../docs/metricas-e-parametros.md) para os padrões e limiares que afetam a ingestão, as regras e o dashboard.
+As métricas, parâmetros selecionados e limitações da avaliação de referência estão no [relatório SBC](../../reports/aquaflow-sbc.pdf). Consulte também [Métricas e parâmetros](../../docs/metricas-e-parametros.md) para os padrões e limiares que afetam a ingestão, as regras e o dashboard.
