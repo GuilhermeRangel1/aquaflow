@@ -89,6 +89,34 @@ async def test_cumulative_readings_are_idempotent_and_visible_as_consumption(
 
 
 @pytest.mark.asyncio
+async def test_unchanged_counter_beyond_stored_precision_is_not_a_reset(
+    api_client: tuple[AsyncClient, object, str, str],
+) -> None:
+    client, _, device_key, token = api_client
+    # The meter reports pulses / 450; the column keeps three decimals (3.778).
+    stopped = 1700 / 450
+    start = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=5)
+    for index, volume in enumerate((stopped, stopped, stopped + 1 / 450, 1.0)):
+        saved = await client.post(
+            "/api/v1/ingestion/telemetry",
+            headers={"X-Device-Key": device_key},
+            json=reading_payload(
+                str(uuid4()),
+                (start + timedelta(seconds=5 * index)).isoformat(),
+                cumulative_volume_liters=volume,
+            ),
+        )
+        assert saved.status_code == 202
+
+    app = cast(FastAPI, cast(ASGITransport, client._transport).app)
+    async with app.state.session_factory() as session:
+        rows = (
+            await session.scalars(select(TelemetryReading).order_by(TelemetryReading.recorded_at))
+        ).all()
+    assert [row.quality for row in rows] == ["valid", "valid", "valid", "counter_reset"]
+
+
+@pytest.mark.asyncio
 async def test_latest_telemetry_is_the_same_in_meter_health_and_reading_history(
     api_client: tuple[AsyncClient, object, str, str],
 ) -> None:

@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -20,6 +20,9 @@ from app.services.anomaly_detection import evaluate_continuous_flow, evaluate_ni
 from app.services.device_monitor import resolve_offline_alerts
 
 router = APIRouter(prefix="/api/v1/ingestion", tags=["ingestion"])
+
+# Same scale as telemetry_readings.cumulative_volume_liters.
+VOLUME_STEP_LITERS = Decimal("0.001")
 
 
 class IngestionFailure(Exception):
@@ -158,14 +161,22 @@ async def save_reading(
             .order_by(TelemetryReading.recorded_at.desc())
             .limit(1)
         )
+        # Compare at the stored scale: an unchanged counter must not look like a decrease.
+        volume = (
+            Decimal(str(payload.cumulative_volume_liters)).quantize(
+                VOLUME_STEP_LITERS, rounding=ROUND_HALF_UP
+            )
+            if payload.cumulative_volume_liters is not None
+            else None
+        )
         quality = "valid"
         if latest is not None and recorded_at < _as_utc(latest.recorded_at):
             quality = "out_of_order"
         elif (
             latest is not None
-            and payload.cumulative_volume_liters is not None
+            and volume is not None
             and latest.cumulative_volume_liters is not None
-            and payload.cumulative_volume_liters < latest.cumulative_volume_liters
+            and volume < latest.cumulative_volume_liters
         ):
             quality = "counter_reset"
 
@@ -174,11 +185,7 @@ async def save_reading(
             event_id=payload.event_id,
             recorded_at=recorded_at,
             received_at=now,
-            cumulative_volume_liters=(
-                Decimal(str(payload.cumulative_volume_liters))
-                if payload.cumulative_volume_liters is not None
-                else None
-            ),
+            cumulative_volume_liters=volume,
             flow_rate_liters_minute=(
                 Decimal(str(payload.flow_rate_liters_minute))
                 if payload.flow_rate_liters_minute is not None
