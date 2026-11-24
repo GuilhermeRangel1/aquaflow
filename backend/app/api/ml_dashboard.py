@@ -89,8 +89,21 @@ async def get_training_dashboard(
         list_mlflow_executions(settings.mlflow_tracking_uri, experiment_id),
         ml_worker_status(settings.ml_worker_health_url),
     )
+    if executions is None and execution_id:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "ml_execution_history_unavailable",
+                "message": "O histórico do MLflow está indisponível no momento.",
+            },
+        )
+    executions = executions or []
+    active_run_id = active_report.get("mlflow_run_id")
+    matching_executions = [item for item in executions if item.get("model_version") == model_hash]
     active_execution = next(
-        (item for item in executions if item.get("model_version") == model_hash), None
+        (item for item in matching_executions if item.get("run_id") == active_run_id), None
+    ) if isinstance(active_run_id, str) else (
+        matching_executions[0] if len(matching_executions) == 1 else None
     )
     selected_execution = active_execution
     if execution_id:
@@ -103,17 +116,18 @@ async def get_training_dashboard(
                     "message": "Esta execução de treinamento não está disponível.",
                 },
             )
-        if selected_execution.get("model_version") != model_hash:
-            try:
-                report = await load_mlflow_execution_report(
-                    settings.ml_artifacts_dir,
-                    selected_execution["run_id"],
-                )
-            except TrainingDashboardUnavailable:
-                raise HTTPException(
-                    status_code=503,
-                    detail={"code": "ml_execution_report_unavailable"},
-                ) from None
+        try:
+            report = await load_mlflow_execution_report(
+                settings.ml_artifacts_dir,
+                selected_execution["run_id"],
+                settings.mlflow_tracking_uri,
+                experiment_id,
+            )
+        except TrainingDashboardUnavailable:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "ml_execution_report_unavailable"},
+            ) from None
     if not is_admin:
         # Reviewed collection manifests can identify the contributing devices and readings.
         private_fields = {"development", "evaluation"}

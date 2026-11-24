@@ -17,6 +17,56 @@ JOBS: dict[str, Any] = {"id": None, "status": "idle", "message": ""}
 LOCK = threading.Lock()
 
 
+def _validate_promotion(report: dict[str, Any], active_root: Path) -> None:
+    pointer = active_root / "active-model.json"
+    directory = active_root
+    if pointer.is_file():
+        relative = Path(json.loads(pointer.read_text(encoding="utf-8"))["directory"])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("A referência do modelo ativo é inválida")
+        directory = active_root / relative
+
+    active = json.loads((directory / "metrics.json").read_text(encoding="utf-8"))
+    active_hash = hashlib.sha256((directory / "best_model.joblib").read_bytes()).hexdigest()
+    if active["model_sha256"] != active_hash:
+        raise ValueError("O modelo ativo não corresponde ao relatório")
+
+    comparable = ("training_data_sha256", "split_counts", "test_start", "timezone", "threshold")
+    for key in comparable:
+        if report[key] != active[key]:
+            raise ValueError(f"Candidato e ativo usam referências diferentes: {key}")
+
+    active_stress = active["stress_test_evaluation"]
+    candidate_stress = report["stress_test_evaluation"]
+    if candidate_stress["data_sha256"] != active_stress["data_sha256"]:
+        raise ValueError("Candidato e ativo usam conjuntos de estresse diferentes")
+
+    comparisons = (
+        ("teste", active["test_evaluation"][active["selected_model"]],
+         report["test_evaluation"][report["selected_model"]]),
+        ("estresse", active_stress["selected_model"], candidate_stress["selected_model"]),
+    )
+    for label, before, after in comparisons:
+        for key in ("average_precision", "recall", "precision"):
+            if not all(type(value) in (int, float) and 0 <= value <= 1
+                       for value in (before[key], after[key])):
+                raise ValueError(f"Métrica inválida no conjunto de {label}: {key}")
+            if after[key] < before[key]:
+                raise ValueError(f"Candidato reprovado em {label}: {key} caiu")
+        matrices = [evaluation["confusion_matrix"] for evaluation in (before, after)]
+        if any(
+            len(matrix) != 2 or any(
+                len(row) != 2 or any(type(count) is not int or count < 0 for count in row)
+                or sum(row) == 0 for row in matrix
+            ) for matrix in matrices
+        ):
+            raise ValueError(f"Matriz de confusão inválida no conjunto de {label}")
+        if [sum(row) for row in matrices[0]] != [sum(row) for row in matrices[1]]:
+            raise ValueError(f"Contagens de classes incompatíveis no conjunto de {label}")
+        if matrices[1][0][1] > matrices[0][0][1]:
+            raise ValueError(f"Candidato reprovado em {label}: falsos positivos aumentaram")
+
+
 def _train(job_id: str) -> None:
     candidate = ACTIVE / "candidates" / job_id
     run_data = ACTIVE / "work" / job_id
@@ -115,20 +165,7 @@ def _train(job_id: str) -> None:
             raise ValueError("A validação temporal do modelo selecionado é inválida")
         if stress and not 0 <= stress.get("average_precision", -1) <= 1:
             raise ValueError("A avaliação de estresse do modelo selecionado é inválida")
-        active_pointer = ACTIVE / "active-model.json"
-        if active_pointer.is_file():
-            active_directory = Path(json.loads(active_pointer.read_text(encoding="utf-8"))["directory"])
-            if active_directory.is_absolute() or ".." in active_directory.parts:
-                raise ValueError("A referência do modelo ativo é inválida")
-            active_report = json.loads((ACTIVE / active_directory / "metrics.json").read_text(encoding="utf-8"))
-            active_model = active_report["selected_model"]
-            active_test = active_report["test_evaluation"][active_model]
-            candidate_test = report["test_evaluation"][selected]
-            active_stress = active_report["stress_test_evaluation"]["selected_model"]
-            candidate_stress = report["stress_test_evaluation"]["selected_model"]
-            for label, before, after in (("teste", active_test, candidate_test), ("estresse", active_stress, candidate_stress)):
-                if after["average_precision"] < before["average_precision"] or after["recall"] < before["recall"]:
-                    raise ValueError(f"Modelo candidato reprovado: AP ou recall caiu no conjunto de {label}")
+        _validate_promotion(report, ACTIVE)
         pointer = ACTIVE / "active-model.json"
         temporary = ACTIVE / f".active-{job_id}.tmp"
         temporary.write_text(

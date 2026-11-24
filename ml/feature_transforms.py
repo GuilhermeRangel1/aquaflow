@@ -1,5 +1,6 @@
 """Shared deterministic feature transformations for training and inference."""
 
+import hashlib
 import math
 from datetime import datetime, timedelta
 from itertools import pairwise
@@ -80,3 +81,10 @@ def transform_window(
         recorded_at=boundary + window,
         timezone=reading["timezone"],
     ), None
+
+
+def inference_version(model_hash: str, threshold: float) -> str:
+    """Preserve the identity already stored for the original 0.5 policy."""
+    if threshold == 0.5:
+        return model_hash
+    return hashlib.sha256(f"{model_hash}:threshold:{threshold.hex()}".encode("ascii")).hexdigest()

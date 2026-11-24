@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import joblib
 import numpy as np
-from feature_transforms import FEATURE_NAMES
+from feature_transforms import FEATURE_NAMES, inference_version
 
 METADATA_NAMES = ("event_id", "recorded_at", "device_serial")
 
@@ -85,6 +85,7 @@ def predict(
         raise ValueError("limiar do modelo deve estar entre 0 e 1")
     if not np.isfinite(probabilities).all() or np.any((probabilities < 0) | (probabilities > 1)):
         raise ValueError("modelo produziu probabilidades inválidas")
+    version = inference_version(model_hash, threshold)
     predictions = (probabilities >= threshold).astype(np.int8)
     reference = training_report.get("explanation_reference")
     if not isinstance(reference, dict) or set(reference) != set(FEATURE_NAMES):
@@ -124,7 +125,7 @@ def predict(
                     "recorded_at": row["recorded_at"],
                     "predicted_anomaly": int(prediction),
                     "anomaly_probability": f"{float(probability):.8f}",
-                    "model_version": model_hash,
+                    "model_version": version,
                     "feature_effects_json": json.dumps(effects, sort_keys=True),
                 }
             )
@@ -135,7 +136,7 @@ def predict(
     result = {
         "status": "offline_simulated_inference",
         "selected_model": training_report["selected_model"],
-        "model_version": model_hash,
+        "model_version": version,
         "training_data_sha256": training_report["training_data_sha256"],
         "inference_data_sha256": input_hash.hexdigest(),
         "timezone": timezone,

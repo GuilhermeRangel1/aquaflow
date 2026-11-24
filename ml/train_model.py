@@ -455,6 +455,7 @@ def train(
         targets[test_indices], dummy_final.predict_proba(values[test_indices])[:, 1]
     )
     selected_final.fit(final_train_values, final_train_targets)
+    trained_at = datetime.now(UTC)
     selected_test_probabilities = selected_final.predict_proba(values[test_indices])[:, 1]
     selected_test = _metrics(targets[test_indices], selected_test_probabilities)
     stress_test_probabilities = (
@@ -505,6 +506,12 @@ def train(
         if selected_shifted_metrics is not None
         else None
     )
+    validation_recall_drop = (
+        candidates[selected_model]["validation"]["recall"] - selected_shifted_metrics["recall"]
+        if selected_shifted_metrics is not None
+        else None
+    )
+    recall_drop_warning = 0.15
     cv_gap = candidates[selected_model]["cv_generalization_gap"]
     cv_std = candidates[selected_model]["cv_validation_average_precision_std"]
     stress_average_precision = (
@@ -518,6 +525,8 @@ def train(
         if validation_domain_gap is not None
         else "not_evaluated"
     )
+    if validation_recall_drop is not None and validation_recall_drop > recall_drop_warning:
+        domain_shift_assessment = "sensitivity_detected"
     if stress_average_precision is not None and stress_average_precision < 0.7:
         domain_shift_assessment = "sensitivity_detected"
     model_path = output_dir / "best_model.joblib"
@@ -545,6 +554,7 @@ def train(
         "estimator_feature_names": list(FEATURE_NAMES[:3]),
         "feature_policy": "measurements_only_calendar_excluded",
         "final_training_end": final_training_end.isoformat(),
+        "trained_at": trained_at.isoformat(),
         "test_start": test_start.isoformat(),
         "explanation_reference": {
             name: float(value)
@@ -630,12 +640,14 @@ def train(
                 else "no_large_variation_detected"
             ),
             "validation_domain_gap": validation_domain_gap,
+            "validation_recall_drop": validation_recall_drop,
             "stress_test_average_precision": stress_average_precision,
             "domain_shift_assessment": domain_shift_assessment,
             "assessment_thresholds": {
                 "cv_gap_warning": 0.1,
                 "cv_validation_std_warning": 0.1,
                 "validation_domain_gap_warning": 0.15,
+                "validation_recall_drop_warning": recall_drop_warning,
                 "stress_test_average_precision_warning_below": 0.7,
             },
             "limits": "Heuristic diagnostics for investigation; synthetic profiles do not establish real-world generalization.",
@@ -658,7 +670,7 @@ def train(
     airflow_run_id = os.environ.get("AQUAFLOW_AIRFLOW_RUN_ID")
     run_tags = {"airflow_run_id": airflow_run_id} if airflow_run_id else None
     for name, result in candidates.items():
-        with mlflow.start_run(run_name=name, tags=run_tags):
+        with mlflow.start_run(run_name=name, tags=run_tags) as run:
             for index, trial in enumerate(search_trials.get(name, []), start=1):
                 with mlflow.start_run(run_name=f"{name}-trial-{index:02d}", nested=True):
                     mlflow.log_params(
@@ -740,6 +752,8 @@ def train(
                 mlflow.log_metric("cv_generalization_gap", result["cv_generalization_gap"])
             if name == selected_model:
                 mlflow.log_artifact(str(output_dir / "best_model.joblib"), artifact_path="model")
+                report["mlflow_run_id"] = run.info.run_id
+                report["mlflow_experiment_id"] = run.info.experiment_id
                 mlflow.log_dict(report, "metrics.json")
                 mlflow.log_dict(split_manifest, "split_manifest.json")
                 mlflow.log_artifact(str(report_markdown_path))

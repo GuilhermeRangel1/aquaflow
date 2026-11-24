@@ -118,7 +118,7 @@ async def test_published_reading_is_visible_once_through_the_api() -> None:
 async def test_mqtt_ml_predictions_create_actionable_alerts(cadence_seconds: int) -> None:
     base_url = os.environ["AQUAFLOW_API_URL"]
     serial = f"MQTT-ML-TEST-{uuid4().hex[:12]}"
-    event_ids = [uuid4().hex for _ in range(5)]
+    event_ids = [uuid4().hex for _ in range(7)]
     now = datetime.now(UTC)
     # Exercise the hybrid model's daytime flow scenario at a stable local hour.
     reference_time = now.replace(hour=15, minute=25, second=0, microsecond=0)
@@ -155,17 +155,17 @@ async def test_mqtt_ml_predictions_create_actionable_alerts(cadence_seconds: int
         device = provisioned.json()
         payloads = []
         cumulative_volume = 100.0
-        flows = [None, None, 0.0, 0.2, 0.2]
+        flows = [None, None, 0.0, 0.2, 0.0, 0.2, 0.2]
         sent_ids = set(event_ids)
         for index, flow in enumerate(flows):
             if cadence_seconds < 300:
                 samples_per_window = 300 // cadence_seconds
                 for step in range(samples_per_window):
-                    cumulative_volume += 1 / samples_per_window if index >= 3 else 0
+                    cumulative_volume += 1 / samples_per_window if flow else 0
                     event_id = event_ids[index] if step == samples_per_window - 1 else uuid4().hex
                     sent_ids.add(event_id)
                     recorded_at = reference_time - timedelta(
-                        minutes=30 - 5 * index, seconds=-cadence_seconds * step
+                        minutes=45 - 5 * index, seconds=-cadence_seconds * step
                     )
                     payloads.append(
                         json.dumps(
@@ -183,7 +183,7 @@ async def test_mqtt_ml_predictions_create_actionable_alerts(cadence_seconds: int
             payload = {
                 "device_serial": serial,
                 "event_id": event_ids[index],
-                "recorded_at": (reference_time - timedelta(minutes=25 - 5 * index)).isoformat(),
+                "recorded_at": (reference_time - timedelta(minutes=40 - 5 * index)).isoformat(),
             }
             if index < 2:
                 payload["cumulative_volume_liters"] = cumulative_volume
@@ -239,8 +239,8 @@ async def test_mqtt_ml_predictions_create_actionable_alerts(cadence_seconds: int
                 cumulative_result["reading_id"],
             }
             anomaly_results = [
-                inferences_by_event[event_ids[3]],
-                inferences_by_event[event_ids[4]],
+                inferences_by_event[event_ids[5]],
+                inferences_by_event[event_ids[6]],
             ]
             assert cumulative_result["status"] == "scored"
             assert cumulative_result["explanation"]["input_derivation"] == (
@@ -249,6 +249,9 @@ async def test_mqtt_ml_predictions_create_actionable_alerts(cadence_seconds: int
                 else "flow_rate_from_cumulative_volume"
             )
             assert normal_result["predicted_anomaly"] is False
+            isolated = inferences_by_event[event_ids[3]]
+            assert isolated["predicted_anomaly"] is True
+            assert inferences_by_event[event_ids[4]]["predicted_anomaly"] is False
             for result in anomaly_results:
                 assert result["status"] == "scored"
                 assert result["predicted_anomaly"] is True
@@ -274,6 +277,7 @@ async def test_mqtt_ml_predictions_create_actionable_alerts(cadence_seconds: int
             assert ml_alert["status"] == "open"
             assert ml_alert["severity"] == "medium"
             assert ml_alert["evidence"]["occurrence_count"] == 2
+            assert isolated["id"] not in ml_alert["evidence"]["ml_inference_ids"]
             assert (
                 ml_alert["evidence"]["classification_threshold"]
                 == anomaly_results[-1]["explanation"]["classification_threshold"]

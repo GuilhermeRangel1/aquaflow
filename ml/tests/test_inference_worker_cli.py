@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -43,3 +45,56 @@ def test_worker_refuses_a_model_without_a_matching_versioned_report(tmp_path: Pa
 
     assert result.returncode != 0
     assert "hash does not match" in result.stderr
+
+
+@pytest.mark.asyncio
+async def test_worker_keeps_processing_after_rejected_update(monkeypatch) -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    monkeypatch.syspath_prepend(str(ROOT / "ml"))
+    import inference_worker as worker
+
+    artifact_hash = "a" * 64
+    original = worker.inference_version(artifact_hash, 0.5)
+    updated = worker.inference_version(artifact_hash, 0.75)
+    assert original == artifact_hash
+    assert updated != original
+    assert updated == worker.inference_version(artifact_hash, 0.75)
+
+    reports = iter(((original, False), (original, True), (updated, False)))
+
+    def load(*_args):
+        version, invalid = next(reports)
+        if invalid:
+            raise ValueError("invalid candidate")
+        return object(), {"selected_model": "knn"}, version
+
+    async def close():
+        pass
+
+    async def create_pool(*_args, **_kwargs):
+        return SimpleNamespace(close=close)
+
+    seen = []
+
+    async def run_batch(*_args, model_version, **_kwargs):
+        seen.append((model_version, worker._health["model_update_rejected"]))
+        return 1
+
+    async def sleep(_seconds):
+        if len(seen) == 2:
+            raise asyncio.CancelledError
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unused")
+    monkeypatch.setattr(worker, "_health", worker._health.copy())
+    monkeypatch.setattr(worker, "_start_health_server", lambda: None)
+    monkeypatch.setattr(worker, "load_model", load)
+    monkeypatch.setattr(worker, "run_batch", run_batch)
+    monkeypatch.setattr(worker.asyncio, "sleep", sleep)
+    import asyncpg
+
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+    with pytest.raises(asyncio.CancelledError):
+        await worker.serve()
+    assert seen == [(original, True), (updated, False)]

@@ -28,6 +28,7 @@ async def test_authenticated_dashboard_returns_active_model_report(tmp_path: Pat
         "selected_model": "knn",
         "model_sha256": hashlib.sha256(model_artifact.read_bytes()).hexdigest(),
         "final_training_end": "2026-09-13T02:55:00+00:00",
+        "trained_at": "2026-11-24T14:00:00+00:00",
         "threshold": 0.5,
         "candidates": {"knn": {"validation": {"average_precision": 0.97}}},
     }
@@ -45,7 +46,7 @@ async def test_authenticated_dashboard_returns_active_model_report(tmp_path: Pat
     assert body["active_model"] == {
         "key": "knn",
         "version": report["model_sha256"],
-        "trained_at": "2026-09-13T02:55:00Z",
+        "trained_at": "2026-11-24T14:00:00Z",
         "threshold": 0.5,
     }
     assert body["history_available"] is False
@@ -68,8 +69,9 @@ async def test_dashboard_reports_unavailable_when_active_artifact_is_missing(
 
 
 @pytest.mark.asyncio
-async def test_dashboard_rejects_execution_not_in_mlflow_history(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize("history_unavailable", [False, True])
+async def test_dashboard_distinguishes_missing_execution_from_unavailable_history(
+    tmp_path: Path, monkeypatch, history_unavailable: bool
 ) -> None:
     model_artifact = tmp_path / "training-bench-v2" / "best_model.joblib"
     model_artifact.parent.mkdir(parents=True)
@@ -82,6 +84,8 @@ async def test_dashboard_rejects_execution_not_in_mlflow_history(
     (model_artifact.parent / "metrics.json").write_text(json.dumps(report), encoding="utf-8")
 
     async def executions(*_args):
+        if history_unavailable:
+            return None
         return [
             {
                 "id": "known-run",
@@ -97,13 +101,18 @@ async def test_dashboard_rejects_execution_not_in_mlflow_history(
     async with _dashboard_client(tmp_path) as client:
         response = await client.get("/api/v1/ml/training-dashboard?execution_id=unknown-run")
 
-    assert response.status_code == 404
-    assert response.json()["code"] == "ml_execution_not_found"
+    if history_unavailable:
+        assert response.status_code == 503
+        assert response.json()["code"] == "ml_execution_history_unavailable"
+    else:
+        assert response.status_code == 404
+        assert response.json()["code"] == "ml_execution_not_found"
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("same_hash", [False, True])
 async def test_dashboard_loads_selected_history_without_changing_active_model(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, same_hash: bool
 ) -> None:
     model_artifact = tmp_path / "training-bench-v2" / "best_model.joblib"
     model_artifact.parent.mkdir(parents=True)
@@ -124,13 +133,14 @@ async def test_dashboard_loads_selected_history_without_changing_active_model(
                 "id": "historical-execution",
                 "run_id": "internal-run-id",
                 "model": "decision_tree",
-                "model_version": "older-hash",
+                "model_version": active_hash if same_hash else "older-hash",
                 "started_at": "2026-10-01T12:00:00Z",
                 "candidate_count": 4,
             }
         ]
 
-    async def historical_report(artifacts_dir: Path, run_id: str):
+    async def historical_report(artifacts_dir: Path, run_id: str, tracking_uri, experiment_id):
+        assert tracking_uri == "http://mlflow:5000" and experiment_id == "2"
         assert artifacts_dir == tmp_path
         assert run_id == "internal-run-id"
         return history_report
@@ -189,6 +199,34 @@ def test_worker_status_reads_only_known_health_state(monkeypatch) -> None:
     )
     assert ml_dashboard._read_ml_worker_status("http://worker/health") == "unavailable"
     assert ml_dashboard._read_ml_worker_status(None) == "unavailable"
+
+
+def test_history_loads_report_from_mlflow_server(tmp_path: Path, monkeypatch) -> None:
+    from app.services import ml_dashboard
+
+    run_id = "a" * 32
+
+    def fetch(uri: str, path: str) -> dict[str, str]:
+        assert uri == "http://mlflow:5000"
+        assert path == f"/api/2.0/mlflow-artifacts/artifacts/2/{run_id}/artifacts/metrics.json"
+        return {"mlflow_run_id": run_id, "selected_model": "knn"}
+
+    monkeypatch.setattr(ml_dashboard, "_mlflow_json", fetch)
+    assert ml_dashboard._load_run_report(tmp_path, run_id, "http://mlflow:5000", "2") == {
+        "mlflow_run_id": run_id,
+        "selected_model": "knn",
+    }
+
+
+def test_history_reports_missing_when_mlflow_is_unavailable(tmp_path: Path, monkeypatch) -> None:
+    from app.services import ml_dashboard
+
+    def unavailable(*_args: str) -> None:
+        raise OSError("MLflow unavailable")
+
+    monkeypatch.setattr(ml_dashboard, "_mlflow_json", unavailable)
+    with pytest.raises(ml_dashboard.TrainingDashboardUnavailable):
+        ml_dashboard._load_run_report(tmp_path, "a" * 32, "http://mlflow:5000", "2")
 
 
 @pytest.mark.asyncio

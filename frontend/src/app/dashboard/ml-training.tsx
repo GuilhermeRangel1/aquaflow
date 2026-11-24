@@ -18,7 +18,7 @@ type DashboardData = {
   active_execution_id: string | null;
   selected_execution_id: string | null;
   history_available: boolean;
-  worker_status: "healthy" | "degraded" | "starting" | "unavailable";
+  worker_status: "healthy" | "degraded" | "starting" | "unavailable" | "update_rejected";
   executions: Execution[];
   active_report: JsonObject;
   report: JsonObject;
@@ -77,6 +77,7 @@ function curvePoints(value: unknown, xKey: string, yKey: string): CurvePoint[] {
 export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [executionId, setExecutionId] = useState("");
+  const [followingActive, setFollowingActive] = useState(true);
   const executionRef = useRef("");
   const [evaluation, setEvaluation] = useState<"test" | "stress">("test");
   const [loading, setLoading] = useState(true);
@@ -133,7 +134,6 @@ export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
       setRocHover(null);
       setData(result);
       const selected = result.selected_execution_id ?? "";
-      executionRef.current = selected;
       setExecutionId(selected);
     } catch (caught) {
       if (request === requestRef.current)
@@ -162,7 +162,7 @@ export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
         const result = await response.json();
         if (response.ok) {
           setTrainingJob(result);
-          if (result.status === "succeeded") void load("");
+          if (result.status === "succeeded") void load(executionRef.current);
         }
       } catch {
         setTrainingError("Não foi possível acompanhar o treinamento.");
@@ -188,6 +188,10 @@ export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
   }
 
   const report = object(data?.report);
+  const trainedAt = text(
+    report.trained_at,
+    followingActive ? (data?.active_model.trained_at ?? "") : "",
+  );
   const selectedModel = text(report.selected_model, data?.active_model.key ?? "Modelo");
   const candidates = object(report.candidates);
   const evaluations = object(report.candidate_holdout_evaluation);
@@ -225,6 +229,8 @@ export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
     [candidates, evaluations, evaluation, report.test_evaluation, report.stress_test_evaluation],
   );
   const selectedCandidate = object(candidates[selectedModel]);
+  const validationRecall = object(selectedCandidate.validation).recall;
+  const shiftedRecall = object(selectedCandidate.generalization_validation).recall;
   const folds = Array.isArray(selectedCandidate.cv_folds)
     ? selectedCandidate.cv_folds.map((item, index) => {
         const fold = object(item);
@@ -257,6 +263,7 @@ export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
   const workerLabels = {
     healthy: "Inferência ativa",
     degraded: "Inferência degradada",
+    update_rejected: "Atualização rejeitada. Modelo anterior em uso.",
     starting: "Inferência inicializando",
     unavailable: "Inferência indisponível",
   } as const;
@@ -379,16 +386,31 @@ export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
         </h2>
         {panel === "execution" && (
           <>
+            <button
+              type="button"
+              className="ml-dialog-option"
+              aria-pressed={followingActive}
+              onClick={() => {
+                executionRef.current = "";
+                setFollowingActive(true);
+                setPanel(null);
+                void load("");
+              }}
+            >
+              <strong>Acompanhar modelo ativo</strong>
+              <span>Atualiza automaticamente após uma promoção</span>
+            </button>
             <p>Treinamentos registrados</p>
             {data.executions.map((execution) => (
               <button
                 type="button"
                 className="ml-dialog-option"
                 key={execution.id}
-                aria-pressed={execution.id === executionId}
+                aria-pressed={!followingActive && execution.id === executionId}
                 onClick={() => {
                   setPanel(null);
                   executionRef.current = execution.id;
+                  setFollowingActive(false);
                   setExecutionId(execution.id);
                   void load(execution.id);
                 }}
@@ -539,7 +561,7 @@ export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
       <section className="ml-hero surface">
         <div>
           <span className="ml-hero-label">
-            {executionId === data.active_execution_id
+            {followingActive || executionId === data.active_execution_id
               ? "Modelo em operação"
               : "Modelo da execução consultada"}
           </span>
@@ -547,9 +569,9 @@ export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
           <p>
             Versão {text(selectedExecution?.model_version, data.active_model.version).slice(0, 12)}{" "}
             · Treinado em{" "}
-            {selectedExecution?.started_at
+            {trainedAt && Number.isFinite(Date.parse(trainedAt))
               ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium" }).format(
-                  new Date(selectedExecution.started_at),
+                  new Date(trainedAt),
                 )
               : "data indisponível"}
           </p>
@@ -570,9 +592,22 @@ export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
           </button>
         </div>
       </section>
+      {typeof validationRecall === "number" && typeof shiftedRecall === "number" && (
+        <article className="surface ml-card">
+          <h2>Validação antes do ajuste final</h2>
+          <p>
+            Recall no perfil padrão: <strong>{formatMetric(validationRecall * 100, 1)}%</strong>. Na
+            rotina alterada: <strong>{formatMetric(shiftedRecall * 100, 1)}%</strong>.
+          </p>
+          <p>
+            Os dois valores são do mesmo candidato. Os testes abaixo avaliam o modelo após o ajuste
+            final. O recall conta janelas sinalizadas.
+          </p>
+        </article>
+      )}
       <div className="ml-evaluation-heading">
         <h2>
-          {executionId === data.active_execution_id
+          {followingActive || executionId === data.active_execution_id
             ? "Avaliação do modelo ativo"
             : "Avaliação da execução consultada"}
         </h2>
@@ -829,6 +864,7 @@ export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
                 key={execution.id}
                 onClick={() => {
                   executionRef.current = execution.id;
+                  setFollowingActive(false);
                   setExecutionId(execution.id);
                   void load(execution.id);
                 }}
@@ -1203,7 +1239,7 @@ export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
           visível.
         </p>
       )}
-      {data.active_execution_id && executionId !== data.active_execution_id && (
+      {!followingActive && executionId !== data.active_execution_id && (
         <p className="ml-history-note">
           Relatório histórico selecionado. Modelo ativo: {data.active_model.key} · versão{" "}
           {data.active_model.version.slice(0, 12)}.

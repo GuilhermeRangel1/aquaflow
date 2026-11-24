@@ -16,7 +16,7 @@ from uuid import uuid4
 
 import joblib
 import numpy as np
-from feature_transforms import FEATURE_NAMES, transform_reading
+from feature_transforms import FEATURE_NAMES, inference_version, transform_reading
 from feature_transforms import transform_window
 
 logger = logging.getLogger("aquaflow.ml.inference")
@@ -30,6 +30,7 @@ _health: dict[str, Any] = {
     "last_check_at": None,
     "processed_records": 0,
     "failed_batches": 0,
+    "model_update_rejected": False,
 }
 
 
@@ -247,7 +248,7 @@ def load_model(model_path: Path, report_path: Path) -> tuple[Any, dict[str, Any]
     threshold = float(report.get("threshold", 0.5))
     if not np.isfinite(threshold) or not 0 <= threshold <= 1:
         raise ValueError("training report has an invalid classification threshold")
-    return joblib.load(model_path), report, model_hash
+    return joblib.load(model_path), report, inference_version(model_hash, threshold)
 
 
 async def _aggregate_window(
@@ -297,6 +298,7 @@ async def run_batch(
                 d.expected_interval_seconds >= 300 OR (
                   bucket.window_start + interval '5 minutes'
                       + d.expected_interval_seconds * interval '1 second' <= now()
+                  AND r.received_at + d.expected_interval_seconds * interval '1 second' <= now()
                   AND NOT EXISTS (
                     SELECT 1 FROM telemetry_readings AS later
                     WHERE later.device_id = r.device_id AND later.quality = 'valid'
@@ -316,7 +318,10 @@ async def run_batch(
                   SELECT 1 FROM ml_inferences AS i
                   WHERE i.reading_id = r.id AND i.model_version = $1
               )
-            ORDER BY r.recorded_at, r.id
+            -- Give live telemetry priority over historical reprocessing.
+            -- Keep chronological order within each group for episode detection.
+            ORDER BY (r.recorded_at >= now() - interval '15 minutes') DESC,
+                     r.recorded_at, r.id
             LIMIT $2
             """,
             model_version,
@@ -560,13 +565,25 @@ async def serve() -> None:
     try:
         while True:
             try:
-                refreshed_model, refreshed_report, refreshed_version = load_model(model_path, report_path)
-                if refreshed_version != version:
-                    model, report, version = refreshed_model, refreshed_report, refreshed_version
+                try:
+                    refreshed_model, refreshed_report, refreshed_version = load_model(
+                        model_path, report_path
+                    )
+                except Exception:
                     with _health_lock:
-                        _health["model_name"] = report["selected_model"]
-                        _health["model_version"] = version
-                    logger.info("Activated experimental model %s version %s", report["selected_model"], version)
+                        previously_rejected = _health["model_update_rejected"]
+                        _health["model_update_rejected"] = True
+                    if not previously_rejected:
+                        logger.exception("Model update rejected; keeping last valid model")
+                else:
+                    with _health_lock:
+                        _health["model_update_rejected"] = False
+                    if refreshed_version != version:
+                        model, report, version = refreshed_model, refreshed_report, refreshed_version
+                        with _health_lock:
+                            _health["model_name"] = report["selected_model"]
+                            _health["model_version"] = version
+                        logger.info("Activated experimental model %s", version)
                 processed = await run_batch(pool, model=model, report=report, model_version=version)
                 with _health_lock:
                     _health["status"] = "healthy"

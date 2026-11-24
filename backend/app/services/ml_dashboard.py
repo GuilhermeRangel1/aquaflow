@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import re
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
@@ -57,7 +58,7 @@ def load_active_training_report(artifacts_dir: Path) -> tuple[dict[str, Any], st
 
 
 def active_model_summary(report: dict[str, Any], model_hash: str) -> ActiveModelSummary:
-    trained_at = report.get("final_training_end")
+    trained_at = report.get("trained_at")
     if isinstance(trained_at, str):
         try:
             trained_at = datetime.fromisoformat(trained_at.replace("Z", "+00:00"))
@@ -147,9 +148,9 @@ def _list_mlflow_executions(uri: str, experiment_id: str) -> list[dict[str, Any]
 
 async def list_mlflow_executions(
     tracking_uri: str | None, experiment_id: str | None
-) -> list[dict[str, Any]]:
+) -> list[dict[str, Any]] | None:
     if not tracking_uri or not experiment_id:
-        return []
+        return None
     try:
         return await asyncio.to_thread(_list_mlflow_executions, tracking_uri, experiment_id)
     except (
@@ -160,7 +161,7 @@ async def list_mlflow_executions(
         KeyError,
         TypeError,
     ):
-        return []
+        return None
 
 
 def _read_ml_worker_status(url: str | None) -> str:
@@ -173,6 +174,8 @@ def _read_ml_worker_status(url: str | None) -> str:
     except (OSError, ValueError, urllib.error.URLError, TimeoutError):
         return "unavailable"
     status = payload.get("status")
+    if status == "healthy" and payload.get("model_update_rejected") is True:
+        return "update_rejected"
     return status if status in {"healthy", "degraded", "starting"} else "unavailable"
 
 
@@ -198,8 +201,27 @@ def _load_execution_report(artifacts_dir: Path, run_id: str) -> dict[str, Any]:
     return report
 
 
-async def load_mlflow_execution_report(artifacts_dir: Path, run_id: str) -> dict[str, Any]:
-    try:
-        return await asyncio.to_thread(_load_execution_report, artifacts_dir, run_id)
-    except TrainingDashboardUnavailable:
-        raise
+def _load_run_report(
+    artifacts_dir: Path, run_id: str, tracking_uri: str | None, experiment_id: str | None
+) -> dict[str, Any]:
+    if tracking_uri and experiment_id and experiment_id.isdecimal() and re.fullmatch(
+        r"[0-9a-f]{32}", run_id
+    ):
+        path = (
+            f"/api/2.0/mlflow-artifacts/artifacts/{experiment_id}/{run_id}/artifacts/metrics.json"
+        )
+        try:
+            report = _mlflow_json(tracking_uri, path)
+            if report.get("mlflow_run_id", run_id) == run_id:
+                return report
+        except (OSError, ValueError):
+            pass
+    return _load_execution_report(artifacts_dir, run_id)
+
+
+async def load_mlflow_execution_report(
+    artifacts_dir: Path, run_id: str, tracking_uri: str | None, experiment_id: str | None
+) -> dict[str, Any]:
+    return await asyncio.to_thread(
+        _load_run_report, artifacts_dir, run_id, tracking_uri, experiment_id
+    )

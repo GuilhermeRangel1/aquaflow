@@ -18,7 +18,7 @@ class MLTrainingDashboardOutput(BaseModel):
     active_execution_id: str | None
     selected_execution_id: str | None
     history_available: bool
-    worker_status: Literal["healthy", "degraded", "starting", "unavailable"]
+    worker_status: Literal["healthy", "degraded", "starting", "unavailable", "update_rejected"]
     executions: list[dict[str, Any]]
     active_report: dict[str, Any]
     report: dict[str, Any]
