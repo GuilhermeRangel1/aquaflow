@@ -4,7 +4,7 @@ Esta pasta concentra o experimento de machine learning do AquaFlow: séries cali
 
 O Compose inicia o treinamento automaticamente quando não encontra os artefatos esperados e depois inicia o worker. Cada execução manual do DAG do Airflow gera, analisa e prepara os dados, treina um candidato e registra a avaliação no MLflow. O notebook documenta a preparação e visualiza as avaliações. Veja [arquitetura](../docs/arquitetura.md), [estado atual do projeto](../docs/estado-do-projeto.md) e [pipeline detalhado](docs/pipeline.md).
 
-O [relatório SBC](../reports/aquaflow-sbc.pdf) apresenta a avaliação de referência da série calibrada. O [relatório SBC](../reports/aquaflow-sbc.pdf) registra a avaliação de referência atual. Os [parâmetros e métricas do projeto](../docs/metricas-e-parametros.md) explicam os padrões usados na aplicação.
+O [relatório SBC](../reports/aquaflow-sbc.pdf) registra a avaliação de referência da série calibrada. Os [parâmetros e métricas do projeto](../docs/metricas-e-parametros.md) explicam os padrões usados na aplicação.
 
 ## Gerar dados simulados
 
@@ -86,7 +86,7 @@ O treinamento grava `metrics.json`, `split_manifest.json`, `best_model.joblib` e
 
 ## Notebook de exploração e avaliação visual
 
-O notebook [`notebooks/01_ciclo_completo_de_ml_aquaflow.ipynb`](notebooks/01_ciclo_completo_de_ml_aquaflow.ipynb) documenta a análise e a preparação da série calibrada usando as mesmas funções do pipeline (`build_real_dataset.py` e `prepare_dataset.py`). Em uma seção separada, ele visualiza a comparação dos modelos e avalia o artefato treinado na partição temporal de teste, incluindo matriz de confusão, curvas precisão-recall e ROC. As figuras são exibidas no notebook e salvas localmente em `data/ml/notebook/figures/`; esse conteúdo não é enviado ao frontend.
+O notebook [`notebooks/01_ciclo_completo_de_ml_aquaflow.ipynb`](notebooks/01_ciclo_completo_de_ml_aquaflow.ipynb) começa pela exploração dos quatro CSVs físicos de bancada e documenta a análise e a preparação da série calibrada usando as mesmas funções do pipeline (`build_real_dataset.py` e `prepare_dataset.py`). Em uma seção separada, ele visualiza a comparação dos modelos e avalia o artefato treinado na partição temporal de teste, incluindo matriz de confusão, curvas precisão-recall e ROC. As figuras são exibidas no notebook e salvas localmente em `data/ml/notebook/figures/`; esse conteúdo não é enviado ao frontend.
 
 Para abrir e executar no VS Code, instale as dependências específicas do notebook e selecione o kernel desse ambiente:
 
