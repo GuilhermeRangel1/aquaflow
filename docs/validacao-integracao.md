@@ -285,3 +285,25 @@ com precisão entre 90,5% e 95,6%. A saída detalhada está em
 O diagnóstico do KNN deixou de sinalizar diferença elevada entre treino e
 validação ou instabilidade nos folds desta execução. A limitação de avaliação
 com dados do mesmo gerador continua válida.
+
+## ESP32 físico (24/11/2026)
+
+O firmware foi gravado em um ESP32 com o sensor YF-S201 e conectado por Wi-Fi ao broker do
+Compose. O sensor foi acionado por **sopro**, sem água. As leituras chegaram ao PostgreSQL a
+cada cinco segundos.
+
+| Janela local | Volume | Resultado do modelo |
+| --- | --- | --- |
+| 08:55–09:00 | 0 L | Normal (0%) |
+| 09:00–09:05 | 5,894 L | Normal (18,2%) |
+| 09:05–09:10 | 1,891 L | Normal (8,6%) |
+| 09:10–09:15 | 1,451 L | Possível anomalia (50,5%) |
+
+O resultado saiu entre 5 e 10 segundos depois do fim de cada janela. Três janelas anteriores
+ficaram sem avaliação, por cobertura insuficiente ou lacuna. O ensaio revelou que a API comparava
+o volume recebido com o valor arredondado no banco e marcava reset sem motivo. A correção está no
+commit `1737ab0`.
+
+A placa reiniciou uma vez durante o ensaio, e a causa não foi confirmada. O sopro não serve para
+calibrar o volume. Continuam pendentes o ensaio com água e o aviso após duas janelas positivas
+consecutivas com o sensor físico.

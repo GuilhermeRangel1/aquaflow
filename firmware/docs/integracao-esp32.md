@@ -1,6 +1,6 @@
 # Integração de um ESP32
 
-> **Estado atual:** já existe um firmware PlatformIO em [`firmware/aquaflow-esp32/`](../aquaflow-esp32/) para ESP32-WROOM-32, mas ele ainda **não foi validado em hardware real** (placa e sensor não conectados). Este documento serve tanto como roteiro para testar a API com uma requisição manual quanto como contrato de referência para o firmware. A conta demo e as leituras de exemplo são sintéticas; os exemplos manuais abaixo não validam medição física.
+> **Estado atual:** já existe um firmware PlatformIO em [`firmware/aquaflow-esp32/`](../aquaflow-esp32/) para ESP32-WROOM-32, já exercitado com a placa e o sensor físicos até a classificação do modelo ([registro](../../docs/validacao-integracao.md#esp32-físico-24112026)). **Falta calibrar o volume com água.** Este documento serve tanto como roteiro para testar a API com uma requisição manual quanto como contrato de referência para o firmware. A conta demo e as leituras de exemplo são sintéticas; os exemplos manuais abaixo não validam medição física.
 
 O roteiro envia leituras diretamente à API HTTP para verificar a ingestão sem a placa. O firmware publica por MQTT e o consumidor encaminha as mensagens à mesma API. O firmware já define placa (ESP32-WROOM-32), sensor de vazão por pulso e pino em `include/config.h`; o fator de calibração começa no valor nominal e deve ser confirmado por medição física (ver a seção "Calibracao" do README do firmware). Para iniciar a aplicação local completa, siga primeiro o [guia de execução](../../docs/demonstracao.md).
 

@@ -120,8 +120,8 @@ Em **Alertas**, a origem do aviso indica se ele veio de uma regra ou de uma aná
 
 ## Telemetria, alertas e modelos
 
-- **Telemetria e inferências** mostra a conexão, a vazão ao vivo e as análises por leitura. **Medidores** apresenta o histórico e os resultados em linguagem simples.
-- **Visão geral** reúne o consumo, os detalhes expansíveis, os litros sinalizados e a estimativa mensal de água pela tarifa residencial de referência de Recife.
+- **Telemetria e inferências** mostra a conexão, a vazão ao vivo, o resultado das análises em linguagem simples e o funcionamento do recebimento, da análise e das regras. Os dados técnicos ficam recolhidos. **Medidores** apresenta o histórico e os resultados.
+- **Visão geral** mostra nos gráficos de consumo quanta água passou nos períodos com aviso da análise de ML. Também reúne os detalhes expansíveis, os litros sinalizados e a estimativa mensal de água pela tarifa residencial de referência de Recife.
 - **Modelos e treinamento** mostra as métricas experimentais. O administrador pode solicitar retreinamento da série calibrada. O Compose também treina quando o artefato está ausente.
 - A criação de alertas por regras funciona em paralelo com a inferência. Água registrada num período sinalizado merece verificação; isso não comprova vazamento.
 
@@ -191,7 +191,7 @@ Para o ambiente do notebook e os comandos completos do pipeline, consulte [Dados
 ## Limites e próximos passos
 
 - O firmware ESP32 publica por MQTT. Confira a calibração do sensor e a conexão da placa na rede usada na apresentação.
-- A ingestão MQTT foi exercitada com um publicador de teste na rede local do Compose; não há conexão física validada nem TLS para um dispositivo externo.
+- A ingestão MQTT foi exercitada com um publicador de teste e com o ESP32 físico na rede local. O ensaio físico usou sopro no sensor: falta calibrar o volume com água, e não há TLS para um dispositivo externo.
 - O histórico da demonstração e o treino partem da mesma série calibrada. A demonstração desloca as datas para perto do dia de instalação e preserva as lacunas e as medições da série.
 - O classificador foi avaliado somente com cenários artificiais. Dados reais precisarão de coleta, verificação de qualidade, decisão de rotulagem e teste temporal independente.
 - Airflow, MLflow, credenciais e serviços do Compose são configurados para apresentação local, não para produção.

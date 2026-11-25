@@ -6,8 +6,8 @@ O AquaFlow é um protótipo acadêmico de monitoramento de água. Para subir o a
 | --- | --- |
 | Aquisição | API HTTP e ingestão MQTT com validação, idempotência e persistência no PostgreSQL. O firmware ESP32 está implementado com publicação padrão a cada cinco segundos. |
 | Demonstração | O Compose carrega uma série calibrada na conta demo e treina o modelo se o artefato inicial estiver ausente. Os quatro CSVs e a calibração estão no Git. A rotina e os rótulos são simulados. |
-| Medidores e telemetria | Conexão, vazão e leituras recentes atualizadas automaticamente. A Área Técnica mostra a associação entre leitura, inferência e versão do modelo. |
-| Visão geral | Consumo e detalhes expansíveis. Nos detalhes, a visão semanal agrupa os dados por dia e a mensal por semana. A rosca distingue os volumes dentro do padrão, que vale verificar e sem conclusão. A estimativa usa a tarifa residencial de referência de Recife. |
+| Medidores e telemetria | Conexão, vazão e leituras recentes atualizadas automaticamente. A tela de telemetria explica o resultado da análise em linguagem simples, informa quando sai o próximo e mostra o funcionamento do recebimento, da análise e das regras. Os atributos e a versão do modelo ficam em detalhes técnicos recolhidos. |
+| Visão geral | Consumo e detalhes expansíveis. Nos detalhes, a visão semanal agrupa os dados por dia e a mensal por semana. Os gráficos de consumo destacam a água dos períodos com aviso da análise de ML. A rosca distingue os volumes dentro do padrão, que vale verificar e sem conclusão. A estimativa usa a tarifa residencial de referência de Recife. |
 | Alertas | Regras determinísticas funcionam em paralelo com previsões experimentais. Cada aviso identifica o medidor e pode ser reconhecido, resolvido ou marcado como falso positivo. |
 | Treinamento | Comparação temporal de modelos e rastreamento no MLflow. O DAG manual do Airflow gera um candidato separado. Na aplicação, o administrador pode solicitar retreinamento da série calibrada e promoção após validação. |
 
@@ -15,6 +15,6 @@ Para telemetria de alta frequência, a inferência exige uma janela válida de c
 
 ## Validação e próximos passos
 
-- O trajeto MQTT → API → PostgreSQL → inferência foi exercitado com simulador. A equipe também confirmou a chegada das leituras do ESP32 e do sensor físicos à tela de telemetria. A calibração volumétrica e o ensaio de reconexão continuam pendentes.
+- O trajeto MQTT → API → PostgreSQL → inferência foi exercitado com simulador e com o ESP32 físico. Em 24/11/2026, o sensor acionado por sopro gerou leituras a cada cinco segundos e janelas classificadas como normal e como possível anomalia ([registro](validacao-integracao.md#esp32-físico-24112026)). O ensaio com água, a calibração volumétrica, o ensaio de reconexão e o aviso após duas janelas com o sensor físico continuam pendentes.
 - O desempenho de ML foi medido em séries simuladas calibradas em bancada. Para inferir desempenho em residências, o modelo precisa de avaliação física independente. Veja a [execução de referência](validacao-integracao.md).
 - O Compose é destinado à demonstração local. Antes de qualquer uso em produção, revise segredos, autenticação dos serviços, isolamento de rede e TLS.

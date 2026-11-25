@@ -52,10 +52,10 @@ Os registros exibidos nessa propriedade são dados de demonstração, não mensa
 
 | Tela | O que conferir |
 | --- | --- |
-| Visão geral | Consumo por período, detalhes do gráfico, volumes sinalizados e estimativa da cobrança de água de Recife. |
+| Visão geral | Consumo por período com a parte que passou em períodos com aviso da análise, detalhes do gráfico, volumes sinalizados e estimativa da cobrança de água de Recife. |
 | Medidores | Estado da conexão, vazão recente e resultados das últimas leituras. |
 | Alertas | Medidor, motivo do aviso e ações de acompanhamento. |
-| Telemetria e inferências | Vazão ao vivo e detalhes da inferência associada a cada leitura. |
+| Telemetria e inferências | Vazão ao vivo, resultado da última análise em linguagem simples, horário do próximo resultado e funcionamento do sistema. |
 | Modelos e treinamento | Métricas do modelo e solicitação de retreinamento pela conta administradora. |
 
 ## 4. Acompanhar inicialização e treinamento
@@ -80,7 +80,7 @@ O dashboard pode indicar que a análise do modelo ainda está indisponível dura
 2. Abra o experimento `aquaflow-demo-airflow` no MLflow e expanda uma execução por modelo para mostrar as tentativas de busca, as métricas por divisão temporal e a combinação escolhida.
 3. Selecione no dashboard a propriedade do ESP32. Passe água pelo sensor e confirme a chegada da leitura via MQTT e sua persistência pela API.
 4. Mantenha a coleta até fechar uma janela válida de cinco minutos com uma leitura anterior disponível como referência. Consulte `GET /api/v1/properties/{property_id}/ml-inferences` com autenticação e compare os identificadores das leituras com os resultados. Confira a mesma inferência em **Telemetria e inferências** e o resultado simplificado no detalhe do medidor.
-5. Apresente a diferença entre o desempenho no teste padrão e no perfil de estresse. Se usar um publicador de teste, identifique essa etapa como simulação e registre o ensaio físico como pendente.
+5. Apresente a diferença entre o desempenho no teste padrão e no perfil de estresse. Se usar um publicador de teste, identifique essa etapa como simulação.
 
 Os parâmetros e limites atuais estão em [Métricas e parâmetros](metricas-e-parametros.md); os resultados avaliados estão no [Relatório SBC](../reports/aquaflow-sbc.pdf).
 
