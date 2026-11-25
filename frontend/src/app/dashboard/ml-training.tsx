@@ -229,8 +229,6 @@ export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
     [candidates, evaluations, evaluation, report.test_evaluation, report.stress_test_evaluation],
   );
   const selectedCandidate = object(candidates[selectedModel]);
-  const validationRecall = object(selectedCandidate.validation).recall;
-  const shiftedRecall = object(selectedCandidate.generalization_validation).recall;
   const folds = Array.isArray(selectedCandidate.cv_folds)
     ? selectedCandidate.cv_folds.map((item, index) => {
         const fold = object(item);
@@ -592,19 +590,6 @@ export function MLTrainingView({ canTrain }: { canTrain: boolean }) {
           </button>
         </div>
       </section>
-      {typeof validationRecall === "number" && typeof shiftedRecall === "number" && (
-        <article className="surface ml-card">
-          <h2>Validação antes do ajuste final</h2>
-          <p>
-            Recall no perfil padrão: <strong>{formatMetric(validationRecall * 100, 1)}%</strong>. Na
-            rotina alterada: <strong>{formatMetric(shiftedRecall * 100, 1)}%</strong>.
-          </p>
-          <p>
-            Os dois valores são do mesmo candidato. Os testes abaixo avaliam o modelo após o ajuste
-            final. O recall conta janelas sinalizadas.
-          </p>
-        </article>
-      )}
       <div className="ml-evaluation-heading">
         <h2>
           {followingActive || executionId === data.active_execution_id
