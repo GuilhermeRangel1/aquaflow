@@ -62,3 +62,65 @@ export function interpolateCurveAtX(points, x) {
   }
   return points.find((point) => point.x === x)?.y ?? null;
 }
+
+const ANALYSIS_WINDOW_MS = 5 * 60_000;
+
+/**
+ * High-frequency meters are analyzed in five-minute windows aligned to the clock.
+ * @param {number} now
+ * @returns {number}
+ */
+export function nextAnalysisAt(now) {
+  return (Math.floor(now / ANALYSIS_WINDOW_MS) + 1) * ANALYSIS_WINDOW_MS;
+}
+
+/**
+ * @param {{ reading_id: string, status: string, predicted_anomaly: boolean | null, anomaly_probability: number | null }[] | null} analyses
+ * @param {string} readingId
+ * @param {boolean} grouped
+ * @returns {string}
+ */
+export function describeReadingAnalysis(analyses, readingId, grouped) {
+  if (!analyses) return "Consulta indisponível";
+  const result = analyses.find((analysis) => analysis.reading_id === readingId);
+  if (!result) return grouped ? "Sem análise própria" : "Ainda sem resultado";
+  if (result.status === "skipped" || result.predicted_anomaly === null)
+    return "Sem dados suficientes";
+  const label = result.predicted_anomaly ? "Possível anomalia" : "Normal";
+  if (result.anomaly_probability === null) return label;
+  const chance = result.anomaly_probability.toLocaleString("pt-BR", {
+    style: "percent",
+    maximumFractionDigits: 1,
+  });
+  return `${label} · ${chance} de chance de anomalia`;
+}
+
+/**
+ * @param {string} reason
+ * @returns {string}
+ */
+export function explainSkippedAnalysis(reason) {
+  if (reason.startsWith("Cobertura insuficiente"))
+    return "Ainda não havia leituras suficientes para cobrir os 5 minutos.";
+  if (reason.startsWith("Lacuna"))
+    return "Faltaram leituras no meio do período. Confira a energia e o Wi-Fi do medidor.";
+  if (reason.startsWith("O contador de volume diminuiu"))
+    return "O contador do medidor voltou atrás, como acontece quando ele reinicia.";
+  if (reason.startsWith("Fuso"))
+    return "O fuso horário desta casa é diferente do usado para ensinar o sistema.";
+  return "As leituras disponíveis não foram suficientes para uma conclusão.";
+}
+
+/**
+ * Results come ordered by processing time; the latest one follows the reading time.
+ * @template {{ recorded_at: string }} T
+ * @param {T[] | null} analyses
+ * @returns {T | undefined}
+ */
+export function newestAnalysis(analyses) {
+  return analyses?.reduce(
+    (newest, item) =>
+      Date.parse(item.recorded_at) > Date.parse(newest.recorded_at) ? item : newest,
+    analyses[0],
+  );
+}

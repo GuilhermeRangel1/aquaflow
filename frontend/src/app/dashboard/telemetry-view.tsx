@@ -8,7 +8,9 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { describeReadingAnalysis, newestAnalysis, nextAnalysisAt } from "./dashboard-state.mjs";
 import { MeterInference } from "./meter-inference";
+import { SystemStatusCard } from "./system-status-card";
 
 type Reading = {
   id: string;
@@ -25,6 +27,7 @@ type Reading = {
 type Health = { connectivity: "online" | "offline" | "never_connected" };
 type Analysis = {
   reading_id: string;
+  recorded_at: string;
   status: "scored" | "skipped";
   predicted_anomaly: boolean | null;
   anomaly_probability: number | null;
@@ -177,13 +180,22 @@ function LiveReadings({
     let timer: number | undefined;
     async function update() {
       try {
-        const [page, status, analysis] = await Promise.all([
+        const [page, status] = await Promise.all([
           load<ReadingPage>(`devices/${deviceId}/readings?limit=4`),
           load<Health>(`devices/${deviceId}/health`),
-          load<{ items: Analysis[] }>(
-            `properties/${propertyId}/ml-inferences?device_id=${deviceId}&limit=100`,
-          ).catch(() => null),
         ]);
+        const params = new URLSearchParams({ device_id: deviceId, limit: "100" });
+        // Results arrive by processing time, so old readings reprocessed after a restart
+        // must not hide the newest ones.
+        if (page.items[0]) {
+          params.set(
+            "start",
+            new Date(Date.parse(page.items[0].recorded_at) - 6 * 3_600_000).toISOString(),
+          );
+        }
+        const analysis = await load<{ items: Analysis[] }>(
+          `properties/${propertyId}/ml-inferences?${params}`,
+        ).catch(() => null);
         if (active) {
           setUpdatedAt(Date.now());
           setPage(page);
@@ -270,9 +282,14 @@ function LiveReadings({
     };
   }, [deviceId, load, minutes, paused, refresh]);
 
+  const grouped = interval < 300;
+  const nextAnalysis =
+    grouped && health?.connectivity === "online" && updatedAt !== undefined
+      ? nextAnalysisAt(updatedAt)
+      : null;
   const history = older.at(-1) ?? page;
   const latest = page?.items[0];
-  const latestAnalysisId = analyses?.[0]?.reading_id ?? latest?.id;
+  const latestAnalysisId = newestAnalysis(analyses)?.reading_id ?? latest?.id;
   const readings =
     page &&
     Array.from(
@@ -449,6 +466,46 @@ function LiveReadings({
           </button>
         </div>
       </div>
+      <section className="surface telemetry-card">
+        <h2>Como funciona a análise</h2>
+        <p>
+          O sistema compara a água que passou com exemplos de consumo comum e fora do comum.{" "}
+          {grouped
+            ? "Neste medidor, as leituras são analisadas juntas, em períodos de 5 minutos. A vazão aparece na hora, mas o resultado só sai quando o período termina."
+            : "Neste medidor, cada leitura é comparada com a anterior."}
+        </p>
+        {nextAnalysis !== null && (
+          <p>
+            Próximo resultado a partir de{" "}
+            <strong>
+              {new Date(nextAnalysis).toLocaleTimeString("pt-BR", {
+                hour: "2-digit",
+                minute: "2-digit",
+                timeZone: timezone,
+              })}
+            </strong>
+            , se não faltarem leituras.
+          </p>
+        )}
+        <dl className="telemetry-attribute-grid">
+          <div>
+            <dt>Normal</dt>
+            <dd>O uso ficou parecido com o consumo comum.</dd>
+          </div>
+          <div>
+            <dt>Possível anomalia</dt>
+            <dd>O uso ficou fora do comum. Vale verificar, mas não confirma vazamento.</dd>
+          </div>
+          <div>
+            <dt>Sem dados suficientes</dt>
+            <dd>Faltaram leituras para analisar. Não quer dizer que está normal.</dd>
+          </div>
+        </dl>
+        <small>
+          Um aviso é criado quando dois resultados seguidos indicam possível anomalia, para evitar
+          alarme por um uso isolado.
+        </small>
+      </section>
       {latestAnalysisId && (
         <MeterInference
           key={latestAnalysisId}
@@ -485,7 +542,13 @@ function LiveReadings({
             <summary className="telemetry-row">
               <span>{date(reading.recorded_at)}</span>
               <span>{formatMeasure(reading.flow_rate_liters_minute, "L/min")}</span>
-              <span>{describeAnalysis(olderAnalyses[reading.id] ?? analyses, reading.id)}</span>
+              <span>
+                {describeReadingAnalysis(
+                  olderAnalyses[reading.id] ?? analyses,
+                  reading.id,
+                  grouped,
+                )}
+              </span>
               <span className="telemetry-disclosure-action">
                 <span>Ver detalhes</span>
                 <span>Recolher</span>
@@ -493,15 +556,10 @@ function LiveReadings({
             </summary>
             <div className="telemetry-reading-detail">
               <header>
-                <h3>Detalhes da leitura e inferência</h3>
+                <h3>Detalhes da leitura</h3>
                 <p>{date(reading.recorded_at)}</p>
               </header>
-              <h4>Leitura recebida</h4>
               <dl className="telemetry-attribute-grid telemetry-reading-fields">
-                <div>
-                  <dt>Evento</dt>
-                  <dd>{reading.event_id}</dd>
-                </div>
                 <div>
                   <dt>Medição</dt>
                   <dd>{date(reading.recorded_at)}</dd>
@@ -511,8 +569,8 @@ function LiveReadings({
                   <dd>{date(reading.received_at)}</dd>
                 </div>
                 <div>
-                  <dt>Qualidade</dt>
-                  <dd>{reading.quality === "valid" ? "Válida" : reading.quality}</dd>
+                  <dt>Situação da leitura</dt>
+                  <dd>{describeQuality(reading.quality)}</dd>
                 </div>
                 <div>
                   <dt>Vazão registrada</dt>
@@ -534,10 +592,6 @@ function LiveReadings({
                       : formatMeasure(reading.signal_dbm, "dBm")}
                   </dd>
                 </div>
-                <div>
-                  <dt>Firmware</dt>
-                  <dd>{reading.firmware_version ?? "Não informado"}</dd>
-                </div>
               </dl>
               {expanded.includes(reading.id) && (
                 <div>
@@ -552,6 +606,19 @@ function LiveReadings({
                   />
                 </div>
               )}
+              <details className="telemetry-analysis-details">
+                <summary>Identificação técnica da leitura</summary>
+                <dl className="telemetry-attribute-grid">
+                  <div>
+                    <dt>Evento</dt>
+                    <dd>{reading.event_id}</dd>
+                  </div>
+                  <div>
+                    <dt>Programa da placa</dt>
+                    <dd>{reading.firmware_version ?? "Não informado"}</dd>
+                  </div>
+                </dl>
+              </details>
             </div>
           </details>
         ))}
@@ -571,42 +638,7 @@ function LiveReadings({
           )}
         </div>
       </section>
-      <details className="surface telemetry-card telemetry-disclosure">
-        <summary>
-          Detalhes técnicos da leitura e da inferência{" "}
-          <span className="telemetry-disclosure-action" aria-hidden="true">
-            <span>Expandir</span>
-            <span>Recolher</span>
-          </span>
-        </summary>
-        <dl className="telemetry-attribute-grid telemetry-disclosure-body">
-          <div>
-            <dt>Origem</dt>
-            <dd>Não identificada</dd>
-          </div>
-          <div>
-            <dt>Transporte</dt>
-            <dd>Não registrado</dd>
-          </div>
-          {latest && (
-            <>
-              <div>
-                <dt>Evento</dt>
-                <dd>{latest.event_id}</dd>
-              </div>
-              <div>
-                <dt>Recebida em</dt>
-                <dd>{date(latest.received_at)}</dd>
-              </div>
-              <div>
-                <dt>Qualidade</dt>
-                <dd>{latest.quality === "valid" ? "Válida" : latest.quality}</dd>
-              </div>
-            </>
-          )}
-        </dl>
-      </details>
-      <small>Uma possível anomalia indica necessidade de verificação.</small>
+      <SystemStatusCard propertyId={propertyId} timezone={timezone} paused={paused} load={load} />
     </>
   );
 }
@@ -616,13 +648,12 @@ function formatMeasure(value: string | number | null | undefined, unit: string) 
   return `${Number(value).toLocaleString("pt-BR", { maximumFractionDigits: 3 })} ${unit}`;
 }
 
-function describeAnalysis(analyses: Analysis[] | null, id: string) {
-  if (!analyses) return "Consulta indisponível";
-  const result = analyses.find((analysis) => analysis.reading_id === id);
-  if (!result) return "Sem resultado nesta consulta";
-  if (result.status === "skipped") return "Não avaliada";
-  const label = result.predicted_anomaly ? "Possível anomalia" : "Normal";
-  return result.anomaly_probability === null
-    ? label
-    : `${label} · ${result.anomaly_probability.toLocaleString("pt-BR", { style: "percent", maximumFractionDigits: 1 })}`;
+function describeQuality(quality: string) {
+  return (
+    {
+      valid: "Válida",
+      counter_reset: "Contador do medidor reiniciado",
+      out_of_order: "Chegou fora de ordem",
+    }[quality] ?? "Não pôde ser usada"
+  );
 }

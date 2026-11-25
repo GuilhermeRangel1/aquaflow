@@ -80,7 +80,12 @@ type DeviceHealth = {
   last_seen_at: string | null;
   latest_reading: DeviceReading | null;
 };
-type Bucket = { bucket_start: string; volume_liters: number; sample_count: number };
+type Bucket = {
+  bucket_start: string;
+  volume_liters: number;
+  ml_flagged_liters: number | null;
+  sample_count: number;
+};
 type Consumption = {
   items: Bucket[];
   summary: {
@@ -378,6 +383,7 @@ export default function Dashboard() {
         start: start.toISOString(),
         end: end.toISOString(),
         granularity: periodDays === 1 ? "hour" : "day",
+        include_ml_flagged: "true",
       });
       api<Consumption>(`properties/${selectedId}/consumption?${params}`)
         .then((result) => {
@@ -435,6 +441,7 @@ export default function Dashboard() {
         end: end.toISOString(),
         granularity: "hour",
         limit: "2000",
+        include_ml_flagged: "true",
       });
       (async () => {
         const items: Bucket[] = [];
@@ -903,6 +910,8 @@ export default function Dashboard() {
       timeZone: selected?.timezone,
     }).format(new Date(item.bucket_start)),
   }));
+  const chartTotal = chartData.reduce((sum, point) => sum + point.volume_liters, 0);
+  const chartFlagged = chartData.reduce((sum, point) => sum + (point.ml_flagged_liters ?? 0), 0);
   const meterLatestReading = selectedDeviceId
     ? ((readingsDeviceId === selectedDeviceId ? deviceReadings[0] : undefined) ??
       deviceHealth[selectedDeviceId]?.latest_reading)
@@ -931,11 +940,8 @@ export default function Dashboard() {
     const hourMs = 60 * 60 * 1000;
     const end = hourlyWindowEnd;
     const firstHour = end - detailHours * hourMs;
-    const volumeByHour = new Map(
-      (hourlyConsumption?.items ?? []).map((item) => [
-        new Date(item.bucket_start).getTime(),
-        item.volume_liters,
-      ]),
+    const bucketByHour = new Map(
+      (hourlyConsumption?.items ?? []).map((item) => [new Date(item.bucket_start).getTime(), item]),
     );
     const hourLabel = new Intl.DateTimeFormat("pt-BR", {
       hour: "2-digit",
@@ -955,7 +961,8 @@ export default function Dashboard() {
             ? hourLabel.format(timestamp)
             : `${dateLabel.format(timestamp)} ${hourLabel.format(timestamp)}h`,
         periodHour: Number(hourLabel.format(timestamp)),
-        volume_liters: volumeByHour.get(timestamp) ?? null,
+        volume_liters: bucketByHour.get(timestamp)?.volume_liters ?? null,
+        ml_flagged_liters: bucketByHour.get(timestamp)?.ml_flagged_liters ?? 0,
       };
     });
     return detailHours === 24 ? orderHoursFromMidnight(points) : points;
@@ -1705,7 +1712,10 @@ export default function Dashboard() {
                             <p className="sr-only">
                               {chartData.length
                                 ? chartData
-                                    .map((point) => `${point.day}: ${point.volume_liters} litros`)
+                                    .map(
+                                      (point) =>
+                                        `${point.day}: ${point.volume_liters} litros, ${point.ml_flagged_liters ?? 0} com aviso da análise`,
+                                    )
                                     .join(". ")
                                 : !consumption && !error
                                   ? "Carregando consumo."
@@ -1736,9 +1746,9 @@ export default function Dashboard() {
                                     tick={{ fill: "var(--muted)", fontSize: 12 }}
                                   />
                                   <Tooltip
-                                    formatter={(value) => [
-                                      `${Number(value).toLocaleString("pt-BR")} L`,
-                                      "Consumo",
+                                    formatter={(value, name) => [
+                                      `${Number(value).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} L`,
+                                      name,
                                     ]}
                                     contentStyle={{
                                       borderRadius: 14,
@@ -1751,6 +1761,7 @@ export default function Dashboard() {
                                     type="linear"
                                     isAnimationActive={false}
                                     dataKey="volume_liters"
+                                    name="Consumo total"
                                     stroke="var(--accent)"
                                     strokeWidth={3}
                                     fill="none"
@@ -1760,6 +1771,17 @@ export default function Dashboard() {
                                       stroke: "var(--surface)",
                                       strokeWidth: 2,
                                     }}
+                                  />
+                                  <Area
+                                    type="linear"
+                                    isAnimationActive={false}
+                                    dataKey="ml_flagged_liters"
+                                    name="Com aviso da análise"
+                                    stroke="var(--warm)"
+                                    strokeWidth={2}
+                                    strokeDasharray="5 4"
+                                    fill="var(--warm)"
+                                    fillOpacity={0.22}
                                   />
                                 </AreaChart>
                               </ResponsiveContainer>
@@ -1782,6 +1804,9 @@ export default function Dashboard() {
                               </div>
                             )}
                           </div>
+                          {chartData.length > 0 && (
+                            <ConsumptionLegend total={chartTotal} flagged={chartFlagged} />
+                          )}
                           <details className="overview-insights">
                             <summary className="overview-insights-toggle">
                               Detalhes do consumo
@@ -2283,17 +2308,23 @@ function formatObservedDuration(minutes: number): string {
 }
 
 function groupConsumption(
-  hourlyData: Array<{ hour: string; volume_liters: number | null }>,
+  hourlyData: Array<{ hour: string; volume_liters: number | null; ml_flagged_liters: number }>,
   granularity: "dia" | "semana",
 ) {
-  const byDay = new Map<string, number | null>();
+  const byDay = new Map<string, { volume_liters: number | null; ml_flagged_liters: number }>();
   for (const point of hourlyData) {
     const day = point.hour.split(" ")[0];
-    const previous = byDay.get(day) ?? null;
-    byDay.set(day, point.volume_liters === null ? previous : (previous ?? 0) + point.volume_liters);
+    const previous = byDay.get(day) ?? { volume_liters: null, ml_flagged_liters: 0 };
+    byDay.set(day, {
+      volume_liters:
+        point.volume_liters === null
+          ? previous.volume_liters
+          : (previous.volume_liters ?? 0) + point.volume_liters,
+      ml_flagged_liters: previous.ml_flagged_liters + point.ml_flagged_liters,
+    });
   }
 
-  const days = Array.from(byDay, ([hour, volume_liters]) => ({ hour, volume_liters }));
+  const days = Array.from(byDay, ([hour, totals]) => ({ hour, ...totals }));
   if (granularity === "dia") return days;
 
   const weeks = [];
@@ -2307,9 +2338,52 @@ function groupConsumption(
         (total, day) => (day.volume_liters === null ? total : (total ?? 0) + day.volume_liters),
         null,
       ),
+      ml_flagged_liters: week.reduce((total, day) => total + day.ml_flagged_liters, 0),
     });
   }
   return weeks.reverse();
+}
+
+function ConsumptionLegend({
+  total,
+  flagged,
+  totalLabel = "Consumo total",
+  totalValue = total,
+}: {
+  total: number;
+  flagged: number;
+  totalLabel?: string;
+  totalValue?: number;
+}) {
+  const share = total > 0 ? flagged / total : 0;
+  return (
+    <div className="consumption-legend">
+      <dl>
+        <div>
+          <dt>
+            <i aria-hidden="true" className="consumption-legend-total" />
+            {totalLabel}
+          </dt>
+          <dd>{formatLiters(totalValue)}</dd>
+        </div>
+        <div>
+          <dt>
+            <i aria-hidden="true" className="consumption-legend-flagged" />
+            Com aviso da análise
+          </dt>
+          <dd>
+            {formatLiters(flagged)}
+            {flagged > 0 &&
+              ` (${share.toLocaleString("pt-BR", { style: "percent", maximumFractionDigits: 1 })})`}
+          </dd>
+        </div>
+      </dl>
+      <small>
+        Água que passou nos períodos em que a análise automática gerou um aviso. Vale verificar, mas
+        não confirma vazamento.
+      </small>
+    </div>
+  );
 }
 
 function OverviewInsights({
@@ -2319,7 +2393,12 @@ function OverviewInsights({
   hourlyError,
 }: {
   hours: number;
-  hourlyData: Array<{ hour: string; periodHour: number; volume_liters: number | null }>;
+  hourlyData: Array<{
+    hour: string;
+    periodHour: number;
+    volume_liters: number | null;
+    ml_flagged_liters: number;
+  }>;
   hourlyLoading: boolean;
   hourlyError: string;
 }) {
@@ -2330,14 +2409,21 @@ function OverviewInsights({
     .map((point) => point.hour);
   const hourlyPlot = chartData.map((point) => ({
     ...point,
-    chartValue: point.volume_liters ?? 0,
+    flaggedValue: point.ml_flagged_liters,
+    chartValue: Math.max(0, (point.volume_liters ?? 0) - point.ml_flagged_liters),
   }));
 
   const observedHours = hourlyData.filter((point) => point.volume_liters !== null).length;
   let recordedTotal = 0;
+  let flaggedTotal = 0;
   const cumulative = chartData.map((point) => {
     recordedTotal += point.volume_liters ?? 0;
-    return { hour: point.hour, total: point.volume_liters === null ? null : recordedTotal };
+    flaggedTotal += point.ml_flagged_liters;
+    return {
+      hour: point.hour,
+      total: point.volume_liters === null ? null : recordedTotal,
+      flagged: point.volume_liters === null ? null : flaggedTotal,
+    };
   });
   const periods = ["Madrugada", "Manhã", "Tarde", "Noite"].map((label, index) => {
     const hours = hourlyData.filter((point) => Math.floor(point.periodHour / 6) === index);
@@ -2371,7 +2457,7 @@ function OverviewInsights({
           <div
             className="overview-insight-chart"
             role="img"
-            aria-label={`Consumo em litros por ${granularity}. ${consumptionWindowLabel(hours)}. Marcas cinza indicam períodos sem dados suficientes.`}
+            aria-label={`Consumo em litros por ${granularity}. ${consumptionWindowLabel(hours)}. Total de ${formatLiters(recordedTotal)}, sendo ${formatLiters(flaggedTotal)} com aviso da análise. Marcas cinza indicam períodos sem dados suficientes.`}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={hourlyPlot} margin={{ top: 8, right: 4, left: -20, bottom: 0 }}>
@@ -2392,11 +2478,11 @@ function OverviewInsights({
                 />
                 <Tooltip
                   cursor={false}
-                  formatter={(value, _name, item) => [
+                  formatter={(value, name, item) => [
                     item.payload?.volume_liters == null
                       ? "Sem dados suficientes"
                       : Number(value).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + " L",
-                    "Consumo",
+                    name,
                   ]}
                   labelFormatter={(hour) => (hours === 24 ? `${hour}h` : String(hour))}
                   contentStyle={{
@@ -2408,6 +2494,8 @@ function OverviewInsights({
                 />
                 <Bar
                   dataKey="chartValue"
+                  name="Sem aviso da análise"
+                  stackId="consumo"
                   fill="var(--accent)"
                   minPointSize={(value) => (value === 0 ? 3 : 0)}
                   activeBar={false}
@@ -2421,9 +2509,25 @@ function OverviewInsights({
                     />
                   ))}
                 </Bar>
+                <Bar
+                  dataKey="flaggedValue"
+                  name="Com aviso da análise"
+                  stackId="consumo"
+                  fill="var(--warm)"
+                  activeBar={false}
+                  radius={[4, 4, 0, 0]}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>
+        )}
+        {!hourlyLoading && !hourlyError && hourlyPlot.length > 0 && (
+          <ConsumptionLegend
+            total={recordedTotal}
+            flagged={flaggedTotal}
+            totalLabel="Sem aviso da análise"
+            totalValue={Math.max(0, recordedTotal - flaggedTotal)}
+          />
         )}
       </article>
       {!hourlyLoading && !hourlyError && hourlyData.length > 0 && (
@@ -2442,7 +2546,7 @@ function OverviewInsights({
                 <div
                   className="overview-insight-chart"
                   role="img"
-                  aria-label={`Total registrado: ${formatLiters(recordedTotal)}`}
+                  aria-label={`Total registrado: ${formatLiters(recordedTotal)}. Com aviso da análise: ${formatLiters(flaggedTotal)}`}
                 >
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart
@@ -2466,13 +2570,13 @@ function OverviewInsights({
                       />
                       <Tooltip
                         cursor={{ stroke: "var(--line)", strokeDasharray: "3 3" }}
-                        formatter={(value) => [
+                        formatter={(value, name) => [
                           value == null
                             ? "Sem dados suficientes"
                             : `${Number(value).toLocaleString("pt-BR", {
                                 maximumFractionDigits: 3,
                               })} L`,
-                          "Acumulado",
+                          name,
                         ]}
                         labelFormatter={(hour) => (hours === 24 ? `${hour}h` : String(hour))}
                         contentStyle={{
@@ -2485,6 +2589,7 @@ function OverviewInsights({
                       <Area
                         type="stepAfter"
                         dataKey="total"
+                        name="Consumo total"
                         stroke="var(--accent-strong)"
                         fill="var(--accent-soft)"
                         activeDot={{
@@ -2494,10 +2599,22 @@ function OverviewInsights({
                           strokeWidth: 2,
                         }}
                       />
+                      <Area
+                        type="stepAfter"
+                        dataKey="flagged"
+                        name="Com aviso da análise"
+                        stroke="var(--warm)"
+                        strokeDasharray="5 4"
+                        fill="var(--warm)"
+                        fillOpacity={0.22}
+                      />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
-                <small>{formatLiters(recordedTotal)} somados nas horas com dados.</small>
+                <small>
+                  {formatLiters(recordedTotal)} somados nas horas com dados, sendo{" "}
+                  {formatLiters(flaggedTotal)} com aviso da análise.
+                </small>
               </>
             )}
           </article>

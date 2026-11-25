@@ -483,11 +483,41 @@ async def test_classification_clips_window_and_respects_false_positive(
         "flagged_liters": 6,
         "unclassified_liters": 0,
     }
+    consumption_path = f"/api/v1/properties/{property_id}/consumption"
+    period = {"start": boundary.isoformat(), "end": now.isoformat(), "granularity": "day"}
+    plain = (await client.get(consumption_path, headers=headers, params=period)).json()
+    assert all(item["ml_flagged_liters"] is None for item in plain["items"])
+    with_ml = {**period, "include_ml_flagged": "true"}
+    flagged = (await client.get(consumption_path, headers=headers, params=with_ml)).json()
+    assert sum(item["volume_liters"] for item in flagged["items"]) == 6
+    assert sum(item["ml_flagged_liters"] for item in flagged["items"]) == 6
     async with app.state.session_factory.begin() as session:
         stored_alert = await session.get(Alert, alert_id)
         assert stored_alert is not None
         stored_alert.status = "false_positive"
     assert (await client.get(path, headers=headers)).json() == unresolved_volume
+    reviewed = (await client.get(consumption_path, headers=headers, params=with_ml)).json()
+    assert [item["ml_flagged_liters"] for item in reviewed["items"]] == [0] * len(reviewed["items"])
+    # A rule alert over the same interval flags the water, but not as a model result.
+    async with app.state.session_factory.begin() as session:
+        rule = AnomalyEvent(
+            property_id=property_id,
+            device_id=device_id,
+            detector_type="continuous_flow",
+            score=Decimal("0.9"),
+            severity="high",
+            reason="Test rule",
+            window_start=boundary - timedelta(minutes=2),
+            window_end=reading.recorded_at,
+            evidence={},
+            detected_at=now,
+        )
+        session.add(rule)
+        await session.flush()
+        session.add(Alert(anomaly_id=rule.id, status="open", created_at=now))
+    assert (await client.get(path, headers=headers)).json()["flagged_liters"] == 6
+    ruled = (await client.get(consumption_path, headers=headers, params=with_ml)).json()
+    assert sum(item["ml_flagged_liters"] for item in ruled["items"]) == 0
     async with app.state.session_factory.begin() as session:
         device = await session.get(Device, device_id)
         assert device is not None

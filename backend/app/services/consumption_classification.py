@@ -1,12 +1,27 @@
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Alert, AnomalyEvent, Device, MLInference, TelemetryReading
-from app.domain.consumption import Sample, interval_volume
+from app.domain.consumption import Granularity, Sample, distribute_interval, interval_volume
+
+Category = Literal["normal", "flagged", "unclassified"]
+
+
+@dataclass(frozen=True, slots=True)
+class ClassifiedInterval:
+    start: datetime
+    end: datetime
+    volume: Decimal
+    category: Category
+    flagged_by_model: bool
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -16,6 +31,42 @@ def _as_utc(value: datetime) -> datetime:
 async def classify_consumption(
     session: AsyncSession, property_id: UUID, start: datetime, end: datetime
 ) -> dict[str, Decimal]:
+    totals = {"normal": Decimal(0), "flagged": Decimal(0), "unclassified": Decimal(0)}
+    async for interval in _classified_intervals(session, property_id, start, end):
+        totals[interval.category] += interval.volume
+    return totals
+
+
+async def model_flagged_volume(
+    session: AsyncSession,
+    property_id: UUID,
+    start: datetime,
+    end: datetime,
+    *,
+    timezone_name: str,
+    granularity: Granularity,
+) -> dict[datetime, Decimal]:
+    """Volume per bucket inside windows whose model prediction became a valid alert."""
+    zone = ZoneInfo(timezone_name)
+    totals: dict[datetime, tuple[Decimal, int]] = {}
+    async for interval in _classified_intervals(session, property_id, start, end):
+        if interval.flagged_by_model:
+            distribute_interval(
+                totals,
+                interval.start,
+                interval.end,
+                interval.volume,
+                zone,
+                granularity,
+                start,
+                end,
+            )
+    return {bucket: volume for bucket, (volume, _) in totals.items()}
+
+
+async def _classified_intervals(
+    session: AsyncSession, property_id: UUID, start: datetime, end: datetime
+) -> AsyncIterator[ClassifiedInterval]:
     devices = list(
         (
             await session.scalars(
@@ -23,7 +74,6 @@ async def classify_consumption(
             )
         ).all()
     )
-    totals = {"normal": Decimal(0), "flagged": Decimal(0), "unclassified": Decimal(0)}
     rules = (
         await session.execute(
             select(AnomalyEvent.device_id, AnomalyEvent.window_start, AnomalyEvent.window_end)
@@ -180,18 +230,21 @@ async def classify_consumption(
                     rule_end = max(rule_end, next_rule[1])
                     next_rule = next(rule_windows, None)
                 flagged_by_rule = overlap_end <= rule_end
-                category = (
+                category: Category = (
                     "flagged"
                     if flagged_by_rule or prediction is True
                     else "normal"
                     if prediction is False
                     else "unclassified"
                 )
-                totals[category] += (
-                    volume
+                yield ClassifiedInterval(
+                    start=overlap_start,
+                    end=overlap_end,
+                    volume=volume
                     * Decimal(str((overlap_end - overlap_start).total_seconds()))
-                    / Decimal(str((current_at - previous_at).total_seconds()))
+                    / Decimal(str((current_at - previous_at).total_seconds())),
+                    category=category,
+                    flagged_by_model=prediction is True,
                 )
         finally:
             await rows.close()
-    return totals

@@ -97,6 +97,40 @@
   font-weight: 650;
 }
 
+.consumption-legend {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+.consumption-legend dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+  margin: 0;
+}
+.consumption-legend dl > div,
+.consumption-legend dt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.consumption-legend dd {
+  margin: 0;
+  font-weight: 650;
+}
+.consumption-legend i {
+  width: 16px;
+  height: 0;
+  border-top: 3px solid var(--accent);
+}
+.consumption-legend .consumption-legend-flagged {
+  border-top: 3px dashed var(--warm);
+}
+.consumption-legend small {
+  color: var(--muted);
+}
+
 .overview-insights-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3253,6 +3287,23 @@
 
 .telemetry-attribute-grid dd {
   font-weight: 600;
+}
+.telemetry-card > p,
+.telemetry-analysis-explanation > p {
+  max-width: 72ch;
+  margin: 6px 0;
+}
+.telemetry-system-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  margin-top: 12px;
+}
+.telemetry-attribute-grid .telemetry-system-detail {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.telemetry-system-grid > div {
+  border: 1px solid var(--line);
 }
 .telemetry-disclosure-action > :last-child,
 .telemetry-disclosure[open] > summary .telemetry-disclosure-action > :first-child {

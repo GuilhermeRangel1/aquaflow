@@ -17,7 +17,7 @@ from app.api.resources import _owned_device
 from app.db.models import Alert, AnomalyEvent, Device, Property, TelemetryReading, User
 from app.db.session import get_session
 from app.domain.consumption import Sample, aggregate_samples, interval_volume
-from app.services.consumption_classification import classify_consumption
+from app.services.consumption_classification import classify_consumption, model_flagged_volume
 
 router = APIRouter(prefix="/api/v1/properties", tags=["consumption"])
 device_router = APIRouter(prefix="/api/v1/devices", tags=["consumption"])
@@ -178,6 +178,13 @@ class ConsumptionItem(BaseModel):
     bucket_start: datetime
     volume_liters: float
     sample_count: int = Field(ge=1)
+    ml_flagged_liters: float | None = Field(
+        default=None,
+        description=(
+            "Part of the volume inside windows alerted by the model. Null unless requested; "
+            "it marks water worth checking and does not confirm a leak."
+        ),
+    )
 
 
 class ConsumptionSummary(BaseModel):
@@ -228,6 +235,7 @@ async def get_consumption(
     granularity: Literal["hour", "day", "month"] = "hour",
     limit: int = Query(default=1000, ge=1, le=2000),
     cursor: str | None = None,
+    include_ml_flagged: bool = False,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_user),
 ) -> ConsumptionResponse:
@@ -331,6 +339,18 @@ async def get_consumption(
         ordered = [(bucket, value) for bucket, value in ordered if bucket > cursor_at]
     page = ordered[:limit]
     has_more = len(ordered) > limit
+    flagged = (
+        await model_flagged_volume(
+            session,
+            property_row.id,
+            start_utc,
+            end_utc,
+            timezone_name=property_row.timezone,
+            granularity=granularity,
+        )
+        if include_ml_flagged
+        else None
+    )
 
     daily_totals = _aggregate_period(
         samples_by_device,
@@ -380,6 +400,11 @@ async def get_consumption(
                 bucket_start=bucket_start,
                 volume_liters=float(value[0].quantize(Decimal("0.001"))),
                 sample_count=value[1],
+                ml_flagged_liters=(
+                    float(flagged.get(bucket_start, Decimal(0)).quantize(Decimal("0.001")))
+                    if flagged is not None
+                    else None
+                ),
             )
             for bucket_start, value in page
         ],

@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  describeReadingAnalysis,
+  explainSkippedAnalysis,
   interpolateCurveAtX,
+  newestAnalysis,
+  nextAnalysisAt,
   orderHoursFromMidnight,
   resolveActivePropertyId,
   resolveDashboardRoute,
@@ -69,4 +73,41 @@ test("curve interpolation preserves descending recall segments with duplicate x"
     ),
     0.5,
   );
+});
+
+test("the next analysis is the end of the current five-minute window", () => {
+  const at = (value) => Date.parse(value);
+  assert.equal(nextAnalysisAt(at("2026-11-25T12:03:45Z")), at("2026-11-25T12:05:00Z"));
+  assert.equal(nextAnalysisAt(at("2026-11-25T12:05:00Z")), at("2026-11-25T12:10:00Z"));
+});
+
+test("analysis results use plain language and never turn missing data into normal", () => {
+  const scored = (predicted_anomaly) => [
+    { reading_id: "a", status: "scored", predicted_anomaly, anomaly_probability: 0.505 },
+  ];
+  assert.match(describeReadingAnalysis(scored(true), "a", true), /^Possível anomalia · 50,5/);
+  assert.match(describeReadingAnalysis(scored(false), "a", true), /^Normal · 50,5/);
+  const skipped = [
+    { reading_id: "a", status: "skipped", predicted_anomaly: null, anomaly_probability: null },
+  ];
+  assert.equal(describeReadingAnalysis(skipped, "a", true), "Sem dados suficientes");
+  assert.equal(describeReadingAnalysis([], "a", true), "Sem análise própria");
+  assert.equal(describeReadingAnalysis([], "a", false), "Ainda sem resultado");
+  assert.equal(describeReadingAnalysis(null, "a", true), "Consulta indisponível");
+});
+
+test("skipped analyses explain the reason in plain language", () => {
+  assert.match(
+    explainSkippedAnalysis("Lacuna ou timestamp duplicado na janela de cinco minutos."),
+    /Wi-Fi/,
+  );
+  assert.match(explainSkippedAnalysis("motivo novo"), /não foram suficientes/);
+});
+
+test("the latest analysis follows the reading time, not the processing order", () => {
+  const older = { reading_id: "old", recorded_at: "2026-11-25T12:00:00Z" };
+  const newer = { reading_id: "new", recorded_at: "2026-11-25T12:05:00Z" };
+  assert.equal(newestAnalysis([older, newer]).reading_id, "new");
+  assert.equal(newestAnalysis([]), undefined);
+  assert.equal(newestAnalysis(null), undefined);
 });

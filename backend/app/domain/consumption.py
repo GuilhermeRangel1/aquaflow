@@ -67,7 +67,7 @@ def aggregate_samples(
         volume = interval_volume(previous, current, expected_interval_seconds)
         if volume is None:
             continue
-        _distribute_interval(
+        distribute_interval(
             totals,
             as_utc(previous.recorded_at),
             as_utc(current.recorded_at),
@@ -119,7 +119,7 @@ def _next_bucket_start(
     return datetime(next_year, next_month, 1, tzinfo=zone).astimezone(UTC)
 
 
-def _distribute_interval(
+def distribute_interval(
     totals: dict[datetime, tuple[Decimal, int]],
     interval_start: datetime,
     interval_end: datetime,
