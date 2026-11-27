@@ -3386,6 +3386,83 @@
 .telemetry-values > div {
   min-width: 0;
 }
+/* Último resultado: uma coluna, com o painel dividido em partes. */
+.telemetry-layout .telemetry-analysis {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+.telemetry-analysis-panel {
+  display: grid;
+  max-width: 52rem;
+  margin-top: 8px;
+  background: var(--surface);
+  border-radius: 12px;
+}
+.telemetry-analysis-section {
+  padding: 16px 18px;
+}
+.telemetry-analysis-section + .telemetry-analysis-section {
+  border-top: 1px solid var(--line);
+}
+.telemetry-analysis-section h3 {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.telemetry-analysis-section p {
+  margin: 0 0 4px;
+  color: var(--ink);
+}
+.telemetry-analysis-section .telemetry-analysis-chance {
+  display: block;
+  font-size: 28px;
+  line-height: 1.1;
+}
+.telemetry-chance-meter {
+  position: relative;
+  max-width: 24rem;
+  height: 8px;
+  margin: 10px 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 22%, transparent);
+}
+.telemetry-chance-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 4px;
+  border-radius: inherit;
+  background: var(--accent);
+}
+.telemetry-chance-fill-warm {
+  background: var(--warm);
+}
+.telemetry-chance-meter i {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--ink);
+}
+.telemetry-analysis-footer {
+  max-width: 52rem;
+  margin-top: 6px;
+}
+.telemetry-analysis-footer .telemetry-analysis-time {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.telemetry-analysis-details > p {
+  max-width: 70ch;
+  color: var(--muted);
+}
+.telemetry-analysis-version {
+  font-size: 12px;
+}
 summary.telemetry-row,
 .telemetry-reading-technical > summary {
   cursor: pointer;
@@ -3688,4 +3765,22 @@ details[open] > .telemetry-row .telemetry-disclosure-action > :last-child {
 
 .classified-consumption dd {
   font-weight: 700;
+}
+
+/* Aviso de medidor parado: os números da tela são antigos. */
+.telemetry-stale {
+  padding: 16px 20px;
+  border: 1px solid var(--warm);
+  border-left-width: 6px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--warm) 10%, var(--surface));
+}
+.telemetry-stale strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 16px;
+}
+.telemetry-stale p {
+  margin: 2px 0 0;
+  max-width: 72ch;
 }

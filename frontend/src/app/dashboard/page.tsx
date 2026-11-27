@@ -1133,7 +1133,7 @@ export default function Dashboard() {
                 </h1>
                 <p>
                   {view === "telemetry"
-                    ? "Acompanhe as leituras recebidas e a análise do modelo em operação."
+                    ? "Veja se o medidor está enviando dados, quanta água está passando e o que a análise automática achou."
                     : view === "meters"
                       ? selectedDevice
                         ? `${selected?.name ?? "Sua casa"} · ${selectedDevice.serial_number}`

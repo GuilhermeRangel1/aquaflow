@@ -8,7 +8,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { describeReadingAnalysis, newestAnalysis, nextAnalysisAt } from "./dashboard-state.mjs";
+import {
+  describeElapsed,
+  describeReadingAnalysis,
+  newestAnalysis,
+  nextAnalysisAt,
+} from "./dashboard-state.mjs";
 import { MeterInference } from "./meter-inference";
 import { SystemStatusCard } from "./system-status-card";
 
@@ -289,6 +294,12 @@ function LiveReadings({
       : null;
   const history = older.at(-1) ?? page;
   const latest = page?.items[0];
+  // Without fresh readings, the numbers below describe the past, not the present.
+  const stale = health?.connectivity === "offline" && latest !== undefined;
+  const silentFor =
+    stale && updatedAt !== undefined
+      ? describeElapsed(updatedAt - Date.parse(latest.received_at))
+      : null;
   const latestAnalysisId = newestAnalysis(analyses)?.reading_id ?? latest?.id;
   const readings =
     page &&
@@ -355,17 +366,34 @@ function LiveReadings({
           {health
             ? {
                 online: "Recebendo leituras",
-                offline: "Sem comunicação",
-                never_connected: "Aguardando primeira leitura",
+                offline: "Medidor sem enviar leituras",
+                never_connected: "Aguardando a primeira leitura",
               }[health.connectivity]
             : failed
               ? "Consulta indisponível"
               : "Consultando conexão…"}
         </strong>
-        {latest && <small>Último recebimento · {date(latest.received_at)}</small>}
+        {latest && <small>Última leitura recebida em {date(latest.received_at)}</small>}
       </section>
+      {stale && (
+        <section className="telemetry-stale" role="status">
+          <strong>O medidor parou de enviar leituras.</strong>
+          <p>
+            A última chegou em {date(latest.received_at)}
+            {silentFor && `, há ${silentFor}`}. Os números abaixo são dessa última leitura, não de
+            agora.
+          </p>
+          <p>
+            O sistema continua funcionando. Confira se o medidor está ligado na energia e conectado
+            ao Wi-Fi.
+          </p>
+        </section>
+      )}
       <section className="telemetry-latest">
-        <small>Última leitura{latest && ` · ${date(latest.recorded_at)}`}</small>
+        <small>
+          {stale ? "Última leitura recebida" : "Última leitura"}
+          {latest && ` · ${date(latest.recorded_at)}`}
+        </small>
         <div className="telemetry-values">
           <div>
             <strong>
@@ -374,11 +402,11 @@ function LiveReadings({
                 "L/min",
               )}
             </strong>
-            <small>Vazão registrada</small>
+            <small>{stale ? "Água passando naquele momento" : "Água passando por minuto"}</small>
           </div>
           <div>
-            <strong>{formatMeasure(latest?.cumulative_volume_liters, "L")}</strong>
-            <small>Volume acumulado do medidor</small>
+            <strong>{formatMeasure(latest?.cumulative_volume_liters, "L", 1)}</strong>
+            <small>Total que o medidor já contou</small>
           </div>
         </div>
       </section>
@@ -447,11 +475,23 @@ function LiveReadings({
             </ResponsiveContainer>
           </div>
         ) : readings?.length ? (
-          <p className="telemetry-empty">Sem vazão válida neste período.</p>
+          <p className="telemetry-empty">
+            {series.length
+              ? "As leituras deste período não puderam ser usadas no gráfico."
+              : `Nenhuma leitura chegou ${
+                  (
+                    {
+                      15: "nos últimos 15 minutos",
+                      60: "na última hora",
+                      360: "nas últimas 6 horas",
+                    } as Record<number, string>
+                  )[minutes] ?? "neste período"
+                }.`}
+          </p>
         ) : null}
       </section>
       <div className="telemetry-toolbar telemetry-controls">
-        <small>{updatedAt ? `Atualizado às ${date(updatedAt)} · ${timezone}` : timezone}</small>
+        <small>{updatedAt ? `Tela atualizada em ${date(updatedAt)}` : "Atualizando a tela…"}</small>
         <div>
           <button type="button" className="button button--quiet" onClick={() => setPaused(!paused)}>
             {paused ? "Retomar atualização" : "Pausar atualização"}
@@ -472,7 +512,7 @@ function LiveReadings({
           O sistema compara a água que passou com exemplos de consumo comum e fora do comum.{" "}
           {grouped
             ? "Neste medidor, as leituras são analisadas juntas, em períodos de 5 minutos. A vazão aparece na hora, mas o resultado só sai quando o período termina."
-            : "Neste medidor, cada leitura é comparada com a anterior."}
+            : "Neste medidor, cada leitura traz a água que passou desde a leitura anterior, e o sistema analisa esse período."}
         </p>
         {nextAnalysis !== null && (
           <p>
@@ -522,7 +562,7 @@ function LiveReadings({
         <h2>Leituras e análises recentes</h2>
         <div className="telemetry-row telemetry-table-heading">
           <span>Horário da leitura</span>
-          <span>Vazão</span>
+          <span>Água por minuto</span>
           <span>Análise</span>
           <span>Detalhes</span>
         </div>
@@ -561,37 +601,33 @@ function LiveReadings({
               </header>
               <dl className="telemetry-attribute-grid telemetry-reading-fields">
                 <div>
-                  <dt>Medição</dt>
-                  <dd>{date(reading.recorded_at)}</dd>
-                </div>
-                <div>
-                  <dt>Recebimento</dt>
-                  <dd>{date(reading.received_at)}</dd>
-                </div>
-                <div>
-                  <dt>Situação da leitura</dt>
-                  <dd>{describeQuality(reading.quality)}</dd>
-                </div>
-                <div>
-                  <dt>Vazão registrada</dt>
+                  <dt>Água passando por minuto</dt>
                   <dd>{formatMeasure(reading.flow_rate_liters_minute, "L/min")}</dd>
                 </div>
                 <div>
-                  <dt>Volume acumulado</dt>
-                  <dd>{formatMeasure(reading.cumulative_volume_liters, "L")}</dd>
+                  <dt>Total que o medidor já contou</dt>
+                  <dd>{formatMeasure(reading.cumulative_volume_liters, "L", 1)}</dd>
                 </div>
                 <div>
-                  <dt>Bateria / Sinal</dt>
-                  <dd>
-                    {reading.battery_percent == null
-                      ? "Não informada"
-                      : formatMeasure(reading.battery_percent, "%")}{" "}
-                    /{" "}
-                    {reading.signal_dbm == null
-                      ? "Não informado"
-                      : formatMeasure(reading.signal_dbm, "dBm")}
-                  </dd>
+                  <dt>Situação</dt>
+                  <dd>{describeQuality(reading.quality)}</dd>
                 </div>
+                <div>
+                  <dt>Chegou ao sistema</dt>
+                  <dd>{describeArrival(reading, date)}</dd>
+                </div>
+                {reading.battery_percent != null && (
+                  <div>
+                    <dt>Bateria do medidor</dt>
+                    <dd>{formatMeasure(reading.battery_percent, "%", 0)}</dd>
+                  </div>
+                )}
+                {reading.signal_dbm != null && (
+                  <div>
+                    <dt>Sinal do Wi-Fi</dt>
+                    <dd>{describeSignal(reading.signal_dbm)}</dd>
+                  </div>
+                )}
               </dl>
               {expanded.includes(reading.id) && (
                 <div>
@@ -607,14 +643,14 @@ function LiveReadings({
                 </div>
               )}
               <details className="telemetry-analysis-details">
-                <summary>Identificação técnica da leitura</summary>
+                <summary>Dados para a equipe técnica</summary>
                 <dl className="telemetry-attribute-grid">
                   <div>
-                    <dt>Evento</dt>
+                    <dt>Código da leitura</dt>
                     <dd>{reading.event_id}</dd>
                   </div>
                   <div>
-                    <dt>Programa da placa</dt>
+                    <dt>Versão do programa do medidor</dt>
                     <dd>{reading.firmware_version ?? "Não informado"}</dd>
                   </div>
                 </dl>
@@ -623,7 +659,11 @@ function LiveReadings({
           </details>
         ))}
         <div className="telemetry-history-footer">
-          <small>{readings?.length ?? 0} leituras · Resultados disponíveis nesta consulta</small>
+          <small>
+            {readings?.length === 1
+              ? "Mostrando a leitura mais recente."
+              : `Mostrando as ${readings?.length ?? 0} leituras mais recentes.`}
+          </small>
           {historyError && <p role="alert">Não foi possível carregar leituras anteriores.</p>}
           {history?.has_more && (
             <button
@@ -643,17 +683,30 @@ function LiveReadings({
   );
 }
 
-function formatMeasure(value: string | number | null | undefined, unit: string) {
+function formatMeasure(value: string | number | null | undefined, unit: string, digits = 2) {
   if (value == null || !Number.isFinite(Number(value))) return "—";
-  return `${Number(value).toLocaleString("pt-BR", { maximumFractionDigits: 3 })} ${unit}`;
+  return `${Number(value).toLocaleString("pt-BR", { maximumFractionDigits: digits })} ${unit}`;
 }
 
 function describeQuality(quality: string) {
   return (
     {
-      valid: "Válida",
-      counter_reset: "Contador do medidor reiniciado",
-      out_of_order: "Chegou fora de ordem",
+      valid: "Usada normalmente",
+      counter_reset: "Não usada: o contador do medidor recomeçou do zero",
+      out_of_order: "Não usada: chegou depois de uma leitura mais nova",
     }[quality] ?? "Não pôde ser usada"
   );
+}
+
+/** Late arrivals happen when the meter stores readings and sends them later. */
+function describeArrival(reading: Reading, date: (value: string | number) => string) {
+  const delay = Date.parse(reading.received_at) - Date.parse(reading.recorded_at);
+  if (delay < 120_000) return "Logo após a medição";
+  return `${date(reading.received_at)}, ${describeElapsed(delay)} depois. O medidor guardou a leitura e enviou mais tarde.`;
+}
+
+function describeSignal(dbm: number) {
+  if (dbm >= -67) return "Bom";
+  if (dbm >= -80) return "Regular";
+  return "Fraco, pode causar falhas no envio";
 }

@@ -124,3 +124,21 @@ export function newestAnalysis(analyses) {
     analyses[0],
   );
 }
+
+/**
+ * Elapsed time in plain Portuguese, e.g. "52 minutos" or "3 horas e 5 minutos".
+ * @param {number} milliseconds
+ */
+export function describeElapsed(milliseconds) {
+  const minutes = Math.floor(Math.max(milliseconds, 0) / 60_000);
+  if (minutes < 1) return "menos de 1 minuto";
+  const plural = (value, word) => `${value} ${word}${value === 1 ? "" : "s"}`;
+  if (minutes < 60) return plural(minutes, "minuto");
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    const rest = minutes % 60;
+    return rest ? `${plural(hours, "hora")} e ${plural(rest, "minuto")}` : plural(hours, "hora");
+  }
+  const days = Math.floor(hours / 24);
+  return days === 1 ? "1 dia" : `${days} dias`;
+}

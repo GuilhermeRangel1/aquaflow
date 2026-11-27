@@ -19,7 +19,39 @@ type SystemHealth = {
   rules_fallback: { alerts_last_24h: number };
 };
 
+type InferencePage = {
+  items: {
+    predicted_anomaly: boolean | null;
+    inferred_at: string;
+    recorded_at: string;
+    device_name: string;
+  }[];
+  cursor: string | null;
+  has_more: boolean;
+};
+
+type Positive = { recorded_at: string; device_name: string };
+
 const count = new Intl.NumberFormat("pt-BR");
+
+/** Finds the newest "possible anomaly" of the last 24 hours, so the count has a when and where. */
+async function newestPositive(
+  load: <T>(path: string) => Promise<T>,
+  propertyId: string,
+  since: number,
+): Promise<Positive | null> {
+  const params = new URLSearchParams({ limit: "100" });
+  for (let page = 0; page < 4; page += 1) {
+    const result = await load<InferencePage>(`properties/${propertyId}/ml-inferences?${params}`);
+    for (const item of result.items) {
+      if (Date.parse(item.inferred_at) < since) return null;
+      if (item.predicted_anomaly) return item;
+    }
+    if (!result.has_more || !result.cursor) return null;
+    params.set("cursor", result.cursor);
+  }
+  return null;
+}
 
 export function SystemStatusCard({
   propertyId,
@@ -33,6 +65,7 @@ export function SystemStatusCard({
   load: <T>(path: string) => Promise<T>;
 }) {
   const [health, setHealth] = useState<SystemHealth>();
+  const [positive, setPositive] = useState<Positive | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -42,8 +75,17 @@ export function SystemStatusCard({
     async function refresh() {
       try {
         const result = await load<SystemHealth>(`properties/${propertyId}/dashboard-health`);
+        const latest =
+          result.model_pipeline.positive_predictions_last_24h > 0
+            ? await newestPositive(
+                load,
+                propertyId,
+                Date.parse(result.checked_at) - 24 * 3_600_000,
+              ).catch(() => null)
+            : null;
         if (!cancelled) {
           setHealth(result);
+          setPositive(latest);
           setFailed(false);
         }
       } catch {
@@ -59,15 +101,24 @@ export function SystemStatusCard({
     };
   }, [load, paused, propertyId]);
 
+  const positives = health?.model_pipeline.positive_predictions_last_24h ?? 0;
+  const rejected = health?.ingestion.mqtt_messages_rejected ?? 0;
   const items = health && [
     {
-      label: "Recebimento das leituras",
+      label: "Recebimento de leituras",
       status: {
         connected: "Funcionando",
         disconnected: "Sem conexão",
         unavailable: "Estado não disponível",
       }[health.ingestion.mqtt_status],
-      detail: `Leituras desta casa em 24 horas: ${count.format(health.ingestion.readings_last_24h)}. Mensagens recusadas em todo o sistema desde que ele iniciou: ${count.format(health.ingestion.mqtt_messages_rejected)}.`,
+      detail: [
+        "O sistema está pronto para receber leituras de todos os medidores. Se um medidor parar de enviar, o problema costuma estar nele, na energia ou no Wi-Fi.",
+        `Leituras desta casa nas últimas 24 horas: ${count.format(health.ingestion.readings_last_24h)}.`,
+        rejected > 0 &&
+          `${count.format(rejected)} ${rejected === 1 ? "mensagem chegou com problema e foi descartada" : "mensagens chegaram com problema e foram descartadas"}.`,
+      ]
+        .filter(Boolean)
+        .join(" "),
     },
     {
       label: "Análise automática",
@@ -76,12 +127,33 @@ export function SystemStatusCard({
         degraded: "Com falhas recentes",
         unavailable: "Indisponível",
       }[health.model_pipeline.status],
-      detail: `Em 24 horas: ${count.format(health.model_pipeline.scored_inferences_last_24h)} com resultado, sendo ${count.format(health.model_pipeline.positive_predictions_last_24h)} de possível anomalia. Sem dados suficientes: ${count.format(health.model_pipeline.skipped_inferences_last_24h)}.`,
+      detail: [
+        `Analisou ${count.format(health.model_pipeline.scored_inferences_last_24h)} períodos nas últimas 24 horas.`,
+        positives === 0
+          ? "Nenhum deles teve uso fora do comum."
+          : `${count.format(positives)} ${positives === 1 ? "teve" : "tiveram"} uso fora do comum.`,
+        positive &&
+          `${positives === 1 ? "Foi" : "O mais recente foi"} em ${new Date(
+            positive.recorded_at,
+          ).toLocaleString("pt-BR", {
+            timeZone: timezone,
+            day: "2-digit",
+            month: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}, no ${positive.device_name}.`,
+        positives > 0 &&
+          "Um aviso só aparece em Alertas quando dois períodos seguidos ficam fora do comum.",
+        health.model_pipeline.skipped_inferences_last_24h > 0 &&
+          `Sem dados suficientes: ${count.format(health.model_pipeline.skipped_inferences_last_24h)}.`,
+      ]
+        .filter(Boolean)
+        .join(" "),
     },
     {
       label: "Regras fixas de consumo",
       status: "Ativas",
-      detail: `Avisos em 24 horas: ${count.format(health.rules_fallback.alerts_last_24h)}. Elas funcionam mesmo se a análise automática parar.`,
+      detail: `Avisos nas últimas 24 horas: ${count.format(health.rules_fallback.alerts_last_24h)}. Elas vigiam, por exemplo, água que não para de passar e funcionam mesmo se a análise automática parar.`,
     },
   ];
 

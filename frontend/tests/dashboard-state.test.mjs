@@ -6,6 +6,7 @@ import {
   explainSkippedAnalysis,
   interpolateCurveAtX,
   newestAnalysis,
+  describeElapsed,
   nextAnalysisAt,
   orderHoursFromMidnight,
   resolveActivePropertyId,
@@ -110,4 +111,14 @@ test("the latest analysis follows the reading time, not the processing order", (
   assert.equal(newestAnalysis([older, newer]).reading_id, "new");
   assert.equal(newestAnalysis([]), undefined);
   assert.equal(newestAnalysis(null), undefined);
+});
+
+test("elapsed time is written in plain words", () => {
+  assert.equal(describeElapsed(20_000), "menos de 1 minuto");
+  assert.equal(describeElapsed(60_000), "1 minuto");
+  assert.equal(describeElapsed(52 * 60_000), "52 minutos");
+  assert.equal(describeElapsed(60 * 60_000), "1 hora");
+  assert.equal(describeElapsed(185 * 60_000), "3 horas e 5 minutos");
+  assert.equal(describeElapsed(26 * 3_600_000), "1 dia");
+  assert.equal(describeElapsed(-5), "menos de 1 minuto");
 });
